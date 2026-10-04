@@ -380,7 +380,7 @@ class OutputBufferPlanner(ReadyWorkPlanner):
                 or primary.steps[0].action not in {
                     "factory_gather", "factory_insert", "factory_extract", "factory_wait"
                 }):
-            return [primary] if self._buffer_service else [service_visit(self, primary)]
+            return [primary] if self._buffer_service else self._current_raw_craft_alternatives(primary)
         candidates = [primary]
         partial = self._partial_current_target_craft()
         if partial is not None:

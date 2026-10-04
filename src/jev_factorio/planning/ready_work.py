@@ -343,7 +343,7 @@ class ReadyWorkPlanner(EconomicProduction, FactoryPlanner):
         if (primary.steps[0].action not in {
                 "factory_gather", "factory_insert", "factory_extract", "factory_wait"
             } or not self.focus or self.factory.get("crafting_queue", 0)):
-            return [service_visit(self, primary)]
+            return self._current_raw_craft_alternatives(primary)
         candidates = [primary]
         partial = self._partial_current_target_craft()
         if partial is not None:
@@ -375,6 +375,101 @@ class ReadyWorkPlanner(EconomicProduction, FactoryPlanner):
         prefix = f"Next production batch: {amount} {item}. "
         return [service_visit(self, replace(plan, description=prefix + plan.description))
                 for plan in selected[:self.max_candidates]]
+
+    def _current_raw_craft_alternatives(self, primary: Plan) -> list[Plan]:
+        """Offer non-spending current-target inputs beside an unstarted craft.
+
+        The speculative collection minimum is a trip heuristic, not a reason
+        to hide a smaller deficit in the immediate target's own material bill.
+        Keep placement, binding, service and in-flight work serial. JEV still
+        chooses and independently judges every offered action.
+        """
+        plans = [service_visit(self, primary)]
+        if (len(primary.steps) != 1 or primary.steps[0].action != 'factory_craft'
+                or self.focus is None or self.speculative or self.max_candidates <= 1
+                or getattr(self, '_buffer_service', False)
+                or (primary.materials or {}).get('collection_only_lookahead')
+                or (primary.materials or {}).get('work_intent') != {
+                    'scope': 'immediate', 'observed_tick': self.snapshot.tick}
+                or (primary.materials or {}).get('local_objective') != {
+                    'item': self.focus[0], 'inventory_target': self.focus[1],
+                    'ultimate_goal': self.goal}
+                or self.factory.get('crafting_queue') != 0
+                or self.factory.get('player_connected') is not True
+                or self.factory.get('player_bound') is not True
+                or not primary.steps[0].allowed(self.snapshot)
+                or primary.steps[0].satisfied(self.snapshot)):
+            return plans
+        if (self.snapshot.world_kind == 'fle' and
+                getattr(self.snapshot, '_coherent_observation_verified', None) !=
+                (self.snapshot.session_id, self.snapshot.tick)):
+            return plans
+        item, amount = self.focus
+        try:
+            # Deliberately exclude optional horizon_demands. Forecast stock
+            # credits paid machine inputs/output; none becomes spendable here.
+            bill = self.catalog.material_demands(
+                {item: amount}, self.ledger.forecast_stock(), self.researched)
+            for raw, shortage in sorted(bill.shortages.items()):
+                if raw not in RAW_ITEMS - {'wood'} or not 0 < shortage < math.inf:
+                    continue
+                path = self._current_bill_raw_path(item, raw, bill.batches)
+                if path is None:
+                    continue
+                worker = self._candidate_worker()
+                worker.speculative = False
+                target = self.snapshot.inventory.get(raw, 0) + math.ceil(shortage)
+                # The existing direct raw branch handles fair targets and
+                # existing output pickup. Optional outpost construction is not
+                # an alternative that preserves this craft's carried inputs.
+                candidate = FactoryPlanner._need(
+                    worker, raw, target, tuple('item:' + p for p in path[:-1]))
+                if (candidate is None or len(candidate.steps) != 1
+                        or candidate.id == primary.id):
+                    continue
+                step = candidate.steps[0]
+                if (step.action != 'factory_gather' or step.item != raw
+                        or step.costs not in (None, {})
+                        or not step.allowed(self.snapshot) or step.satisfied(self.snapshot)):
+                    continue
+                candidate = replace(candidate, materials={**(candidate.materials or {}),
+                    'current_target_raw_alternative': {
+                        'observed_tick': self.snapshot.tick,
+                        'local_target_item': item, 'local_target_amount': amount,
+                        'raw_item': raw, 'current_bill_shortage': shortage,
+                        'primary_plan_id': primary.id,
+                        'preserved_primary_costs': dict(primary.steps[0].costs or {}),
+                        'basis': 'immediate_target_bill_after_forecast_stock',
+                    }})
+                plans.append(candidate)
+                if len(plans) >= self.max_candidates:
+                    break
+        except (KeyError, ValueError, TypeError, ArithmeticError):
+            return plans[:1]  # Partial/invalid bill evidence cannot add work.
+        return plans
+
+    def _current_bill_raw_path(self, root, raw, batches):
+        """Bounded selected-recipe path using only recipes active in this bill."""
+        stack = [(root, ())]
+        visits = 0
+        while stack and visits < 128:
+            product, ancestors = stack.pop()
+            visits += 1
+            if product in ancestors or len(ancestors) >= 31:
+                continue
+            path = (*ancestors, product)
+            if product == raw:
+                return path
+            if product in RAW_ITEMS:
+                continue
+            recipe = self.catalog.recipe_for(product)
+            if (recipe.get('hidden') or not self.catalog.enabled(recipe, self.researched)
+                    or batches.get(recipe['name'], 0) <= 0):
+                continue
+            inputs = sorted({row['name'] for row in recipe['ingredients']
+                             if row.get('type') == 'item' and row.get('amount', 0) > 0})
+            stack.extend((name, path) for name in reversed(inputs))
+        return None
 
 
 def compile_ready_factory(goal: str, snapshot: GameSnapshot,
