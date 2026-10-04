@@ -104,10 +104,23 @@ def checked_solid_funding(row: dict, intents: list[dict]) -> None:
     funding = row['solid_funding']
     if funding is not None:
         solid_funding.validate_state(funding, row['tick'], intents)
-        for label in ('state', 'after_state'):
-            observed = _solid_observation(row[label]).get(funding['route'])
-            if (not isinstance(observed, dict) or observed.get('state') != 'proposed'
-                    or not solid_funding.bound(funding, observed)):
+        before = _solid_observation(row['state']).get(funding['route'])
+        after = _solid_observation(row['after_state']).get(funding['route'])
+        if (not isinstance(before, dict) or before.get('state') != 'proposed'
+                or not solid_funding.bound(funding, before)
+                or not isinstance(after, dict) or not solid_funding.bound(funding, after)):
+            raise ValueError('Active solid funding differs from native proposed route')
+        # The producer retains the funding receipt on the same record that
+        # commits the route's first paid part. Preserve that real handoff row:
+        # it must start from the exact proposed route, be the route-build action,
+        # and end at a one-part building prefix. The campaign-wide continuity
+        # check below then binds that prefix through the final checkpoint.
+        if after['state'] != 'proposed':
+            if (after['state'] != 'building' or row.get('action') != solid.COMMAND
+                    or len(after['parts']) != 1
+                    or set(after['parts']) != {after['steps'][0]['part']}
+                    or after['pending']
+                    or not _solid_prefix(solid.commitment(before), solid.commitment(after))):
                 raise ValueError('Active solid funding differs from native proposed route')
 
 
