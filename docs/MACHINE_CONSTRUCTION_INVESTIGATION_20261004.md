@@ -10,7 +10,7 @@ owned furnace serves `recipe:copper-plate`.
 The existing planner path is lab -> iron gear wheel -> iron plate -> stone
 furnace. The last edge denotes production infrastructure, not a recipe
 ingredient. The deployed gather fix exposes this distinction only for raw
-material acquisition. This draft carries the distinction through paid crafting
+material acquisition. The merged change carries the distinction through paid crafting
 and placement, discloses native recipes and scoped branch quantities, and binds
 the evidence to current session, tick, inventory, exact step and start facts.
 Future placement, fueling, output and local-target completion remain unverified.
@@ -29,8 +29,8 @@ selected `unsupported` for the independent usefulness judgment:
 The last response's candidate confidence was 0.68 and benefit was 0.77, but
 neither replaces the independent usefulness choice. No diagnostic dispatched a
 game action. No gate threshold, rejection ledger or production treatment was
-changed. The draft was not deployed, and the live controller remains blocked
-with its original failure history intact. An identical-request reroll is not a
+changed. At that stage the draft was not deployed, and the live controller
+remained blocked with its original failure history intact. An identical-request reroll is not a
 valid next experiment.
 
 Focused local validation after review: 189 tests passed across construction evidence,
@@ -46,7 +46,7 @@ same lab bill. JEV reported craft choice confidence 0.89 and useful probability
 0.74; exact retained-answer replay selected the craft. The 40,958-byte request
 fit the existing 48,000-byte limit. This is a different request with both repairs,
 not an identical-request retry or a threshold change. Earlier failures remain
-retained. A live receipt is still required to establish resumed gameplay.
+retained. That diagnostic alone did not establish resumed gameplay.
 
 Retain the counterexample and all diagnostic results, and validate independent
 judgments without forcing a label. Deployment of the combined recovery needs
@@ -54,3 +54,10 @@ signed reviewed source, current native attachment proof, exact-checkpoint
 one-use admission through the existing owner, and fresh useful actions across
 the construction and production sequence. Passing one craft alone would not
 qualify multi-day reliability.
+
+After PR341 and PR344 merged, signed combined source `885bec67` passed the
+existing owner's exact-checkpoint admission on October 4 at 23:20 UTC. Native
+receipts verified the furnace craft and placement, followed by 31 iron plates
+and two gears. The following gear-versus-copper choice was independently blocked
+on low choice confidence. See the [dated operations evidence](CONTINUOUS_RUNTIME_OPERATIONS.md#combined-recovery-at-2320-utc)
+for exact ticks, the retained limitation and the next diagnostic boundary.
