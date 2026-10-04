@@ -9,7 +9,9 @@ an immutable treatment, or bypassing an unresolved native-action boundary.
 ## Recover through the existing owner
 
 1. Identify the active campaign, deployed source, supervisor, service owner and
-   original cutoff. Check live processes, checkpoint status, event history and
+   original cutoff or explicit until-complete authority. Use the latest executed
+   signed owner and its linked receipts; an old prepared initializer is not the
+   current owner contract. Check live processes, checkpoint status, event history and
    completed-action timestamps. A running PID or advancing game tick alone does
    not prove useful autonomous progress. Distinguish gameplay from development
    agents and completed issue-writing tasks.
@@ -88,11 +90,13 @@ Factorio stopped. Do not create another domain or controller.
    and preserve the same session ID, checkpoint bytes, pending action, receipts,
    attempt history, source revision, owner lock and cutoff. Reconcile through the
    existing owner. A terminal reconciliation that freezes restart, a missing
-   owner handoff, or a missing original cutoff remains a hard stop after QGA is
-   restored. Do not promote a prepared-but-unexecuted manifest or infer authority
-   from a null cutoff. An until-complete window applies only to a separately
-   authorized isolated identity, save and owner; it cannot remove this campaign's
-   cutoff. See [NATIVE_ACCEPTANCE_WINDOW.md](NATIVE_ACCEPTANCE_WINDOW.md).
+   owner handoff, or an unverified original window remains a hard stop after QGA
+   is restored. Do not promote a prepared-but-unexecuted manifest or infer
+   authority from a null cutoff. Conversely, do not mistake an old initializer's
+   null cutoff for missing authority when the latest executed signed owner
+   explicitly establishes until-complete for this isolated identity, save and
+   owner. Preserve whichever window actually governs the run; never convert a
+   timed campaign implicitly. See [NATIVE_ACCEPTANCE_WINDOW.md](NATIVE_ACCEPTANCE_WINDOW.md).
 
 4. Resume only through the accepted existing supervisor and only inside the
    verified original window. Follow the normal reconciliation and acceptance
@@ -125,6 +129,15 @@ If graceful shutdown does not complete, stop rather than force-destroying or
 resetting the domain. Recheck QGA, the existing save, the same campaign identity
 and owner handoff before any controller resume. This QEMU procedure does not
 permit a WSL restart.
+
+Keep guest-agent responses small. Never return an entire archive through one
+`guest-exec-status` response: an oversized response can break subsequent libvirt
+agent access. Read selected fields or bounded chunks with explicit byte limits,
+and use the established file-transfer channel for bulk evidence. A transport
+failure is not permission to repeat a potentially executed mutation.
+
+For recurring blocked exits, maintenance receipt mismatches and reboot recovery,
+see the [October 4 reliability investigation](RUNTIME_RELIABILITY_20261004.md).
 
 ## OBS Studio Mode: Preview is not Program
 
