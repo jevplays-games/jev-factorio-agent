@@ -500,6 +500,63 @@ def test_secrets_removed_before_hashing_and_input_unchanged(make_log):
     assert "OTHER_ACCESS_TOKEN" not in joined
 
 
+@pytest.mark.parametrize("field,value,secret_name", [
+    ("backend", "mock", "PASSWORD"),
+    ("controller", "flat", "PASSWORD"),
+    ("policy", "jev", "API_KEY"),
+])
+def test_supported_structural_labels_survive_secret_redaction_and_verification(
+        tmp_path, configuration, field, value, secret_name):
+    selected = replace(configuration, **{field: value})
+    run_dir = tmp_path / f"{field}-label"
+
+    with rl.ResearchLog(run_dir, selected, environ={secret_name: value}) as writer:
+        assert getattr(writer.configuration, field) == value
+        writer.emit("configuration_probe", {"field": field})
+
+    manifest = json.loads((run_dir / "manifest.json").read_bytes())
+    rl.validate_manifest(manifest)
+    consumed_configuration = rl.RunConfiguration(**manifest["configuration"])
+    assert getattr(consumed_configuration, field) == value
+    assert rl.verify_run(run_dir)["complete"] is True
+
+
+def test_public_structural_label_does_not_exempt_freeform_model_from_redaction(
+        tmp_path, configuration):
+    selected = replace(configuration, policy="jev", requested_model="jev")
+    run_dir = tmp_path / "freeform-model"
+
+    with rl.ResearchLog(run_dir, selected, environ={"PASSWORD": "jev"}) as writer:
+        assert writer.configuration.policy == "jev"
+        assert writer.configuration.requested_model == rl.REDACTED
+        writer.emit("configuration_probe", {"requested_model": "jev"})
+
+    manifest = json.loads((run_dir / "manifest.json").read_bytes())
+    rl.validate_manifest(manifest)
+    assert manifest["configuration"]["policy"] == "jev"
+    assert manifest["configuration"]["requested_model"] == rl.REDACTED
+    events = [json.loads(line) for line in (run_dir / "events.jsonl").read_bytes().splitlines()]
+    assert events[1]["payload"]["requested_model"] == rl.REDACTED
+    assert rl.verify_run(run_dir)["complete"] is True
+
+
+@pytest.mark.parametrize("secret", ["x", "run", "custom-label-secret-123"])
+def test_unsupported_structural_label_and_model_remain_redacted(
+        tmp_path, configuration, secret):
+    selected = replace(configuration, backend=secret, requested_model=secret)
+    run_dir = tmp_path / "unsupported-label"
+
+    with rl.ResearchLog(run_dir, selected, environ={"PASSWORD": secret}) as writer:
+        assert writer.configuration.backend == rl.REDACTED
+        assert writer.configuration.requested_model == rl.REDACTED
+
+    manifest = json.loads((run_dir / "manifest.json").read_bytes())
+    rl.validate_manifest(manifest)
+    assert manifest["configuration"]["backend"] == rl.REDACTED
+    assert manifest["configuration"]["requested_model"] == rl.REDACTED
+    assert rl.verify_run(run_dir)["complete"] is True
+
+
 def test_redacted_key_collisions_are_not_silently_lost(make_log):
     writer = make_log(environ={"API_KEY": "sensitive-value"})
     with pytest.raises(ValueError, match="duplicate"):

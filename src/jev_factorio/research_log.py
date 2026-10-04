@@ -46,6 +46,14 @@ _TREATMENT_FIELDS = {"factory_scheduling", "background_work",
                      "furnace_output_buffers", "furnace_input_belts", "mining_outposts",
                      "campaign_diagnostics", "profile_observations", "consolidated_observations",
                      "lead_time_supply", "coverage_margin_lookahead", "solid_routes", "solid_science_policy", "coal_supply", "coal_kit_policy", "coal_economic_admission"}
+_STRUCTURAL_CONFIGURATION_LABELS = {
+    "backend": ("mock", "play_api", "fle"),
+    "controller": ("flat", "hierarchical"),
+    "policy": ("jev", "deterministic", "hybrid"),
+    "target": ("bootstrap_mining", "iron_smelting", "steam_power",
+               "automation_science", "rocket_launch"),
+    "factory_scheduling": ("serial", "ready-work"),
+}
 _OPTIONAL_CONFIGURATION_FIELDS = _TREATMENT_FIELDS | {
     "treatment_sha256", "until_complete", "reconcile_only",
     "reevaluate_blocked_once", "exact_checkpoint_sha256", "blocked_source_revision",
@@ -662,7 +670,9 @@ class ResearchLog:
         manifest = {
             "schema": MANIFEST_SCHEMA, "schema_version": 1, "run_id": self.run_id,
             "created_utc": self._timestamp(),
-            "configuration": {key: value if key == "factory_scheduling" else self._redactor.clean(value)
+            "configuration": {key: (value if type(value) is str and value in
+                                     _STRUCTURAL_CONFIGURATION_LABELS.get(key, ())
+                                     else self._redactor.clean(value))
                               for key, value in asdict(configuration).items()},
             "provenance": collect_provenance(
                 repo_dir or Path(__file__).resolve().parents[2], environment),
