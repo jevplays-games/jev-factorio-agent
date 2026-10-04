@@ -80,8 +80,9 @@ During recovery, SSH then timed out before canonical carrier dispatch. Train
 became reachable after a host boot at about 19:53:53 UTC. The existing native
 guest was `shut off`, with autostart disabled and no managed save. This session
 did not restart Train; it subsequently started the already-stopped guest for
-read-only recovery inspection. The reboot's cause is not established by
-the collected journal tail. Pre-reboot process/native-state observations must
+read-only recovery inspection. The operator subsequently confirmed initiating
+the host reboot and requested gameplay resumption. It is not evidence of a
+spontaneous host crash. Pre-reboot process/native-state observations must
 not authorize post-reboot action replay. Recover the original save and reconcile
 it against durable receipts before continuing the same campaign.
 
