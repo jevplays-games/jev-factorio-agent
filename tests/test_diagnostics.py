@@ -1,6 +1,8 @@
 import json
 import subprocess
 import sys
+from copy import deepcopy
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -76,6 +78,33 @@ def test_diagnostic_imports_do_not_load_backend_modules():
     code = "import jev_factorio.diagnostics, sys; assert not any(k.startswith('jev_factorio.backends') or k == 'fle' or k.startswith('fle.') for k in sys.modules)"
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=10)
     assert result.returncode == 0, result.stderr
+
+
+def test_background_step_survives_checkpoint_capture_and_diagnostics_but_row_projection_is_stable(tmp_path):
+    from jev_factorio.acceptance_capture import project_record
+    from jev_factorio.dev_preflight import checkpoint_read
+    from jev_factorio.research_log import Redactor
+    from test_background_work import ReceiptBackend as BackgroundReceiptBackend
+    from test_background_work import controller as background_controller
+
+    backend = BackgroundReceiptBackend()
+    loop = background_controller(backend, tmp_path)
+    record = loop.step()
+    expected_step = deepcopy(loop.memory.background_step)
+    assert expected_step is not None and loop.memory.background_schema == 3
+
+    report = reconciliation_report(loop.memory)
+    assert report["background_step"] == expected_step
+    captured, _ = checkpoint_read(Path(loop.checkpoint), idle=False)
+    assert captured["background_step"] == expected_step
+
+    # Acceptance gameplay rows are a bounded projection; the private full
+    # checkpoint is the authority that retains this exact step.
+    projected_input = {**record, "background_step": expected_step}
+    omissions = Counter()
+    projected = project_record(projected_input, Redactor({}), omissions)
+    assert "background_step" not in projected
+    assert omissions["top:background_step"] == 1
 
 
 @pytest.mark.parametrize("field,value", [("tick", True), ("factory", []), ("inventory", None)])

@@ -298,7 +298,7 @@ def checkpoint_memory_type(data: dict):
     if not isinstance(data, dict):
         raise ValueError("Invalid controller checkpoint")
     loop_type = HierarchicalLoop
-    if {"background_schema", "background_job", "background_attempt"} & data.keys():
+    if {"background_schema", "background_job", "background_attempt", "background_step"} & data.keys():
         if not {"background_schema", "background_job"} <= data.keys():
             raise ValueError("Incomplete background checkpoint extension")
         from .background import BackgroundWorkLoop

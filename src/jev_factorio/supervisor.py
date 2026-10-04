@@ -28,7 +28,7 @@ from .recovery_policy import classify, current_exit, repair_quota_exhausted
 _CANONICAL_REPOSITORY = "jevplays-games/jev-factorio-agent"
 _OWNERSHIP_FIELDS = (
     "connector_ownership", "capital_investment", "transfer_recovery",
-    "background_schema", "background_job", "background_attempt",
+    "background_schema", "background_job", "background_attempt", "background_step",
     "output_buffers_schema", "output_commitments",
     "input_routes_schema", "input_commitments",
     "outposts_schema", "outpost_commitments",
@@ -41,7 +41,7 @@ _OWNERSHIP_FIELDS = (
 _OWNERSHIP_FAMILIES = {
     "connector": {"connector_ownership"},
     "capital": {"capital_investment"},
-    "background": {"background_schema", "background_job", "background_attempt"},
+    "background": {"background_schema", "background_job", "background_attempt", "background_step"},
     "output": {"output_buffers_schema", "output_commitments"},
     "input": {"input_routes_schema", "input_commitments"},
     "outpost": {"outposts_schema", "outpost_commitments"},
@@ -362,7 +362,7 @@ class Supervisor:
         """
         return (any(checkpoint.get(key) is not None for key in (
                     "pending", "attempt", "transfer_recovery",
-                    "background_job", "background_attempt"))
+                    "background_job", "background_attempt", "background_step"))
                 or checkpoint.get("active_plan") is not None
                 or bool(checkpoint.get("reservations")))
 

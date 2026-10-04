@@ -1,5 +1,6 @@
 """Provenance and crash-boundary tests; no live game, model, or GitHub calls."""
 import json
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 
@@ -416,11 +417,12 @@ def test_manual_snapshot_after_cutoff_is_bounded_and_keeps_deadline(supervisor, 
     assert events(supervisor)[-1]["source_after"] == B
 
 
-@pytest.mark.parametrize("extension", ["background_job", "output_commitments", "input_commitments"])
+@pytest.mark.parametrize("extension", ["background_job", "background_step",
+                                       "output_commitments", "input_commitments"])
 @pytest.mark.parametrize("changed", ["extension", "history", "reservations"])
 def test_repair_preserves_extension_locks_without_foreground_pending(
         supervisor, tmp_path, extension, changed):
-    if extension == "background_job":
+    if extension in {"background_job", "background_step"}:
         previous = background_checkpoint(supervisor)
     elif extension == "output_commitments":
         from jev_factorio.buffer_controller import buffered_loop_type
@@ -456,11 +458,17 @@ def test_repair_preserves_extension_locks_without_foreground_pending(
     atomic_json(supervisor.config.checkpoint, previous)
     result = operational_result(supervisor, tmp_path)
     assert supervisor.validate_repair(result, previous, ("head", "diff"))
-    current = {**previous}
+    current = deepcopy(previous)
     if changed == "extension":
         if extension == "background_job":
+            current["background_schema"] = 2
             current["background_job"] = None
             current["background_attempt"] = None
+            current["background_step"] = None
+        elif extension == "background_step":
+            from jev_factorio.telemetry import fingerprint
+            current["background_step"]["threshold"] += 1
+            current["background_attempt"]["step_sha256"] = fingerprint(current["background_step"])
         else:
             current[extension] = {}
     elif changed == "history":
@@ -474,6 +482,31 @@ def test_repair_preserves_extension_locks_without_foreground_pending(
     load_checkpoint_data(current, "fresh", "rocket_launch", memory_type=memory_type)
     atomic_json(supervisor.config.checkpoint, current)
     assert not supervisor.validate_repair(result, previous, ("head", "diff"))
+
+
+def test_repair_rejects_orphan_background_step_and_preserves_saved_candidate(supervisor, tmp_path):
+    from jev_factorio.memory import checkpoint_memory_type, load_checkpoint_data
+
+    previous = background_checkpoint(supervisor)
+    union_type = checkpoint_memory_type(previous)
+    load_checkpoint_data(previous, "fresh", "rocket_launch", memory_type=union_type)
+    atomic_json(supervisor.config.checkpoint, previous)
+    result = operational_result(supervisor, tmp_path)
+
+    orphan = deepcopy(previous)
+    orphan["background_schema"] = 2
+    orphan["background_job"] = None
+    orphan["background_attempt"] = None
+    load_error = None
+    try:
+        load_checkpoint_data(orphan, "fresh", "rocket_launch", memory_type=union_type)
+    except ValueError as error:
+        load_error = error
+    assert load_error is not None and "unexpected step" in str(load_error)
+
+    atomic_json(supervisor.config.checkpoint, orphan)
+    assert not supervisor.validate_repair(result, previous, ("head", "diff"))
+    assert supervisor.checkpoint() == orphan
 
 
 @pytest.mark.parametrize("after_append", [False, True])

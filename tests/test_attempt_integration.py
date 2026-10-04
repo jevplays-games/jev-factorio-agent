@@ -153,8 +153,9 @@ def test_legacy_background_migration_preserves_unknown_identity(tmp_path):
     data = asdict(loop.memory)
     data["version"] = 1
     data["background_schema"] = 1
-    for field in ("attempt", "attempt_outcomes", "background_attempt"):
+    for field in ("attempt", "attempt_outcomes", "background_attempt", "background_step"):
         del data[field]
+    original_history = deepcopy(data["history"])
     path = tmp_path / "state.json"
     path.write_text(json.dumps(data))
     original = path.read_bytes()
@@ -162,11 +163,34 @@ def test_legacy_background_migration_preserves_unknown_identity(tmp_path):
     assert path.read_bytes() == original
     assert memory.background_job == data["background_job"]
     assert memory.background_schema == 1 and memory.background_attempt is None
+    assert memory.background_step is None
+    assert memory.attempt is None and memory.attempt_outcomes == []
+    assert memory.history == original_history
     report = reconciliation_report(memory)
     assert report["assessment"] == "background_observation_required"
     assert report["background_attempt"] is None
     memory.save(path)
-    assert load_checkpoint(path, backend.state.session_id, loop.target) == memory
+    restored = load_checkpoint(path, backend.state.session_id, loop.target)
+    assert restored == memory
+    assert restored.background_job == data["background_job"]
+    assert restored.background_attempt is None and restored.history == original_history
+
+
+def test_schema1_marker_rejects_unexpected_background_step_without_checkpoint_write(tmp_path):
+    backend = ReceiptBackend()
+    loop = controller(backend, tmp_path)
+    loop.step()
+    data = asdict(loop.memory)
+    data["background_schema"] = 1
+    data["background_attempt"] = None
+    path = tmp_path / "schema1-with-step.json"
+    path.write_text(json.dumps(data))
+    original = path.read_bytes()
+
+    with pytest.raises(ValueError, match="Legacy background checkpoint has unexpected attempt"):
+        BackgroundMemory.load(path, backend.state.session_id, loop.target)
+
+    assert path.read_bytes() == original
 
 
 @pytest.mark.parametrize("change", ["missing", "receipt", "duplicate"])

@@ -26,6 +26,7 @@ _KEYS = {"schema", "authorization_id", "checkpoint_sha256", "session_id", "targe
 _SCOPE_KEYS = {"state_sha256", "blocked_recovery_archive", "background_job",
                "background_attempt", "stalled_decisions", "failures_sha256",
                "history_sha256", "attempt_outcomes_sha256", "active_recovery_attempts"}
+_SCOPE_KEYS_WITH_BACKGROUND_STEP = _SCOPE_KEYS | {"background_step"}
 
 
 def _digest(value):
@@ -34,23 +35,52 @@ def _digest(value):
     return value
 
 
-def scope(memory) -> dict:
+def scope(memory, *, include_background_step: bool = True,
+          include_step_in_state: bool = True) -> dict:
     """Bind complete retained state, including counters and native ownership."""
     from dataclasses import asdict
     value = asdict(memory)
+    if not include_step_in_state:
+        value.pop("background_step", None)
     # Exact checkpoint bytes and the full decoded-state digest bind every
-    # counter/receipt/owner. Keep the paid background pair explicit without
-    # copying an ever-growing archive/lineage into each later authorization.
-    return {"state_sha256": digest_json(value),
-            "blocked_recovery_archive": deepcopy(memory.blocked_recovery_archive),
-            "background_job": deepcopy(getattr(memory, "background_job", None)),
-            "background_attempt": deepcopy(getattr(memory, "background_attempt", None)),
-            "stalled_decisions": memory.stalled_decisions,
-            "failures_sha256": digest_json(memory.failures),
-            "history_sha256": digest_json(memory.history),
-            "attempt_outcomes_sha256": digest_json(memory.attempt_outcomes),
-            "active_recovery_attempts": len(memory.blocked_recovery["attempts"])
-                if memory.blocked_recovery is not None else 0}
+    # counter/receipt/owner. Keep background ownership explicit without copying
+    # an ever-growing archive/lineage into each later authorization.
+    result = {"state_sha256": digest_json(value),
+              "blocked_recovery_archive": deepcopy(memory.blocked_recovery_archive),
+              "background_job": deepcopy(getattr(memory, "background_job", None)),
+              "background_attempt": deepcopy(getattr(memory, "background_attempt", None)),
+              "stalled_decisions": memory.stalled_decisions,
+              "failures_sha256": digest_json(memory.failures),
+              "history_sha256": digest_json(memory.history),
+              "attempt_outcomes_sha256": digest_json(memory.attempt_outcomes),
+              "active_recovery_attempts": len(memory.blocked_recovery["attempts"])
+                  if memory.blocked_recovery is not None else 0}
+    if include_background_step:
+        result["background_step"] = deepcopy(getattr(memory, "background_step", None))
+    return result
+
+
+def _scope_matches_checkpoint(saved_scope: dict, memory, raw: bytes) -> bool:
+    """Accept exact historical scope shapes without making them blind to a step.
+
+    Older authorizations did not name ``background_step``. Some pre-release
+    builds had already added it to the dataclass digest but not to the explicit
+    scope. Accept those exact preimages only while the step is absent; an old
+    authorization can never authorize a non-null step it did not bind.
+    """
+    if saved_scope == scope(memory):
+        return True
+    if (set(saved_scope) != _SCOPE_KEYS
+            or getattr(memory, "background_step", None) is not None):
+        return False
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if "background_step" not in data:
+        return saved_scope == scope(memory, include_background_step=False,
+                                    include_step_in_state=False)
+    return saved_scope == scope(memory, include_background_step=False)
 
 
 def validate_lineage(memory) -> list[dict]:
@@ -95,7 +125,8 @@ def validate_lineage(memory) -> list[dict]:
             if record[key] is not None:
                 _digest(record[key])
         saved_scope = record["scope"]
-        if (not isinstance(saved_scope, dict) or set(saved_scope) != _SCOPE_KEYS
+        if (not isinstance(saved_scope, dict)
+                or set(saved_scope) not in (_SCOPE_KEYS, _SCOPE_KEYS_WITH_BACKGROUND_STEP)
                 or not isinstance(record["owner_invocation"], dict)):
             raise ValueError("Compatible recovery lost original ownership scope")
         for key in ("state_sha256", "failures_sha256", "history_sha256", "attempt_outcomes_sha256"):
@@ -103,7 +134,11 @@ def validate_lineage(memory) -> list[dict]:
         if (type(saved_scope["stalled_decisions"]) is not int or saved_scope["stalled_decisions"] < 0
                 or type(saved_scope["active_recovery_attempts"]) is not int
                 or not 0 <= saved_scope["active_recovery_attempts"] <= 1024
-                or (saved_scope["background_job"] is None) != (saved_scope["background_attempt"] is None)):
+                or (saved_scope["background_job"] is None) != (saved_scope["background_attempt"] is None)
+                or ("background_step" in saved_scope
+                    and saved_scope["background_step"] is not None
+                    and (saved_scope["background_job"] is None
+                         or not isinstance(saved_scope["background_step"], dict)))):
             raise ValueError("Compatible recovery scope has invalid counters or background pair")
         owner = record["owner_invocation"]
         if set(owner) != {"run_id", "segment_id", "execution_id"}:
@@ -213,7 +248,7 @@ def validate_selected_paid_handoff(memory) -> None:
             or memory.step_index != 0 or not isinstance(memory.active_plan, dict)
             or any(getattr(memory, key, None) is not None for key in (
                 "pending", "attempt", "native_pending", "native_attempt",
-                "background_job", "background_attempt", "transfer_recovery"))
+                "background_job", "background_attempt", "background_step", "transfer_recovery"))
             or memory.reservations):
         raise ValueError("Compatible paid handoff requires an undispatched quiescent selected plan")
     records = [row for row in memory.history if isinstance(row, dict)
@@ -256,7 +291,7 @@ def validate_authorization(authorization: dict, raw: bytes, memory, current_sour
     trial.compatible_source_recoveries = [*old_records, record]
     validate_lineage(trial)
     if (authorization["checkpoint_sha256"] != hashlib.sha256(raw).hexdigest()
-            or authorization["scope"] != scope(memory)
+            or not _scope_matches_checkpoint(authorization["scope"], memory, raw)
             or authorization["owner_invocation"] != owner_invocation
             or authorization["current_source"] != _source(current_source)):
         raise ValueError("Compatible recovery differs from authorized checkpoint/owner/source scope")

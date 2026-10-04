@@ -1,12 +1,14 @@
 """Integration of the actual controller with an explicitly synthetic backend."""
 from copy import deepcopy
+import json
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
 from jev_factorio.background import BackgroundMemory, BackgroundWorkLoop
 from jev_factorio.craft_jobs import CraftJob
-from jev_factorio.memory import CampaignMemory
+from jev_factorio.memory import CampaignMemory, checkpoint_memory_type, load_checkpoint_data
 from jev_factorio.planning.background_work import independent_candidates, research_demands
 from jev_factorio.skills import Plan, Step
 from jev_factorio.telemetry import make_attempt
@@ -87,6 +89,14 @@ class ReceiptBackend:
             last_progress_tick=self.state.tick, completed_tick=self.state.tick)
 
 
+class TraceSink:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, event_type, payload):
+        self.events.append({"event_type": event_type, "payload": deepcopy(payload)})
+
+
 class ScenarioLoop(BackgroundWorkLoop):
     """Deterministic test candidates; the real dispatcher/receipts stay intact."""
     def _compile_candidates(self, current):
@@ -104,10 +114,10 @@ class ScenarioLoop(BackgroundWorkLoop):
         return [self._tracked_plan(plan, current)], ""
 
 
-def controller(backend, tmp_path, *, resume=False):
+def controller(backend, tmp_path, *, resume=False, research_log=None):
     loop = ScenarioLoop(backend, policy="deterministic", factory_scheduling="ready-work",
                         target="automation_science", checkpoint=str(tmp_path / "state.json"),
-                        resume_controller=resume, tick_seconds=0)
+                        resume_controller=resume, tick_seconds=0, research_log=research_log)
     if not resume:
         loop.memory = BackgroundMemory(backend.state.session_id, loop.target,
             active_goal=loop.target, completed_goals={goal: 0 for goal in loop.order[:-1]}, last_tick=10)
@@ -127,6 +137,9 @@ def test_craft_then_independent_gather_then_verified_completion(tmp_path):
     backend.complete()
     record = loop.step()
     assert loop.memory.background_job is None and record["status"] == "completed"
+    completed = load_checkpoint_data(
+        json.loads((tmp_path / "state.json").read_text()), backend.state.session_id, loop.target)
+    assert completed.background_schema == 2 and completed.background_step is None
     assert len(backend.calls) == 2
     assert any(event["kind"] == "background_job_completed" for event in loop.memory.history)
 
@@ -140,6 +153,106 @@ def test_checkpoint_resume_never_requeues_a_background_craft(tmp_path):
     assert restored.memory.background_job
     with pytest.raises(ValueError):
         CampaignMemory.load(tmp_path / "state.json", backend.state.session_id, restored.target)
+
+
+def test_background_attempt_step_fingerprint_is_bound_and_legacy_state_is_preserved(tmp_path):
+    backend = ReceiptBackend()
+    loop = controller(backend, tmp_path)
+    loop.step()
+    checkpoint = tmp_path / "state.json"
+    saved = json.loads(checkpoint.read_text())
+    valid = BackgroundMemory.load(checkpoint, backend.state.session_id, loop.target)
+    assert valid.background_schema == 3
+    assert valid.background_job == saved["background_job"]
+    assert valid.background_attempt == saved["background_attempt"]
+    assert valid.background_step == saved["background_step"]
+    composed = load_checkpoint_data(saved, backend.state.session_id, loop.target)
+    assert type(composed) is type(valid)
+    assert composed.background_step == saved["background_step"]
+
+    step_only = deepcopy(saved)
+    for key in ("background_schema", "background_job", "background_attempt"):
+        step_only.pop(key)
+    with pytest.raises(ValueError, match="Incomplete background checkpoint extension"):
+        load_checkpoint_data(step_only, backend.state.session_id, loop.target)
+
+    incomplete_schema3 = deepcopy(saved)
+    incomplete_schema3.pop("background_step")
+    with pytest.raises(ValueError, match="identity must coexist"):
+        load_checkpoint_data(incomplete_schema3, backend.state.session_id, loop.target)
+
+    legacy_v2 = deepcopy(saved)
+    legacy_v2["background_schema"] = 2
+    legacy_v2.pop("background_step")
+    legacy_v2_path = tmp_path / "schema-2.json"
+    legacy_v2_path.write_text(json.dumps(legacy_v2))
+    restored_v2 = BackgroundMemory.load(
+        legacy_v2_path, backend.state.session_id, loop.target)
+    assert restored_v2.background_schema == 2
+    assert restored_v2.background_attempt == legacy_v2["background_attempt"]
+    assert restored_v2.background_job == legacy_v2["background_job"]
+    assert load_checkpoint_data(
+        legacy_v2, backend.state.session_id, loop.target).background_job == legacy_v2["background_job"]
+
+    orphan_schema2 = deepcopy(legacy_v2)
+    orphan_schema2["background_step"] = saved["background_step"]
+    with pytest.raises(ValueError, match="unexpected step"):
+        load_checkpoint_data(orphan_schema2, backend.state.session_id, loop.target)
+
+    tampered_v2 = deepcopy(legacy_v2)
+    tampered_v2["background_attempt"]["step_sha256"] = "f" * 64
+    tampered_v2_path = tmp_path / "schema-2-tampered.json"
+    tampered_v2_path.write_text(json.dumps(tampered_v2))
+    with pytest.raises(ValueError, match="step fingerprint"):
+        BackgroundMemory.load(tampered_v2_path, backend.state.session_id, loop.target)
+
+    legacy = deepcopy(legacy_v2)
+    legacy["background_schema"] = 1
+    legacy["background_attempt"] = None
+    legacy_path = tmp_path / "schema-1.json"
+    legacy_path.write_text(json.dumps(legacy))
+    legacy_bytes = legacy_path.read_bytes()
+    restored_legacy = BackgroundMemory.load(
+        legacy_path, backend.state.session_id, loop.target)
+    assert restored_legacy.background_schema == 1
+    assert restored_legacy.background_job == legacy["background_job"]
+    assert restored_legacy.background_attempt is None
+    assert restored_legacy.history == legacy["history"]
+    assert load_checkpoint_data(legacy, backend.state.session_id, loop.target).background_attempt is None
+    assert legacy_path.read_bytes() == legacy_bytes
+
+    tampered = deepcopy(saved)
+    tampered["background_attempt"]["step_sha256"] = "f" * 64
+    tampered_path = tmp_path / "tampered.json"
+    tampered_path.write_text(json.dumps(tampered))
+    with pytest.raises(ValueError, match="step fingerprint"):
+        BackgroundMemory.load(tampered_path, backend.state.session_id, loop.target)
+
+    changed_step = deepcopy(saved)
+    changed_step["background_step"]["threshold"] += 1
+    changed_step_path = tmp_path / "changed-step.json"
+    changed_step_path.write_text(json.dumps(changed_step))
+    with pytest.raises(ValueError, match="step fingerprint"):
+        BackgroundMemory.load(changed_step_path, backend.state.session_id, loop.target)
+
+    changed_job = deepcopy(saved)
+    changed_job["background_job"]["deadline_tick"] += 1
+    changed_job_path = tmp_path / "changed-job.json"
+    changed_job_path.write_text(json.dumps(changed_job))
+    with pytest.raises(ValueError, match="step fingerprint"):
+        BackgroundMemory.load(changed_job_path, backend.state.session_id, loop.target)
+
+
+def test_empty_background_checkpoint_is_schema2_and_composes_without_rewriting(tmp_path):
+    backend = ReceiptBackend()
+    loop = controller(backend, tmp_path)
+    path = tmp_path / "empty.json"
+    loop._save()
+    saved = json.loads(Path(loop.checkpoint).read_text())
+    assert saved["background_schema"] == 2 and saved["background_step"] is None
+    assert checkpoint_memory_type(saved) is BackgroundMemory
+    restored = load_checkpoint_data(saved, backend.state.session_id, loop.target)
+    assert restored.background_schema == 2 and restored.background_step is None
 
 
 def test_reconcile_only_verifies_paid_job_after_fresh_resume_once(tmp_path, monkeypatch):
@@ -276,6 +389,62 @@ def delay_native_craft_start(backend, monkeypatch, *, corrupt=None):
         return result
 
     monkeypatch.setattr(backend, "execute", delayed)
+
+
+def test_pending_poll_admission_traces_failed_predicate_before_background_transfer(
+        tmp_path, monkeypatch):
+    backend, sink = ReceiptBackend(), TraceSink()
+    delay_native_craft_start(backend, monkeypatch, corrupt=("queue_valid", False))
+    loop = controller(backend, tmp_path, research_log=sink)
+    first = loop.step()
+    assert first["background_job"] is None
+    assert loop.memory.pending["dispatch"] == "returned"
+    assert loop.memory.background_job is None
+    assert [action for action, _ in backend.calls] == ["factory_craft_job"]
+
+    step = Plan.from_dict(loop.memory.active_plan).steps[loop.memory.step_index]
+    attempt_id = loop.memory.attempt["id"]
+    backend.state.factory["craft_job"]["queue_valid"] = True
+    calls_before = list(backend.calls)
+    observations_before = backend.observations
+    result = loop.step()
+
+    assert result["background_job"] is not None
+    assert loop.memory.pending is None and loop.memory.background_job is not None
+    assert backend.calls == calls_before
+    assert backend.observations == observations_before + 1
+    verification = [event["payload"] for event in sink.events
+                    if event["event_type"] == "verification"
+                    and event["payload"].get("phase") == "pending_poll"]
+    admitted = [event["payload"] for event in sink.events
+                if event["event_type"] == "background_job_admitted"]
+    assert len(verification) == len(admitted) == 1
+    assert verification[0]["verified"] is False
+    assert verification[0]["phase"] == "pending_poll"
+    assert verification[0]["predicate"] == asdict(step)
+    assert verification[0]["action_origin"] == "current_trace"
+    prepared = [event["payload"] for event in sink.events
+                if event["event_type"] == "action_prepared"
+                and event["payload"].get("action") == "factory_craft_job"]
+    returned = [event["payload"] for event in sink.events
+                if event["event_type"] == "action_returned"
+                and event["payload"].get("action") == "factory_craft_job"]
+    poll_observation = [event["payload"] for event in sink.events
+                        if event["event_type"] == "observation"
+                        and event["payload"].get("phase") == "before_decision"][-1]
+    assert len(prepared) == len(returned) == 1
+    assert verification[0]["decision_id"] == poll_observation["decision_id"]
+    assert verification[0]["observation_id"] == poll_observation["observation_id"]
+    assert verification[0]["plan_id"] == prepared[0]["plan_id"]
+    assert verification[0]["step_index"] == prepared[0]["step_index"] == 0
+    assert verification[0]["started_tick"] == loop.memory.background_attempt["started_tick"]
+    assert verification[0]["attempt_id"] == prepared[0]["attempt_id"] == returned[0]["attempt_id"]
+    assert verification[0]["attempt_id"] == admitted[0]["attempt_id"] == attempt_id
+    assert verification[0]["action_id"] == prepared[0]["action_id"] == returned[0]["action_id"]
+    assert verification[0]["action_id"] == admitted[0]["action_id"]
+    event_types = [event["event_type"] for event in sink.events]
+    assert event_types.index("verification") < event_types.index("background_job_admitted")
+    assert "model_request" not in event_types
 
 
 def test_delayed_native_start_admits_once_and_survives_resume(tmp_path, monkeypatch):
