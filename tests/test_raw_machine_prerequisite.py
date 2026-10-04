@@ -5,7 +5,7 @@ import pytest
 
 from jev_factorio.judgments import question_batch
 from jev_factorio.planning.decision_support import scheduling_context
-from jev_factorio.planning.machine_prerequisite import raw_machine_prerequisite
+from jev_factorio.planning.decision_support import raw_machine_prerequisite
 from jev_factorio.planning.ready_work import ReadyWorkPlanner
 from test_factory import catalog, machine, recipe, snapshot
 
