@@ -1,6 +1,7 @@
 import json
 import hashlib
 from collections import Counter
+from copy import deepcopy
 
 import pytest
 
@@ -8,10 +9,27 @@ from jev_factorio.complete_capture import (capture, project_record, verify,
                                            checked_checkpoint_progress, checked_economic_binding)
 from jev_factorio.acceptance_io import canonical
 from jev_factorio.coal_supply import intents
+from jev_factorio import solid_routes as solid
 from jev_factorio.integration_evidence import TRIAL_SCHEMA_V2, TRIAL_SCHEMA_V3, analyze_rows
 from jev_factorio.treatment import SCHEMA, SCHEMA_V2, digest
 from jev_factorio.research_log import Redactor
 from integration_evidence_fixtures import evidence
+
+
+def retain_capture_route(rows, initial, final):
+    """Keep one intent-matched paid route in the capture fixture boundaries."""
+    available = rows[0]['state']['factory']['solid_routes']['routes']
+    route, observation = next((key, value) for key, value in available.items()
+                              if value['item'] != 'coal')
+    saved = solid.commitment(observation)
+    for checkpoint in (initial, final):
+        checkpoint['solid_commitments'] = {route: deepcopy(saved)}
+    for record in rows:
+        for label in ('state', 'after_state'):
+            native = record[label]['factory']['solid_routes']
+            native['routes'] = {route: deepcopy(native['routes'][route])}
+            native['diagnostics'] = []
+    return route, saved
 
 
 def test_projection_retains_paid_coal_solid_and_model_evidence():
@@ -96,18 +114,17 @@ def test_complete_capture_roundtrip_retains_coal_and_rejects_tamper(tmp_path):
     trial['initial_save_sha256'] = hashlib.sha256(save.read_bytes()).hexdigest()
     for checkpoint in (initial, final):
         checkpoint['solid_intents'] = trial['solid_intents']
-        checkpoint['solid_commitments'] = {}
         checkpoint['coal_targets'] = trial['coal_targets']
         checkpoint['coal_kit_policy'] = True
         checkpoint['coal_supply_schema'] = 1
         checkpoint['coal_epoch'] = dict(checkpoint['solid_epoch'])
         checkpoint['coal_commitments'] = {}
         checkpoint['coal_funding'] = None
-    trial['initial_checkpoint_sha256'] = hashlib.sha256(canonical(initial)).hexdigest()
     trial['vm_uuid'] = 'isolated-vm'
     trial['production_vm_uuid'] = 'production-vm'
     for row in rows:
         row['acceptance_configuration'].update(coal_supply=True, coal_kit_policy=True)
+        row.update(solid_funding_schema=1, solid_funding=None)
         row['coal_supply'] = True
         row['coal_supply_evidence'] = {'sources': {'burner-a': {'flow': {'mined': 1}}}}
         row['coal_supply_fault'] = False
@@ -120,6 +137,8 @@ def test_complete_capture_roundtrip_retains_coal_and_rejects_tamper(tmp_path):
                 'actor_index': 1, 'surface_index': 1, 'force_index': 1,
                 'targets': trial['coal_targets'], 'committed': False,
                 'sources': {}, 'reason': 'no_supported_bundle'}
+    retain_capture_route(rows, initial, final)
+    trial['initial_checkpoint_sha256'] = hashlib.sha256(canonical(initial)).hexdigest()
     paths = {}
     for name, value in (('trial', trial), ('initial', initial), ('final', final)):
         paths[name] = tmp_path / (name + '.json')
@@ -201,17 +220,17 @@ def test_complete_capture_v2_admission_roundtrip(tmp_path):
     save.write_bytes(b'fixture-save')
     trial['initial_save_sha256'] = hashlib.sha256(save.read_bytes()).hexdigest()
     for checkpoint in (initial, final):
-        checkpoint.update(solid_intents=trial['solid_intents'], solid_commitments={},
+        checkpoint.update(solid_intents=trial['solid_intents'],
                           coal_targets=trial['coal_targets'], coal_kit_policy=True,
                           coal_supply_schema=2, coal_economic_admission=True,
                           coal_epoch=dict(checkpoint['solid_epoch']),
                           coal_commitments={}, coal_funding=None)
-    trial['initial_checkpoint_sha256'] = hashlib.sha256(canonical(initial)).hexdigest()
     trial['vm_uuid'], trial['production_vm_uuid'] = 'isolated-vm', 'production-vm'
     for row in rows:
         row['acceptance_configuration'].update(coal_supply=True, coal_kit_policy=True,
                                                coal_economic_admission=True)
-        row.update(coal_supply=True, coal_supply_evidence={}, coal_supply_fault=False,
+        row.update(solid_funding_schema=1, solid_funding=None,
+                   coal_supply=True, coal_supply_evidence={}, coal_supply_fault=False,
                    coal_kit_policy=True, coal_kit_evidence={},
                    coal_economic_admission=True,
                    coal_admission_evidence={'eligible': False,
@@ -228,6 +247,8 @@ def test_complete_capture_v2_admission_roundtrip(tmp_path):
                               'surface_index': 1, 'force_index': 1,
                               'qualified': False,
                               'reason': 'electric_conversion_and_construction_cost_unknown'}}
+    retain_capture_route(rows, initial, final)
+    trial['initial_checkpoint_sha256'] = hashlib.sha256(canonical(initial)).hexdigest()
     paths = {}
     for name, value in (('trial', trial), ('initial', initial), ('final', final)):
         paths[name] = tmp_path / (name + '.json')
