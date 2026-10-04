@@ -1,0 +1,19 @@
+name: PR reference safety
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+permissions:
+  contents: read
+concurrency:
+  group: pr-reference-safety-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  body:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Reject negated numbered closing references
+        run: python scripts/check_pr_references.py "$GITHUB_EVENT_PATH"
