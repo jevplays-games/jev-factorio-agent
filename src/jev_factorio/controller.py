@@ -58,6 +58,7 @@ class HierarchicalLoop(AgentLoop):
                  exact_checkpoint_sha256: str | None = None,
                  blocked_source_revision: str | None = None,
                  persist_recoverable_blocks: bool = False,
+                 initialize_persistent_campaign: bool = False,
                  persistent_idle_observations: int = DEFAULT_IDLE_OBSERVATIONS):
         if factory_scheduling not in {"serial", "ready-work"}:
             raise ValueError("Unknown factory scheduling policy")
@@ -85,6 +86,12 @@ class HierarchicalLoop(AgentLoop):
         if type(persist_recoverable_blocks) is not bool:
             raise ValueError("Persistent blocked recovery must be a boolean")
         self.persist_recoverable_blocks = persist_recoverable_blocks
+        if type(initialize_persistent_campaign) is not bool:
+            raise ValueError("New persistent campaign flag must be a boolean")
+        if initialize_persistent_campaign and (
+                not persist_recoverable_blocks or resume_controller or reevaluate_blocked_once
+                or self.checkpoint is None or self.checkpoint.exists() or self.checkpoint.is_symlink()):
+            raise ValueError("New persistent campaign requires an unused checkpoint and no resume")
         if (type(persistent_idle_observations) is not int
                 or not 0 <= persistent_idle_observations <= MAX_IDLE_OBSERVATIONS):
             raise ValueError("Persistent idle observations must be an integer in [0, 1000]")
@@ -151,7 +158,8 @@ class HierarchicalLoop(AgentLoop):
             self._blocked_reevaluation_source = source
         if persist_recoverable_blocks:
             revision = self.provenance.get("code_revision")
-            if (not resume_controller or self.checkpoint is None or policy != "jev"
+            if ((not resume_controller and not initialize_persistent_campaign)
+                    or self.checkpoint is None or policy != "jev"
                     or getattr(jev, "is_mock", False) or not isinstance(revision, dict)):
                 raise ValueError("Persistent blocked recovery requires resumed live Jev control and source provenance")
         self.memory: CampaignMemory | None = None
