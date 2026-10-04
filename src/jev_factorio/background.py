@@ -6,7 +6,7 @@ uncertain dispatches retain the original write-ahead and no-replay barrier.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,41 +15,97 @@ from .craft_jobs import CraftJob, InvalidCraftEvidence
 from .memory import CampaignMemory
 from .planning.background_work import background_wait, independent_candidates
 from .planning.ready_work import ReadyWorkPlanner
-from .skills import Plan
-from .telemetry import utc_now, validate_attempt
+from .skills import Plan, Step
+from .telemetry import fingerprint, phase, utc_now, validate_attempt
+
+
+def _craft_job_step_fingerprint(job: CraftJob) -> str:
+    """Rebuild the canonical step for a legacy schema-2 job.
+
+    Schema 2 did not persist the full step. Accept it only when the hash proves
+    this canonical form; otherwise its exact binding cannot be recovered.
+    """
+    if len(job.outputs) != 1:
+        raise ValueError("Background craft does not have one bound output")
+    item, output = next(iter(job.outputs.items()))
+    step = Step(
+        action="factory_craft_job", effect="craft_job_complete", item=item,
+        threshold=job.baseline[item] + output, costs=deepcopy(job.inputs),
+        timeout_ticks=job.deadline_tick - job.started_tick,
+        parameters=deepcopy(job.parameters),
+    )
+    return fingerprint(asdict(step))
+
+
+def _validate_background_step(job: CraftJob, attempt: dict, data: dict) -> Step:
+    """Validate a schema-3 saved step against both its attempt and craft job."""
+    if not isinstance(data, dict):
+        raise ValueError("Background attempt step is missing")
+    try:
+        step = Step(**deepcopy(data))
+    except (TypeError, ValueError) as error:
+        raise ValueError("Invalid background attempt step") from error
+    if (asdict(step) != data
+            or attempt["step_sha256"] != fingerprint(asdict(step))
+            or step.action != "factory_craft_job"
+            or step.effect != "craft_job_complete"
+            or step.parameters != job.parameters
+            or step.costs != job.inputs
+            or set(job.outputs) != {step.item}
+            or step.timeout_ticks != job.deadline_tick - job.started_tick):
+        raise ValueError("Background attempt step fingerprint or job binding mismatch")
+    return step
 
 
 @dataclass
 class BackgroundMemory(CampaignMemory):
+    # Schema 3 is required only while the active job carries its exact Step.
+    # Preserve the schema-2 empty/completed extension for existing consumers.
     background_schema: int = 2
     background_job: dict | None = None
     background_attempt: dict | None = None
+    background_step: dict | None = None
 
     @classmethod
     def _from_data(cls, data: dict, session_id: str, target: str) -> BackgroundMemory:
         memory = super()._from_data(data, session_id, target)
-        if type(memory.background_schema) is not int or memory.background_schema not in {1, 2}:
+        if type(memory.background_schema) is not int or memory.background_schema not in {1, 2, 3}:
             raise ValueError("Unsupported background checkpoint extension")
         if memory.background_schema == 1:
-            if memory.background_attempt is not None:
+            if memory.background_attempt is not None or memory.background_step is not None:
                 raise ValueError("Legacy background checkpoint has unexpected attempt")
             if memory.background_job is None:
                 memory.background_schema = 2
-        elif (memory.background_job is None) != (memory.background_attempt is None):
+        elif memory.background_schema == 2:
+            if memory.background_step is not None:
+                raise ValueError("Legacy background checkpoint has unexpected step")
+            if (memory.background_job is None) != (memory.background_attempt is None):
+                raise ValueError("Background job and attempt identity must coexist")
+        elif ((memory.background_job is None) != (memory.background_attempt is None)
+              or (memory.background_job is None) != (memory.background_step is None)):
             raise ValueError("Background job and attempt identity must coexist")
         if memory.background_job is not None:
             job = CraftJob.from_dict(memory.background_job)
             attempt = memory.background_attempt
             if attempt is not None:
                 validate_attempt(attempt)
+                if memory.background_schema == 2:
+                    try:
+                        expected_step_sha256 = _craft_job_step_fingerprint(job)
+                    except (TypeError, ValueError, KeyError) as error:
+                        raise ValueError("Legacy background step binding is unprovable") from error
+                else:
+                    _validate_background_step(job, attempt, memory.background_step)
+                    expected_step_sha256 = attempt["step_sha256"]
                 if (attempt["action"] != "factory_craft_job"
                         or attempt["plan_id"] != job.plan_id
                         or attempt["step_index"] != 0
                         or attempt["receipt"] != job.parameters["receipt"]
+                        or attempt["step_sha256"] != expected_step_sha256
                         or attempt["started_tick"] > job.started_tick
                         or (memory.attempt and attempt["id"] == memory.attempt["id"])
                         or any(item["id"] == attempt["id"] for item in memory.attempt_outcomes)):
-                    raise ValueError("Background attempt identity mismatch")
+                    raise ValueError("Background attempt identity or step fingerprint mismatch")
             if (job.session_id != session_id or job.goal != memory.active_goal
                     or job.started_tick > memory.last_tick
                     or job.last_progress_tick > memory.last_tick
@@ -140,6 +196,7 @@ class BackgroundWorkLoop(HierarchicalLoop):
                         })
                         self.memory.attempt_outcomes = self.memory.attempt_outcomes[-64:]
                     self.memory.background_attempt = None
+                    self.memory.background_step = None
                     self.memory.background_schema = 2
                     # Verified native progress breaks a consecutive no-choice streak.
                     self.memory.stalled_decisions = 0
@@ -192,7 +249,8 @@ class BackgroundWorkLoop(HierarchicalLoop):
 
     def _execution_barrier(self, snapshot) -> bool:
         job = self._job()
-        return self._save_poisoned or bool(job and job.failed)
+        return (self._save_poisoned or bool(job and job.failed)
+                or super()._execution_barrier(snapshot))
 
     def _step_allowed(self, step, snapshot) -> bool:
         job = self._job()
@@ -209,10 +267,10 @@ class BackgroundWorkLoop(HierarchicalLoop):
                 "background_job": deepcopy(self.memory.background_job),
                 "background_attempt": deepcopy(self.memory.background_attempt)}
 
-    def _admit_background(self, snapshot) -> bool:
+    def _background_admission_candidate(self, snapshot) -> CraftJob | None:
         if (self.memory.status != "running" or self.memory.background_job is not None
                 or not self.memory.active_plan or not self.memory.pending):
-            return False
+            return None
         plan = Plan.from_dict(self.memory.active_plan)
         try:
             job = CraftJob.admit(plan, self.memory.pending, snapshot, self.catalog)
@@ -220,10 +278,31 @@ class BackgroundWorkLoop(HierarchicalLoop):
             # freeing the actor. Admission is not completion verification.
             job.observe(snapshot)
         except InvalidCraftEvidence:
-            return False  # Keep pending and its original deadline; never retry.
+            return None  # Keep pending and its original deadline; never retry.
+        step = plan.steps[self.memory.step_index]
+        attempt = self.memory.attempt
+        if (attempt is None
+                or attempt["step_sha256"] != fingerprint(asdict(step))
+                or step.effect != "craft_job_complete"
+                or step.parameters != job.parameters
+                or step.costs != job.inputs
+                or set(job.outputs) != {step.item}
+                or step.timeout_ticks != job.deadline_tick - job.started_tick):
+            return None  # A paid receipt cannot replace an unbound foreground step.
+        return job
+
+    def _admit_background(self, snapshot, *, candidate: CraftJob | None = None) -> bool:
+        if (self.memory.status != "running" or self.memory.background_job is not None
+                or not self.memory.active_plan or not self.memory.pending):
+            return False
+        job = candidate or self._background_admission_candidate(snapshot)
+        if job is None:
+            return False
+        plan = Plan.from_dict(self.memory.active_plan)
         self.memory.background_job = job.to_dict()
         self.memory.background_attempt = deepcopy(self.memory.attempt)
-        self.memory.background_schema = 2
+        self.memory.background_step = asdict(plan.steps[self.memory.step_index])
+        self.memory.background_schema = 3
         evidence = {**self._trace.attempt_ref(
             self.memory.attempt["id"] if self.memory.attempt else None),
                     "plan_id": plan.id, "receipt": job.parameters["receipt"],
@@ -249,8 +328,20 @@ class BackgroundWorkLoop(HierarchicalLoop):
         pending = self.memory.pending
         plan = Plan.from_dict(self.memory.active_plan)
         step = plan.steps[self.memory.step_index]
-        if not step.satisfied(snapshot) and self._admit_background(snapshot):
-            return self._record(snapshot, "observe", "Acknowledged craft continues in background")
+        if step.action == "factory_craft_job":
+            candidate = self._background_admission_candidate(snapshot)
+            if candidate is not None:
+                # Candidate creation proves a running receipt; the completion
+                # predicate is therefore expected to be false. Record that
+                # exact pending-poll observation before admission clears it.
+                with phase("verification", self._diagnostic_trace):
+                    verified = self._trace.verify(
+                        step, snapshot, plan_id=plan.id, index=self.memory.step_index,
+                        pending=pending, phase="pending_poll",
+                        attempt_id=self.memory.attempt["id"],
+                    )
+                if not verified and self._admit_background(snapshot, candidate=candidate):
+                    return self._record(snapshot, "observe", "Acknowledged craft continues in background")
         if (self.memory.status == "running" and pending.get("dispatch") == "returned"
                 and step.action == "factory_wait"
                 and step.effect in {"crafting_idle", "research_progress"}

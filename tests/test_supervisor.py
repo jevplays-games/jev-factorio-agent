@@ -421,26 +421,26 @@ def memory_checkpoint(supervisor, *, status="uncertain"):
 
 def background_checkpoint(supervisor):
     from jev_factorio.background import BackgroundMemory
-    from jev_factorio.craft_jobs import CraftJob
+    from test_background_work import ReceiptBackend, ScenarioLoop
 
-    parameters = {"recipe": "iron-plate", "batches": 1, "receipt": "craft-receipt"}
-    plan = Plan("background-plan", "rocket_launch", "Acknowledged craft",
-                (Step("factory_craft_job", "crafting_idle", timeout_ticks=100,
-                      parameters=parameters),))
-    pending = {"started_tick": 1, "polls": 0, "action": "factory_craft_job", "dispatch": "returned"}
-    attempt = make_attempt(supervisor.config.session_id, "rocket_launch", asdict(plan), 0, pending)
-    job = CraftJob(parameters=parameters, plan_id=plan.id, goal=plan.goal,
-                   session_id=supervisor.config.session_id,
-                   actor={"player_index": 1, "unit_number": 2, "surface_index": 1, "force_index": 1},
-                   inputs={"iron-ore": 1}, outputs={"iron-plate": 1},
-                   baseline={"iron-plate": 0}, started_tick=1, deadline_tick=101,
-                   last_progress_tick=1)
-    memory = BackgroundMemory(supervisor.config.session_id, "rocket_launch",
-                              status="running", active_goal="rocket_launch", last_tick=2,
-                              background_schema=2, background_job=job.to_dict(),
-                              background_attempt=attempt)
-    value = json.loads(json.dumps(asdict(memory)))
-    BackgroundMemory.from_bytes(json.dumps(value).encode(), "fresh", "rocket_launch")
+    backend = ReceiptBackend()
+    backend.state.session_id = supervisor.config.session_id
+    backend.state.factory["craft_job_actor"]["session_id"] = supervisor.config.session_id
+    loop = ScenarioLoop(
+        backend, policy="deterministic", factory_scheduling="ready-work",
+        target="rocket_launch", checkpoint=str(supervisor.config.checkpoint.with_name("background.json")),
+        resume_controller=False, tick_seconds=0,
+    )
+    loop.memory = BackgroundMemory(
+        supervisor.config.session_id, "rocket_launch", active_goal="rocket_launch",
+        completed_goals={goal: 0 for goal in loop.order[:-1]}, last_tick=backend.state.tick,
+    )
+    record = loop.step()
+    assert record["background_job"]
+    value = json.loads(json.dumps(asdict(loop.memory)))
+    assert value["background_schema"] == 3
+    assert value["background_step"] is not None
+    BackgroundMemory.from_bytes(json.dumps(value).encode(), supervisor.config.session_id, "rocket_launch")
     return value
 
 
@@ -468,6 +468,39 @@ def test_completed_pending_memory_is_reconciled_by_watcher(supervisor, monkeypat
 
     assert supervisor.watch_game() == "checkpoint_reconciliation"
     assert json.dumps(supervisor.checkpoint(), sort_keys=True) == original
+
+
+def test_completed_orphan_background_step_is_reconciled_and_preserved(supervisor, monkeypatch):
+    completed = memory_checkpoint(supervisor, status="completed")
+    completed["background_step"] = {"action": "factory_craft_job", "receipt": "retained-owner"}
+    original = json.dumps(completed, sort_keys=True)
+    revision = {"commit": "a" * 40, "source_sha256": "1" * 64}
+    atomic_json(supervisor.config.checkpoint, completed)
+    supervisor.save(code_revision=revision)
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: revision)
+    supervisor.popen = lambda *args, **kwargs: pytest.fail("orphan background owner launched gameplay")
+
+    assert Supervisor.has_unresolved_work(completed)
+    assert supervisor.watch_game() == "checkpoint_reconciliation"
+    assert json.dumps(supervisor.checkpoint(), sort_keys=True) == original
+
+
+def test_manual_source_change_rejects_step_only_background_owner(supervisor, monkeypatch):
+    before = {"commit": "a" * 40, "source_sha256": "1" * 64}
+    after = {"commit": "b" * 40, "source_sha256": "2" * 64}
+    checkpoint = memory_checkpoint(supervisor)
+    checkpoint["background_step"] = {"action": "factory_craft_job", "receipt": "retained-owner"}
+    atomic_json(supervisor.config.checkpoint, checkpoint)
+    supervisor.save(code_revision=before)
+    state = json.dumps(supervisor.state, sort_keys=True)
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: after)
+
+    with pytest.raises(ValueError, match="pending action requires reconciliation"):
+        supervisor.record_manual_intervention(
+            {"actor": "operator", "reason": "code_change", "evidence": ["reviewed"]})
+
+    assert json.dumps(supervisor.state, sort_keys=True) == state
+    assert supervisor.checkpoint() == checkpoint
 
 
 def test_run_does_not_succeed_with_completed_pending_memory(supervisor, monkeypatch):

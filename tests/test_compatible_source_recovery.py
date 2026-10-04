@@ -38,6 +38,51 @@ def test_new_lineage_rejects_zero_source_digest_without_checkpoint_effect(tmp_pa
     assert asdict(memory) == before
 
 
+def test_legacy_compatible_scope_without_background_step_keeps_its_exact_preimage(tmp_path):
+    memory = BackgroundMemory(session_id="original-session", target="rocket_launch")
+    authority = {"schema": 1, "authorization_id": "migration-legacy-scope",
+        "checkpoint_sha256": "c" * 64, "session_id": memory.session_id,
+        "target": memory.target, "previous_source": OLD.copy(), "current_source": NEW.copy(),
+        "decision_contract_sha256": "d" * 64, "scope": recovery.scope(memory),
+        "owner_invocation": OWNER.copy(), "supervisor_history_sha256": "e" * 64,
+        "lock_path": str((tmp_path / "original-writer.lock").resolve()),
+        "provider_state_sha256": None, "provider_identity_sha256": None}
+    authority["scope"].pop("background_step")
+    record = dict(authority, authorization_sha256=recovery.digest_json(authority))
+    memory.compatible_source_recoveries = [record]
+
+    assert recovery.validate_lineage(memory) == [record]
+    assert "background_step" not in record["scope"]
+
+
+def test_compatible_scope_rejects_an_orphan_background_step(tmp_path):
+    memory = BackgroundMemory(session_id="original-session", target="rocket_launch")
+    authority = {"schema": 1, "authorization_id": "migration-orphan-step",
+        "checkpoint_sha256": "c" * 64, "session_id": memory.session_id,
+        "target": memory.target, "previous_source": OLD.copy(), "current_source": NEW.copy(),
+        "decision_contract_sha256": "d" * 64, "scope": recovery.scope(memory),
+        "owner_invocation": OWNER.copy(), "supervisor_history_sha256": "e" * 64,
+        "lock_path": str((tmp_path / "original-writer.lock").resolve()),
+        "provider_state_sha256": None, "provider_identity_sha256": None}
+    authority["scope"]["background_step"] = {"action": "factory_craft_job"}
+    record = dict(authority, authorization_sha256=recovery.digest_json(authority))
+    memory.compatible_source_recoveries = [record]
+
+    with pytest.raises(ValueError, match="background pair"):
+        recovery.validate_lineage(memory)
+
+
+def test_compatible_paid_handoff_quiescence_includes_background_step():
+    memory = BackgroundMemory(
+        session_id="original-session", target="rocket_launch", status="running",
+        active_plan={"selected": "paid"},
+        background_step={"action": "factory_craft_job", "receipt": "retained-owner"},
+    )
+
+    with pytest.raises(ValueError, match="quiescent selected plan"):
+        recovery.validate_selected_paid_handoff(memory)
+
+
 def setup(tmp_path, monkeypatch):
     monkeypatch.setenv("JEV_FACTORIO_PROVENANCE", json.dumps({**OWNER, "code_revision": NEW}))
     backend = ReceiptBackend()
@@ -83,6 +128,8 @@ def test_paid_background_migration_precedes_observation_and_preserves_all_state(
     after = asdict(BackgroundMemory.load(path, migrated.session_id, migrated.target))
     assert after["background_job"] == before["background_job"]
     assert after["background_attempt"] == before["background_attempt"]
+    assert authority["scope"]["background_step"] == before["background_step"]
+    assert after["background_step"] == before["background_step"]
     assert after["failures"] == before["failures"]
     assert after["attempt_outcomes"] == before["attempt_outcomes"]
     assert after["blocked_recovery"]["attempts"] == before["blocked_recovery"]["attempts"]
@@ -94,6 +141,54 @@ def test_paid_background_migration_precedes_observation_and_preserves_all_state(
     assert recovery.approved_sources(migrated, {"commit": "3" * 40, "source_sha256": "f" * 64}) != [OLD, NEW]
     with pytest.raises(ValueError, match="supervisor run identity"):
         recovery.validate_current_owner(migrated, {**OWNER, "run_id": "foreign-run"})
+
+
+def test_migration_rejects_changed_exact_background_step_without_checkpoint_effect(tmp_path, monkeypatch):
+    _, original, path, authority = setup(tmp_path, monkeypatch)
+    before = path.read_bytes()
+    history = deepcopy(original.memory.history)
+    authority["scope"]["background_step"]["threshold"] += 1
+
+    with pytest.raises(ValueError, match="authorized checkpoint/owner/source scope"):
+        migrate(path, authority)
+
+    assert path.read_bytes() == before
+    assert original.memory.history == history
+
+
+def test_legacy_scope_migrates_without_rewriting_its_old_digest_or_history(tmp_path, monkeypatch):
+    _, original, path, authority = setup(tmp_path, monkeypatch)
+    legacy_data = json.loads(path.read_text())
+    legacy_data["background_schema"] = 2
+    legacy_data.pop("background_step")
+    raw = json.dumps(legacy_data, separators=(",", ":")).encode("utf-8")
+    path.write_bytes(raw)
+    legacy_memory = BackgroundMemory.from_bytes(raw, original.memory.session_id, original.memory.target)
+    authority["checkpoint_sha256"] = hashlib.sha256(raw).hexdigest()
+    authority["scope"] = recovery.scope(
+        legacy_memory, include_background_step=False, include_step_in_state=False)
+    history = deepcopy(legacy_memory.history)
+
+    migrated = migrate(path, authority)
+
+    record = migrated.compatible_source_recoveries[-1]
+    assert "background_step" not in record["scope"]
+    assert record["authorization_sha256"] == recovery.digest_json(authority)
+    assert migrated.background_schema == 2 and migrated.background_step is None
+    assert migrated.background_job == legacy_memory.background_job
+    assert migrated.background_attempt == legacy_memory.background_attempt
+    assert migrated.history == history
+
+
+def test_legacy_scope_cannot_authorize_nonnull_background_step(tmp_path, monkeypatch):
+    _, original, path, authority = setup(tmp_path, monkeypatch)
+    authority["scope"] = recovery.scope(original.memory, include_background_step=False)
+    before = path.read_bytes()
+
+    with pytest.raises(ValueError, match="authorized checkpoint/owner/source scope"):
+        migrate(path, authority)
+
+    assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize("result", ["running", "completed", "mismatched", "failed"])

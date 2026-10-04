@@ -35,7 +35,7 @@ def reconciliation_report(memory: CampaignMemory, snapshot: GameSnapshot | None 
         "evidence_class": "no_observation",
         "guidance": "Preserve pending intent. Captured evidence is not authorization to retry, clear, or resume a live campaign.",
     }
-    for key in ("background_schema", "background_job", "background_attempt",
+    for key in ("background_schema", "background_job", "background_attempt", "background_step",
                 "output_buffers_schema", "output_commitments",
                 "input_routes_schema", "input_commitments", "outposts_schema", "outpost_commitments"):
         if hasattr(memory, key):
