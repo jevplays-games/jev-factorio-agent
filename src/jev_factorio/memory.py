@@ -291,11 +291,10 @@ class CampaignMemory:
             raise ValueError("Invalid controller checkpoint; refusing to reset it") from error
 
 
-def load_checkpoint(path: Path, session_id: str, target: str) -> CampaignMemory:
+def checkpoint_memory_type(data: dict):
+    """Return the exact composed memory type required by checkpoint fields."""
     from .controller import HierarchicalLoop
 
-    raw = path.read_bytes()
-    data = json.loads(raw.decode('utf-8'))
     if not isinstance(data, dict):
         raise ValueError("Invalid controller checkpoint")
     loop_type = HierarchicalLoop
@@ -324,20 +323,51 @@ def load_checkpoint(path: Path, session_id: str, target: str) -> CampaignMemory:
             raise ValueError('Incomplete successor checkpoint extension')
         from .successor_controller import successor_loop_type
         loop_type = successor_loop_type(loop_type)
-    if {"solid_routes_schema", "solid_intents", "solid_epoch", "solid_commitments", "solid_science_policy"} & data.keys():
+    # Funding and catalog fields are ownership evidence too. They can appear
+    # even when a damaged/edited checkpoint has lost the extension's schema
+    # marker; selecting the base loader in that case would silently discard
+    # paid-work state.
+    if ({"solid_routes_schema", "solid_science_policy", "solid_intents", "solid_epoch",
+         "solid_commitments", "solid_funding", "solid_funding_catalogs"} & data.keys()):
         from .solid_controller import CHECKPOINT_FIELDS, solid_loop_type
         if not CHECKPOINT_FIELDS <= data.keys():
             raise ValueError("Incomplete solid-route checkpoint extension")
         loop_type = solid_loop_type(loop_type)
-    if {"coal_supply_schema", "coal_targets", "coal_epoch", "coal_commitments"} & data.keys():
+    if ({"coal_supply_schema", "coal_kit_policy", "coal_economic_admission", "coal_targets",
+         "coal_epoch", "coal_commitments", "coal_funding"} & data.keys()):
         from .coal_controller import CHECKPOINT_FIELDS, coal_loop_type
         if not CHECKPOINT_FIELDS <= data.keys():
             raise ValueError("Incomplete coal checkpoint extension")
         loop_type = coal_loop_type(loop_type)
-    memory = loop_type.memory_type.from_bytes(raw, session_id, target)
+    return loop_type.memory_type
+
+
+def load_checkpoint_bytes(raw: bytes, session_id: str, target: str, *,
+                          checkpoint_path: Path | None = None,
+                          memory_type=None) -> CampaignMemory:
+    """Validate one immutable capture through the complete composed loader.
+
+    ``checkpoint_path`` is required for archived blocked-recovery history; it
+    supplies the content-addressed segment directory without changing the
+    checkpoint bytes. Supplying ``memory_type`` lets repair compare old and new
+    captures through the union of both checkpoints' enabled schemas.
+    """
+    def invalid_constant(value):
+        raise ValueError(f"Invalid numeric constant in checkpoint: {value}")
+
+    try:
+        data = json.loads(raw.decode('utf-8'), parse_constant=invalid_constant)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Invalid controller checkpoint; refusing to reset it") from error
+    if not isinstance(data, dict):
+        raise ValueError("Invalid controller checkpoint")
+    memory_type = memory_type or checkpoint_memory_type(data)
+    memory = memory_type.from_bytes(raw, session_id, target)
     if memory.blocked_recovery_archive is not None:
+        if checkpoint_path is None:
+            raise ValueError("Archived checkpoint validation requires its checkpoint path")
         from .blocked_recovery_archive import build_index
-        memory._blocked_recovery_archive_index = build_index(path, memory)
+        memory._blocked_recovery_archive_index = build_index(checkpoint_path, memory)
     try:
         validate_history_authority(memory, archive_index=getattr(memory, "_blocked_recovery_archive_index", None))
     except BaseException:
@@ -346,3 +376,20 @@ def load_checkpoint(path: Path, session_id: str, target: str) -> CampaignMemory:
             index.close()
         raise
     return memory
+
+
+def load_checkpoint_data(data: dict, session_id: str, target: str, *,
+                         checkpoint_path: Path | None = None,
+                         memory_type=None) -> CampaignMemory:
+    """Validate a detached checkpoint object with the same composed schema."""
+    try:
+        raw = json.dumps(data, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError) as error:
+        raise ValueError("Invalid detached controller checkpoint") from error
+    return load_checkpoint_bytes(raw, session_id, target,
+                                 checkpoint_path=checkpoint_path, memory_type=memory_type)
+
+
+def load_checkpoint(path: Path, session_id: str, target: str) -> CampaignMemory:
+    return load_checkpoint_bytes(path.read_bytes(), session_id, target,
+                                 checkpoint_path=path)
