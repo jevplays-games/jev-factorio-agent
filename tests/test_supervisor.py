@@ -1,9 +1,13 @@
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
 from jev_factorio.supervisor import Supervisor, SupervisorConfig, atomic_json
+from jev_factorio.memory import CampaignMemory
+from jev_factorio.skills import Plan, Step
+from jev_factorio.telemetry import make_attempt
 
 
 class FakeClock:
@@ -170,6 +174,151 @@ def test_terminal_checkpoint_does_not_launch(supervisor, status):
     atomic_json(supervisor.config.checkpoint, checkpoint)
     supervisor.popen = lambda *args, **kwargs: pytest.fail("should not launch")
     assert supervisor.watch_game() == status
+
+
+def memory_checkpoint(supervisor, *, status="uncertain"):
+    plan = Plan("retained-plan", "rocket_launch", "Retained action",
+                (Step("mine_iron", "inventory", "iron-ore", 1),))
+    memory = CampaignMemory(supervisor.config.session_id, "rocket_launch", status=status,
+                            active_goal="rocket_launch", active_plan=asdict(plan), last_tick=1)
+    memory.pending = {"started_tick": 1, "polls": 0, "action": "mine_iron", "dispatch": "ambiguous"}
+    memory.attempt = make_attempt(memory.session_id, memory.target, memory.active_plan, 0, memory.pending)
+    return json.loads(json.dumps(asdict(memory)))
+
+
+def background_checkpoint(supervisor):
+    from jev_factorio.background import BackgroundMemory
+    from jev_factorio.craft_jobs import CraftJob
+
+    parameters = {"recipe": "iron-plate", "batches": 1, "receipt": "craft-receipt"}
+    plan = Plan("background-plan", "rocket_launch", "Acknowledged craft",
+                (Step("factory_craft_job", "crafting_idle", timeout_ticks=100,
+                      parameters=parameters),))
+    pending = {"started_tick": 1, "polls": 0, "action": "factory_craft_job", "dispatch": "returned"}
+    attempt = make_attempt(supervisor.config.session_id, "rocket_launch", asdict(plan), 0, pending)
+    job = CraftJob(parameters=parameters, plan_id=plan.id, goal=plan.goal,
+                   session_id=supervisor.config.session_id,
+                   actor={"player_index": 1, "unit_number": 2, "surface_index": 1, "force_index": 1},
+                   inputs={"iron-ore": 1}, outputs={"iron-plate": 1},
+                   baseline={"iron-plate": 0}, started_tick=1, deadline_tick=101,
+                   last_progress_tick=1)
+    memory = BackgroundMemory(supervisor.config.session_id, "rocket_launch",
+                              status="running", active_goal="rocket_launch", last_tick=2,
+                              background_schema=2, background_job=job.to_dict(),
+                              background_attempt=attempt)
+    value = json.loads(json.dumps(asdict(memory)))
+    BackgroundMemory.from_bytes(json.dumps(value).encode(), "fresh", "rocket_launch")
+    return value
+
+
+def test_completed_pending_memory_is_rejected_by_repair(supervisor, tmp_path):
+    previous = memory_checkpoint(supervisor)
+    completed = {**previous, "status": "completed"}
+    CampaignMemory.from_bytes(json.dumps(previous).encode(), "fresh", "rocket_launch")
+    CampaignMemory.from_bytes(json.dumps(completed).encode(), "fresh", "rocket_launch")
+    atomic_json(supervisor.config.checkpoint, completed)
+    result = operational_result(supervisor, tmp_path)
+
+    assert not supervisor.validate_repair(result, previous, ("head", "diff"))
+    assert supervisor.checkpoint()["pending"] == previous["pending"]
+    assert supervisor.checkpoint()["attempt"] == previous["attempt"]
+
+
+def test_completed_pending_memory_is_reconciled_by_watcher(supervisor, monkeypatch):
+    completed = memory_checkpoint(supervisor, status="completed")
+    original = json.dumps(completed, sort_keys=True)
+    revision = {"commit": "a" * 40, "source_sha256": "1" * 64}
+    atomic_json(supervisor.config.checkpoint, completed)
+    supervisor.save(code_revision=revision)
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: revision)
+    supervisor.popen = lambda *args, **kwargs: pytest.fail("unresolved completion launched gameplay")
+
+    assert supervisor.watch_game() == "checkpoint_reconciliation"
+    assert json.dumps(supervisor.checkpoint(), sort_keys=True) == original
+
+
+def test_run_does_not_succeed_with_completed_pending_memory(supervisor, monkeypatch):
+    completed = memory_checkpoint(supervisor, status="completed")
+    revision = {"commit": "a" * 40, "source_sha256": "1" * 64}
+    atomic_json(supervisor.config.checkpoint, completed)
+    supervisor.save(code_revision=revision)
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: revision)
+    supervisor.popen = lambda *args, **kwargs: pytest.fail("unresolved completion launched gameplay")
+
+    assert supervisor.run() == 2
+    assert supervisor.state["phase"] == "blocked"
+    assert supervisor.checkpoint()["pending"] == completed["pending"]
+    assert supervisor.checkpoint()["attempt"] == completed["attempt"]
+
+
+def test_running_game_cannot_finish_completed_with_pending_work(supervisor, monkeypatch):
+    running = CampaignMemory("fresh", "rocket_launch", status="running", last_tick=1)
+    atomic_json(supervisor.config.checkpoint, asdict(running))
+    completed = memory_checkpoint(supervisor, status="completed")
+    revision = {"commit": "a" * 40, "source_sha256": "1" * 64}
+    supervisor.save(code_revision=revision)
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: revision)
+    monkeypatch.setattr(supervisor, "record_revision", lambda *args, **kwargs: True)
+
+    def launch(*args, **kwargs):
+        atomic_json(supervisor.config.checkpoint, completed)
+        supervisor.process = FakeProcess()
+
+    monkeypatch.setattr(supervisor, "launch", launch)
+
+    assert supervisor.watch_game() == "checkpoint_reconciliation"
+    assert supervisor.state["repair_required"] is True
+    assert supervisor.checkpoint()["pending"] == completed["pending"]
+
+
+def test_historical_attempt_outcomes_do_not_block_valid_completion(supervisor, monkeypatch):
+    memory = CampaignMemory("fresh", "rocket_launch", status="completed",
+                            active_goal="rocket_launch", completed_goals={"rocket_launch": 1},
+                            last_tick=1)
+    old = memory_checkpoint(supervisor)
+    attempt = old["attempt"]
+    memory.attempt_outcomes = [{**attempt, "outcome": "verified", "finished_tick": 1,
+                                "finished_at_utc": "2026-10-04T12:00:00+00:00",
+                                "latency_seconds": None}]
+    checkpoint = asdict(memory)
+    CampaignMemory.from_bytes(json.dumps(checkpoint).encode(), "fresh", "rocket_launch")
+    atomic_json(supervisor.config.checkpoint, checkpoint)
+    revision = {"commit": "a" * 40, "source_sha256": "1" * 64}
+    supervisor.save(code_revision=revision)
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: revision)
+
+    assert supervisor.watch_game() == "completed"
+
+
+def test_changed_code_with_acknowledged_background_job_starts_reconciliation(supervisor, monkeypatch):
+    before = {"commit": "a" * 40, "source_sha256": "1" * 64}
+    after = {"commit": "b" * 40, "source_sha256": "2" * 64}
+    checkpoint = background_checkpoint(supervisor)
+    atomic_json(supervisor.config.checkpoint, checkpoint)
+    supervisor.save(code_revision=before)
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: after)
+    supervisor.popen = lambda *args, **kwargs: pytest.fail("background source change launched gameplay")
+
+    assert supervisor.watch_game() == "checkpoint_reconciliation"
+    assert supervisor.state["repair_required"] is True
+    assert supervisor.checkpoint() == checkpoint
+
+
+def test_manual_changed_code_with_acknowledged_background_job_is_rejected(supervisor, monkeypatch):
+    before = {"commit": "a" * 40, "source_sha256": "1" * 64}
+    after = {"commit": "b" * 40, "source_sha256": "2" * 64}
+    checkpoint = background_checkpoint(supervisor)
+    atomic_json(supervisor.config.checkpoint, checkpoint)
+    supervisor.save(code_revision=before)
+    state = json.dumps(supervisor.state, sort_keys=True)
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: after)
+
+    with pytest.raises(ValueError, match="pending action requires reconciliation"):
+        supervisor.record_manual_intervention(
+            {"actor": "operator", "reason": "code_change", "evidence": ["reviewed"]})
+
+    assert json.dumps(supervisor.state, sort_keys=True) == state
+    assert supervisor.checkpoint() == checkpoint
 
 
 def test_changed_code_with_pending_action_starts_repair_without_gameplay(supervisor, monkeypatch):

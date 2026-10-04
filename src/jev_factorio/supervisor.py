@@ -273,9 +273,11 @@ class Supervisor:
         before = self.state.get("code_revision")
         after = self.snapshot_revision(manual=True)
         checkpoint = self.checkpoint()
-        if checkpoint.get("pending") and (before is None or after is None or before != after):
+        if (self.has_unresolved_work(checkpoint)
+                and (before is None or after is None or before != after)):
             raise ValueError(
-                "Code provenance changed while a pending action requires reconciliation"
+                "Code provenance changed while a pending action requires reconciliation "
+                "or acknowledged background work requires compatible-source review"
             )
         segment = self.state["segment"] + 1
         previous_segment = self.state["segment_id"]
@@ -310,6 +312,19 @@ class Supervisor:
         if checkpoint.get("status") not in {"running", "blocked", "uncertain", "completed"}:
             raise ValueError("Checkpoint status is invalid")
         return checkpoint
+
+    @staticmethod
+    def has_unresolved_work(checkpoint: dict) -> bool:
+        """Return whether the checkpoint still owns executable or paid work.
+
+        Completed attempt outcomes, histories, and other retained evidence are
+        deliberately excluded: they are receipts, not live obligations.
+        """
+        return (any(checkpoint.get(key) is not None for key in (
+                    "pending", "attempt", "transfer_recovery",
+                    "background_job", "background_attempt"))
+                or checkpoint.get("active_plan") is not None
+                or bool(checkpoint.get("reservations")))
 
     def initialize(self, *, record_only: bool = False) -> None:
         self.config.validate()
@@ -469,19 +484,19 @@ class Supervisor:
 
     def watch_game(self) -> str:
         checkpoint = self.checkpoint()
-        self.save(last_valid_checkpoint=checkpoint)
-        if checkpoint["status"] != "running":
-            return checkpoint["status"]
         revision = self.snapshot_revision()
-        if (checkpoint.get("pending") and
-                (self.state.get("code_revision") is None or revision is None
-                 or revision != self.state["code_revision"])):
-            # A write-ahead action can already have reached the game even when
-            # its dispatcher has not durably recorded a return.  A new source
-            # revision must therefore not resume the controller and consume
-            # its verification budget before repair accepts that revision.
+        source_before = self.state.get("code_revision")
+        if (self.has_unresolved_work(checkpoint)
+                and (source_before is None or revision is None or revision != source_before)):
             self.begin_repair("checkpoint_reconciliation")
             return "checkpoint_reconciliation"
+        if checkpoint["status"] == "completed" and self.has_unresolved_work(checkpoint):
+            self.begin_repair("checkpoint_reconciliation")
+            return "checkpoint_reconciliation"
+        if checkpoint["status"] != "running":
+            self.save(last_valid_checkpoint=checkpoint)
+            return checkpoint["status"]
+        self.save(last_valid_checkpoint=checkpoint)
         if not self.record_revision(revision, "gameplay_start",
                                     actor_type="unknown", intervention_type="unattributed_change"):
             return "stopped"
@@ -497,6 +512,10 @@ class Supervisor:
             except (OSError, ValueError) as error:
                 return f"checkpoint_invalid: {error}"
             if checkpoint["status"] != "running":
+                if (checkpoint["status"] == "completed"
+                        and self.has_unresolved_work(checkpoint)):
+                    self.begin_repair("checkpoint_reconciliation")
+                    return "checkpoint_reconciliation"
                 self.save(last_valid_checkpoint=checkpoint)
                 return checkpoint["status"]
             if changed != signature:
@@ -770,6 +789,8 @@ Only report repaired when every acceptance requirement is verified.
                 return False
             current = self.checkpoint()
             if current["status"] not in {"running", "completed"}:
+                return False
+            if current["status"] == "completed" and self.has_unresolved_work(current):
                 return False
             if previous.get("pending"):
                 if any(current.get(key) != previous.get(key) for key in (
