@@ -27,9 +27,14 @@ contract's UTF-8 encoding for non-ASCII strings; the schema label alone cannot
 justify choosing a hash algorithm.
 
 `run_finished` with `outcome: returned` establishes a returned process lifecycle.
-It does not establish target completion. A target requires causal milestone
-evidence; backend operation return likewise does not prove postcondition success
-or explicit backend acknowledgment. Unsealed valid prefixes remain incomplete.
+It does not establish target completion. `native_victory_event_observed` is a
+separate observation-level fact: a qualifying non-mock observation can set that
+flag without completing a target. A non-mock `rocket_launch` target requires a
+`goal_completed` milestone tied to a qualifying native-victory observation and
+its verified goal predicate. An observation alone does not create a milestone,
+set `target_achieved`, or make a run benchmark-eligible. Backend operation return
+likewise does not prove postcondition success or explicit backend acknowledgment.
+Unsealed valid prefixes remain incomplete.
 An attributed action verification requires its return before the verifying
 observation, consistent action and controller-step identities, and a matching
 explicit predicate, plan, step index, and pending start. Delayed `pending_poll`
@@ -241,14 +246,14 @@ process recovery may start a segment with unchanged provenance.
 
 | Event | Consumer requirements / meaning |
 |---|---|
-| `observation` | Unique `correlation.observation_id`, object `payload.state`; recorded session/world identity must agree. |
-| `model_request` | Unique `model_call_id`, `payload.requested_model`; retries require new call IDs. |
-| `model_response`, `provider_error` | Preceding request with same call ID; one completion. Optional `resolved_model`, `usage.input_tokens`, `usage.output_tokens`, `duration_ns`. |
-| `decision` | Unique `decision_id`, `payload.source`, `payload.action`; any model reference must already have completed and agree on decision correlation. |
-| `action_prepared` | Unique `action_id`, preceding `decision_id`, `payload.action`. Preparation is not proof of dispatch. |
+| `observation` | Unique `correlation.observation_id`, object `payload.state`; recorded session/world identity must agree. The qualifying non-mock native rocket-launch snapshot sets `native_victory_event_observed`, independently of milestone completion. |
+| `model_request` | Unique `model_call_id`, `payload.requested_model`; retries require new call IDs. `decision_id` is optional for legacy producers. |
+| `model_response`, `provider_error` | Preceding request with same call ID; one completion. Optional `decision_id`, `resolved_model`, `usage.input_tokens`, `usage.output_tokens`, `duration_ns`. When request and completion both carry `decision_id`, they must match. If one is absent, it remains unknown; the evaluator does not invent or backfill it. |
+| `decision` | Unique `decision_id`, `payload.source`, `payload.action`; any model reference must already have completed and every recorded request/completion decision identity must agree with this decision. |
+| `action_prepared` | Unique `action_id`, preceding `decision_id`, and the same action named by that decision. Preparation is not proof of dispatch. |
 | `action_returned` | Preceding preparation and boolean `payload.ok`; acknowledgment is not postcondition success. |
 | `verification` | Known action ID, **post-preparation** observation ID, boolean `payload.verified`. Repeated positive verification never recounts an action. |
-| `goal_completed` | Known observation ID, `payload.goal`, `payload.verified: true`; first completion per goal is counted. |
+| `goal_completed` | Known observation ID, `payload.goal`, `payload.verified: true`; first completion per goal is counted. A rocket-launch target additionally requires the goal milestone to reference the qualifying native-victory observation. |
 | `incident_started`, `operational_repair` | Counted separately; operational recovery is not relabeled as a code change. |
 | `code_revision_changed`, `manual_intervention` | Make a run mixed/intervened and ineligible, even when inspection is explicitly allowed. |
 | `run_finished` | Last event, status one of completed/failed/blocked/timeout/cancelled/stopped; optional string reason. |

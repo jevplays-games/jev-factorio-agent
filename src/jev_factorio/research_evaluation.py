@@ -75,6 +75,9 @@ def reduce_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -> Run
     actions: dict[str, dict] = {}
     milestones: dict[str, dict] = {}
     model_responses: dict[str, dict] = {}
+    completion_decisions: dict[str, str] = {}
+    native_victory_observations: set[str] = set()
+    native_victory_milestones: set[str] = set()
     returns: dict[str, dict] = {}
     rows: list[dict] = []
     interventions: list[dict] = []
@@ -142,6 +145,7 @@ def reduce_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -> Run
             if (evidence_class == "tool-assisted" and state.get("victory") is True
                     and state.get("victory_source") == "native:base-game-rocket-launch"):
                 native_victory = True
+                native_victory_observations.add(observation_id)
         elif kind == "model_request":
             call_id = _ref(event, "model_call_id")
             if call_id in calls:
@@ -163,6 +167,13 @@ def reduce_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -> Run
                 raise EvidenceError("Model response/error lacks a preceding request")
             if call_id in model_responses:
                 raise EvidenceError("Duplicate model completion; retries need fresh IDs")
+            request_decision = calls[call_id]["decision_id"]
+            completion_decision = event["correlation"].get("decision_id")
+            if (request_decision is not None and completion_decision is not None
+                    and completion_decision != request_decision):
+                raise EvidenceError("Model completion decision differs from its request")
+            if completion_decision is not None:
+                completion_decisions[call_id] = completion_decision
             model_responses[call_id] = payload
             resolved = payload.get("resolved_model")
             if resolved is not None:
@@ -182,6 +193,8 @@ def reduce_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -> Run
                 raise EvidenceError("Decision references an unfinished/unknown model call")
             if call_id is not None and calls[call_id]["decision_id"] not in {None, decision_id}:
                 raise EvidenceError("Decision and model request correlation disagree")
+            if call_id is not None and completion_decisions.get(call_id) not in {None, decision_id}:
+                raise EvidenceError("Decision and model completion correlation disagree")
             decisions[decision_id] = {
                 "run_id": run_id, "decision_id": decision_id, "sequence": seq,
                 "segment_id": segment, "model_call_id": call_id,
@@ -196,6 +209,8 @@ def reduce_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -> Run
             if decision_id not in decisions:
                 raise EvidenceError("Action preparation lacks a preceding decision")
             action = text(payload.get("action"), "action")
+            if action != decisions[decision_id]["action"]:
+                raise EvidenceError("Prepared action differs from its decision")
             actions[action_id] = {
                 "run_id": run_id, "action_id": action_id, "decision_id": decision_id,
                 "segment_id": segment, "action": action, "prepared_sequence": seq,
@@ -235,6 +250,8 @@ def reduce_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -> Run
             observation_id = _ref(event, "observation_id")
             if observation_id not in observations or payload.get("verified") is not True:
                 raise EvidenceError("Milestone lacks verified observational evidence")
+            if goal == "rocket_launch" and observation_id in native_victory_observations:
+                native_victory_milestones.add(goal)
             if goal not in milestones:
                 milestones[goal] = {"run_id": run_id, "goal": goal, "sequence": seq,
                                     "segment_id": segment, "observation_id": observation_id,
@@ -281,7 +298,8 @@ def reduce_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -> Run
     output_total = sum(row["output_tokens"] or 0 for row in calls.values())
     work = [row for row in actions.values() if row["action"] not in NON_WORK_ACTIONS]
     # Terminal status alone is not proof of success, especially for rocket launch.
-    achieved = (native_victory if manifest["target"] == "rocket_launch" and evidence_class != "synthetic" else
+    achieved = ("rocket_launch" in native_victory_milestones
+                if manifest["target"] == "rocket_launch" and evidence_class != "synthetic" else
                 manifest["target"] in milestones)
     target_achieved = True if achieved else (False if terminal.get("status") in {"failed", "timeout"} else None)
     if terminal.get("status") == "completed" and not achieved:

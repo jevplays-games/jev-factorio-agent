@@ -96,6 +96,48 @@ def test_valid_run_and_independent_hash(tmp_path):
     assert digest({"b": 2, "a": 1}) == "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777"
 
 
+def test_action_prepared_must_match_decision_action(tmp_path):
+    path, manifest, events = make_run(tmp_path)
+    prepared = next(event for event in events if event["event_type"] == "action_prepared")
+    prepared["payload"]["action"] = "idle"
+    rewrite(path, manifest, events)
+    with pytest.raises(EvidenceError, match="Prepared action differs from its decision"):
+        evaluate_run(path)
+
+
+@pytest.mark.parametrize("completion_kind", ["model_response", "provider_error"])
+def test_model_completion_must_match_request_decision_when_both_are_recorded(
+        tmp_path, completion_kind):
+    path, manifest, events = make_run(tmp_path)
+    completion = next(event for event in events if event["event_type"] == "model_response")
+    completion["event_type"] = completion_kind
+    completion["correlation"]["decision_id"] = "other-decision"
+    if completion_kind == "provider_error":
+        completion["payload"] = {"error_type": "TimeoutError"}
+    rewrite(path, manifest, events)
+    with pytest.raises(EvidenceError, match="Model completion decision differs from its request"):
+        evaluate_run(path)
+
+
+@pytest.mark.parametrize("request_decision,response_decision", [
+    (None, None), (None, "d1"), ("d1", None),
+])
+def test_optional_legacy_model_decision_correlations_remain_supported(
+        tmp_path, request_decision, response_decision):
+    path, manifest, events = make_run(tmp_path)
+    request = next(event for event in events if event["event_type"] == "model_request")
+    response = next(event for event in events if event["event_type"] == "model_response")
+    for event, decision in ((request, request_decision), (response, response_decision)):
+        if decision is None:
+            event["correlation"].pop("decision_id", None)
+        else:
+            event["correlation"]["decision_id"] = decision
+    rewrite(path, manifest, events)
+    result = evaluate_run(path)
+    assert result.summary["model_calls"] == 1
+    assert result.summary["decisions"] == 1
+
+
 @pytest.mark.parametrize("mutation", ["payload", "link", "gap", "sequence_bool", "hash", "schema", "run", "delete", "reorder"])
 def test_corrupted_chains_fail(tmp_path, mutation):
     path, manifest, events = make_run(tmp_path)
@@ -297,9 +339,14 @@ def test_acknowledged_is_not_verified(tmp_path):
     assert "completion_without_target_evidence" in result["warnings"]
 
 
-@pytest.mark.parametrize("backend,world_kind,expected", [("mock", "mock", False), ("mock", "native", False),
-                                                        ("fle", "native", True), ("custom", "unknown", False)])
-def test_native_victory_never_inferred_for_mock(tmp_path, backend, world_kind, expected):
+@pytest.mark.parametrize("backend,world_kind,expected_observed,expected_target", [
+    ("mock", "mock", False, True),
+    ("mock", "native", False, True),
+    ("fle", "native", True, True),
+    ("custom", "unknown", False, None),
+])
+def test_native_victory_never_inferred_for_mock(
+        tmp_path, backend, world_kind, expected_observed, expected_target):
     path, manifest, events = make_run(tmp_path)
     manifest.update(backend=backend, world_kind=world_kind, target="rocket_launch")
     events[1]["payload"]["state"].pop("world_kind")
@@ -307,7 +354,63 @@ def test_native_victory_never_inferred_for_mock(tmp_path, backend, world_kind, e
     events[9]["payload"]["goal"] = "rocket_launch"
     rewrite(path, manifest, events)
     result = evaluate_run(path).summary
+    assert result["native_victory_event_observed"] is expected_observed
+    assert result["milestones"] == ["rocket_launch"]
+    assert result["target_achieved"] is expected_target
+    if backend == "mock":
+        assert result["evidence_class"] == "synthetic"
+        assert result["native_victory_event_observed"] is False
+
+
+def test_nonqualifying_observation_does_not_complete_live_rocket_target(tmp_path):
+    path, manifest, events = make_run(tmp_path)
+    manifest.update(backend="fle", world_kind="fle", target="rocket_launch")
+    for event in events:
+        if event["event_type"] == "observation":
+            event["payload"]["state"].update(
+                session_id=manifest["session_id"], world_kind="fle",
+            )
+    observation = next(event for event in events if event["event_type"] == "observation"
+                       and event["correlation"].get("observation_id") == "o1")
+    observation["payload"]["state"].update(
+        victory=True, victory_source="modded:rocket-launch",
+    )
+    next(event for event in events if event["event_type"] == "goal_completed")["payload"]["goal"] = "rocket_launch"
+    rewrite(path, manifest, events)
+    result = evaluate_run(path).summary
+    assert result["native_victory_event_observed"] is False
+    assert result["milestones"] == ["rocket_launch"]
+    assert result["target_achieved"] is None
+    assert result["benchmark_eligible"] is False
+
+
+@pytest.mark.parametrize("backend,world_kind,victory,victory_source,expected", [
+    ("fle", "fle", True, "native:base-game-rocket-launch", True),
+    ("mock", "mock", True, "native:base-game-rocket-launch", False),
+    ("fle", "fle", True, "modded:rocket-launch", False),
+    ("fle", "fle", False, "native:base-game-rocket-launch", False),
+])
+def test_native_victory_observation_does_not_invent_a_milestone(
+        tmp_path, backend, world_kind, victory, victory_source, expected):
+    path, manifest, events = make_run(tmp_path)
+    manifest.update(backend=backend, world_kind=world_kind, target="rocket_launch")
+    for event in events:
+        if event["event_type"] == "observation":
+            event["payload"]["state"].update(
+                session_id=manifest["session_id"], world_kind=world_kind,
+            )
+    observation = next(event for event in events if event["event_type"] == "observation"
+                       and event["correlation"].get("observation_id") == "o1")
+    observation["payload"]["state"].update(
+        world_kind=world_kind, victory=victory, victory_source=victory_source,
+    )
+    events = [event for event in events if event["event_type"] != "goal_completed"]
+    rewrite(path, manifest, events)
+    result = evaluate_run(path).summary
     assert result["native_victory_event_observed"] is expected
+    assert result["milestones"] == []
+    assert result["target_achieved"] is None
+    assert result["benchmark_eligible"] is False
 
 
 def test_paired_replicates_use_runs_not_events(tmp_path):
@@ -564,6 +667,7 @@ def test_mixed_resolved_models_rejected_within_and_between_runs(tmp_path):
 def test_waits_are_not_work_actions(tmp_path):
     path, manifest, events = make_run(tmp_path)
     events[5]["payload"]["action"] = "wait_for_research"
+    events[4]["payload"]["action"] = "wait_for_research"
     rewrite(path, manifest, events)
     result = evaluate_run(path).summary
     assert result["verified_actions"] == 0 and result["verified_waits"] == 1
