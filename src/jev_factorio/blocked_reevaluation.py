@@ -195,7 +195,8 @@ def validate_checkpoint_digest(raw: bytes, expected_sha256: str) -> None:
         raise ValueError("Controller checkpoint differs from the authorized SHA-256")
 
 
-def validate_blocked_memory(memory, max_stalled_decisions: int) -> None:
+def validate_blocked_memory(memory, max_stalled_decisions: int, *,
+                            allow_model_abstention: bool = False) -> None:
     """Reject anything except the exact quiescent terminal decision state.
 
     Two states are terminal although the ordinary threshold rule does not show
@@ -207,6 +208,9 @@ def validate_blocked_memory(memory, max_stalled_decisions: int) -> None:
     native request: the controller polls it on every observation. Half of that
     pair is still refused.
     """
+    if type(allow_model_abstention) is not bool:
+        raise ValueError("Invalid model-abstention eligibility flag")
+    eligible_reasons = _BLOCKED_REASONS | ({"model abstention"} if allow_model_abstention else set())
     ledger = memory.blocked_recovery
     persistent_block = isinstance(ledger, dict) and bool(ledger.get("attempts"))
     archive = getattr(memory, "blocked_recovery_archive", None)
@@ -221,7 +225,7 @@ def validate_blocked_memory(memory, max_stalled_decisions: int) -> None:
     job = getattr(memory, "background_job", None)
     attempt = getattr(memory, "background_attempt", None)
     if (memory.status != "blocked" or not isinstance(memory.reason, str)
-            or memory.reason not in _BLOCKED_REASONS
+            or memory.reason not in eligible_reasons
             or type(memory.stalled_decisions) is not int
             or (memory.stalled_decisions < max_stalled_decisions and not persistent_block)
             or memory.pending is not None or memory.attempt is not None

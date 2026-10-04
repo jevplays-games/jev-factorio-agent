@@ -207,10 +207,10 @@ class HierarchicalLoop(AgentLoop):
                 != (getattr(memory, "background_attempt", None) is None))
 
     def _persistent_block_active(self) -> bool:
-        from .blocked_persistence import RECOVERABLE_REASONS
+        from .blocked_persistence import is_recoverable_reason
         memory = self.memory
         if (not self.persist_recoverable_blocks or memory is None
-                or memory.status != "blocked" or memory.reason not in RECOVERABLE_REASONS
+                or memory.status != "blocked" or not is_recoverable_reason(memory.reason)
                 or memory.pending is not None or memory.attempt is not None
                 or memory.active_plan is not None or memory.transfer_recovery is not None
                 or self._background_identity_inconsistent(memory)
@@ -330,8 +330,8 @@ class HierarchicalLoop(AgentLoop):
                                             seen_count: int, unseen_count: int,
                                             reason: str) -> dict:
         """Durably report exhaustion/cap without changing the recoverable reason."""
-        from .blocked_persistence import MAX_SELECTION_BATCHES_PER_STATE, RECOVERABLE_REASONS
-        if reason not in RECOVERABLE_REASONS:
+        from .blocked_persistence import MAX_SELECTION_BATCHES_PER_STATE, is_recoverable_reason
+        if not is_recoverable_reason(reason):
             raise ValueError("Alternative frontier can finish only a recoverable rejection")
         expected_kind = ("blocked_recovery_alternatives_exhausted"
                          if phase_name == "alternatives_exhausted_waiting"
@@ -400,7 +400,7 @@ class HierarchicalLoop(AgentLoop):
         """
         from . import judgments
         from .blocked_persistence import (
-            MAX_SELECTION_BATCHES_PER_STATE, RECOVERABLE_REASONS,
+            MAX_SELECTION_BATCHES_PER_STATE, is_recoverable_reason,
             _candidate_semantic_sha256, decision_input_sha256, find_attempt,
             selection_attempts_for_state, selection_batch_metadata,
             selection_frontier_sha256, selection_state_sha256, was_attempted,
@@ -454,7 +454,7 @@ class HierarchicalLoop(AgentLoop):
                 row["decision_input_sha256"]) not in carried_keys
             for offered in row["selection_batch"]["offered"]}
         for row in rows:
-            if row.get("outcome") != "rejected" or row.get("reason") not in RECOVERABLE_REASONS:
+            if row.get("outcome") != "rejected" or not is_recoverable_reason(row.get("reason")):
                 return {"record": self._persistent_wait(
                     snapshot, row["decision_input_sha256"])}
 
@@ -574,7 +574,7 @@ class HierarchicalLoop(AgentLoop):
                 return {"decision": self._decision, "chosen": None,
                         "input_sha256": input_sha256, "finalized": False,
                         "trace_done": False}
-            if (reason not in RECOVERABLE_REASONS
+            if (not is_recoverable_reason(reason)
                     or outcome not in {"all_candidates_rejected", "low_choice_confidence"}):
                 return {"decision": self._decision, "chosen": None,
                         "input_sha256": input_sha256, "finalized": False,
@@ -627,12 +627,12 @@ class HierarchicalLoop(AgentLoop):
                 snapshot, input_sha256, authorization_reason=authorization_reason,
                 persistent_outcome=outcome, selection_batch=selection_batch)
             return
-        from .blocked_persistence import RECOVERABLE_REASONS, finish_attempt, record_attempt
+        from .blocked_persistence import is_recoverable_reason, finish_attempt, record_attempt
         self._archive_full_recovery_tail()
         prior_recovery = deepcopy(self.memory.blocked_recovery)
         prior_history = deepcopy(self.memory.history)
         try:
-            reason = self.memory.reason if self.memory.reason in RECOVERABLE_REASONS else None
+            reason = self.memory.reason if is_recoverable_reason(self.memory.reason) else None
             record_attempt(self.memory, self.provenance["code_revision"], input_sha256,
                            reason, snapshot.tick,
                            archive_index=self._blocked_recovery_archive_index,
@@ -1960,8 +1960,8 @@ class HierarchicalLoop(AgentLoop):
                     if self.memory.stalled_decisions >= self.max_stalled_decisions:
                         self.memory.status = "blocked"
                     if persistent_input_sha256 is not None and not persistent_attempt_finalized:
-                        from .blocked_persistence import RECOVERABLE_REASONS, finish_attempt
-                        if self._decision.reason in RECOVERABLE_REASONS:
+                        from .blocked_persistence import is_recoverable_reason, finish_attempt
+                        if is_recoverable_reason(self._decision.reason):
                             finish_attempt(self.memory, self.provenance["code_revision"],
                                            persistent_input_sha256, "rejected",
                                            self._decision.reason,

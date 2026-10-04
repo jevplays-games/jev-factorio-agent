@@ -743,7 +743,8 @@ def test_persistent_mode_needs_a_continuous_live_resume_configuration():
 
 _DEFAULT_IDLE_ARGUMENT = object()
 
-def _idle_loop(tmp_path, monkeypatch, *, idle_observations=_DEFAULT_IDLE_ARGUMENT, backend=None, log_file=None):
+def _idle_loop(tmp_path, monkeypatch, *, idle_observations=_DEFAULT_IDLE_ARGUMENT, backend=None, log_file=None,
+               rejection_reason="Candidate evidence insufficient"):
     import jev_factorio.controller as controller
 
     monkeypatch.setattr(controller, "gameplay_context", lambda: {"code_revision": SOURCE})
@@ -752,7 +753,7 @@ def _idle_loop(tmp_path, monkeypatch, *, idle_observations=_DEFAULT_IDLE_ARGUMEN
     if not checkpoint.exists():
         memory = CampaignMemory(backend.session_id, "bootstrap_mining",
                                 active_goal="bootstrap_mining", last_tick=0,
-                                status="blocked", reason="Candidate evidence insufficient",
+                                status="blocked", reason=rejection_reason,
                                 stalled_decisions=5)
         persistence.record_attempt(memory, SOURCE, "e" * 64, memory.reason, 0)
         memory.save(checkpoint)
@@ -772,7 +773,7 @@ def _idle_loop(tmp_path, monkeypatch, *, idle_observations=_DEFAULT_IDLE_ARGUMEN
 
     def reject(*_args, **_kwargs):
         requests.append(True)
-        return Decision(None, "observe", "Candidate evidence insufficient",
+        return Decision(None, "observe", rejection_reason,
                         model_called=True,
                         diagnostics={"schema": 1, "outcome": "all_candidates_rejected"})
 
@@ -1399,3 +1400,50 @@ def test_default_persistence_keeps_same_controller_observing_without_rebilling(t
     saved = CampaignMemory.load(checkpoint, backend.session_id, 'bootstrap_mining')
     assert saved.blocked_recovery['attempts'] == before
     assert saved.stalled_decisions == stalled and saved.status == 'blocked'
+
+
+def test_model_abstention_waits_without_rebilling_after_restart(tmp_path, monkeypatch):
+    backend = LiveMockBackend()
+    checkpoint = tmp_path / "checkpoint.json"
+    memory = CampaignMemory(backend.session_id, "bootstrap_mining",
+                            active_goal="bootstrap_mining", status="running",
+                            stalled_decisions=3)
+    memory.save(checkpoint)
+    loop, backend, checkpoint, requests, _ = _idle_loop(
+        tmp_path, monkeypatch, backend=backend, rejection_reason="model abstention")
+    loop.step()
+    assert loop.memory.status == "blocked"
+    assert loop.memory.reason == "model abstention"
+    assert not loop.terminal and backend.actions == [] and requests == [True]
+    rows = deepcopy(loop.memory.blocked_recovery["attempts"])
+    assert rows[-1]["outcome"] == "rejected"
+    assert rows[-1]["reason"] == "model abstention"
+    for _ in range(8):
+        loop.step()
+    assert requests == [True] and backend.actions == [] and not loop.terminal
+    restored, _, _, restored_requests, _ = _idle_loop(
+        tmp_path, monkeypatch, backend=backend, rejection_reason="model abstention")
+    restored.step()
+    assert restored_requests == [] and not restored.terminal
+    assert restored.memory.blocked_recovery["attempts"] == rows
+    backend.inv["iron-ore"] = 1
+    restored.step()
+    assert restored_requests == [True] and backend.actions == []
+    assert restored.memory.reason == "model abstention" and not restored.terminal
+
+
+@pytest.mark.parametrize("contrary", ["pending", "attempt", "active_plan", "provider", "disabled", "uncertain"])
+def test_model_abstention_does_not_override_terminal_safety_guards(tmp_path, monkeypatch, contrary):
+    loop, _, _, _, _ = _idle_loop(
+        tmp_path, monkeypatch, rejection_reason="model abstention")
+    loop.step()
+    assert loop.memory.reason == "model abstention" and not loop.terminal
+    if contrary in ("pending", "attempt", "active_plan"):
+        setattr(loop.memory, contrary, {"id": "unresolved"})
+    elif contrary == "provider":
+        loop._persistence_failed = True
+    elif contrary == "disabled":
+        loop.persist_recoverable_blocks = False
+    else:
+        loop.memory.status = "uncertain"
+    assert loop.terminal

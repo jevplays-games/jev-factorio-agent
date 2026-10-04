@@ -242,7 +242,7 @@ def validate_authorization(authorization: dict, raw: bytes, memory, current_sour
     if memory.status == "running":
         validate_selected_paid_handoff(memory)
     else:
-        validate_blocked_memory(memory, 4)
+        validate_blocked_memory(memory, 4, allow_model_abstention=True)
     if memory.blocked_recovery is None:
         raise ValueError("Compatible recovery requires known persistent budget coverage")
     recovery = _validate_state(memory.blocked_recovery, memory.session_id)

@@ -197,7 +197,7 @@ the block, reset counters, or authorize a second controller. Do not combine it
 with reconcile-only or owner-step gating.
 
 For an explicitly authorized, no-cutoff campaign that should keep observing
-after one of those two recoverable decision blocks, add
+after a recoverable decision block (including `model abstention`), add
 `--persist-recoverable-blocks` to `--until-complete`. The first blocked
 checkpoint still needs the exact changed-contract authorization above. The
 controller keeps the blocked status and failure/stall history, records each

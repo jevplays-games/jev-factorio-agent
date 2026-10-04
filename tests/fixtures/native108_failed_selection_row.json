@@ -1,0 +1,30 @@
+{
+  "provenance": {
+    "capture": "108-progress-readonly-readback-root-11.json",
+    "scope": "last actual billed row only; no model text/credentials",
+    "session_id": "48291babb033466fa38fda061b43c264",
+    "source_checkpoint_sha256": "7a5bba542866816ad97e8721c7d1602c2abd50ee5a8abed55c4645c0875f2ed5"
+  },
+  "row": {
+    "decision_input_sha256": "e8fd76673ebd38bc011884420b19422cbd1f9b6cebbaf0386c94b6cfbb8f5430",
+    "outcome": "failed",
+    "reason": null,
+    "selection_batch": {
+      "frontier_sha256": "2134ac0fd4c7f2c722b2e64d75c143ed33cfa84d844d847a2dd7d4d77a679901",
+      "offered": [
+        {
+          "candidate_sha256": "a9b4a936b975b5238d9c33e9819002cb89ab6dcf62b5673e881fc04b19d73396",
+          "plan_id": "factory:factory_wait:collect:output:2547:joint:10"
+        }
+      ],
+      "request_sha256": "07a2a855c0faa151c8a4b8db69f5de6477065f737057093d5b4219e710beed5d",
+      "schema": 1,
+      "state_sha256": "65473b706ac3a70b69e1aa06b1be6a922635caf5658fd195e3014407888c45c7"
+    },
+    "source_revision": {
+      "commit": "9cbf8221abd92c70103b91f5ca1756e491667c2d",
+      "source_sha256": "9167bf5ed0db253e8fce8602827d32f5adce2913f01d84aeb1e238d90e502c58"
+    },
+    "tick": 36128519
+  }
+}
