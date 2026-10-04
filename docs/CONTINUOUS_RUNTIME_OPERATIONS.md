@@ -170,16 +170,65 @@ then passed current native attachment and resumed the same session under owner
 v3. It verified gathering five stone at tick 6840816. The next decision, at
 tick 6840858, rejected crafting the iron-production furnace: actor, carried
 inputs and native recipe were ready, but the independent usefulness judgment
-selected `unsupported`. The controller is alive and backed off at that blocked
-frontier, with no pending action. It has not resumed sustained useful work.
+selected `unsupported`. At that stage the controller remained alive and backed
+off at the blocked frontier, with no pending action.
 
 Four distinct offline construction-evidence revisions also failed that
 judgment. The last diagnostic selected `unsupported` with probability 0.52
 versus 0.48 for `useful`; neither a high candidate-choice probability nor a
-positive benefit score overrides the separate usefulness gate. The proposed
-construction evidence is not deployed or a qualified fix. Preserve the
+positive benefit score overrides the separate usefulness gate. These standalone
+experiments did not qualify a recovery. Preserve the
 requests, answers, checkpoint and rejection ledger; do not repeatedly sample an
 unchanged request until it happens to pass.
+
+### Combined recovery at 23:20 UTC
+
+[PR341](https://github.com/jevplays-games/jev-factorio-agent/pull/341) and
+[PR344](https://github.com/jevplays-games/jev-factorio-agent/pull/344) merged after
+all checks passed on their final heads. Together they disclose the construction
+dependency and offer immediate raw-material deficits beside a ready handcraft.
+A distinct combined diagnostic passed the unchanged selector; 295 focused tests
+also passed. Neither repair lowers confidence or usefulness thresholds.
+
+The existing owner stopped its child at an idle boundary, retained the exact
+checkpoint and terminal receipt, then consumed one source-change admission.
+Signed source `885bec67b4936575e7c17ecb43e988d7ca2958ff` now runs from
+`source-recovery-v4-20261004` under `continuous_owner_v4.py`. Session identity,
+failure history and the single-writer lock were preserved. The v4 authorization
+is consumed; do not replay its admission or launch scripts. The owner's three
+prepared launches have been used, so an exit requires reconciliation rather
+than an automatic fourth launch.
+
+Native evidence establishes actual progress beyond the original stall:
+
+| Native postcondition | Tick |
+|---|---:|
+| Furnace craft receipt completed, five stone paid, one furnace produced | 7269437 |
+| Iron-production furnace placement verified, unit 2547 | 7269886 |
+| Two iron gears produced by completed craft job | 7274770 |
+| Latest verified iron-plate extraction | 7276283 |
+| Iron furnace finished 31 plates; 11 remained in its output | 7278308 |
+
+This was a recovery of the furnace construction and production sequence, **not
+sustained autonomous progress**. At tick 7278308, the next choice offered eight
+gear batches and gathering five copper ore for the same one-lab target. Both
+passed individual usefulness (0.66 and 0.65), but overall choice confidence was
+0.24, below the unchanged 0.45 floor. The controller held with no pending action,
+attempt or background job. It did not have permission to force either choice.
+
+During smelting, fresh native output and crafting progress legitimately changed
+the decision state. The final two requests show furnace output rising from ten
+to eleven and finished products from thirty to thirty-one. Once those facts
+stabilized, the recovery ledger stayed at 74 attempts and the loop backed off
+without further model calls. Do not confuse those observations with repeated
+process restarts or claim the confidence blocker was resolved.
+
+The next investigation must retain that request and its answer, identify a
+concrete selection/evidence defect, and reproduce it without rerolling the same
+question or weakening a gate. The two merged repairs do not by themselves solve
+confidence ambiguity between individually useful alternatives. Keep the live
+dashboard in the actual blocked state, with OBS Program showing the current
+feed. A live service and advancing game clock are insufficient recovery evidence.
 
 Keep this planning failure distinct from process supervision and save
 durability. An unattended 48–72-hour soak with continuing useful actions,

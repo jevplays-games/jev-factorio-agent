@@ -10,7 +10,7 @@ The speculative worker also suppressed the five-ore trip because it was below
 the optional ten-unit collection batch. Other probes either returned the same
 furnace craft or an ore insert that was not allowed with zero carried copper ore.
 
-This draft distinguishes an immediate target's raw deficit from an optional
+The merged change distinguishes an immediate target's raw deficit from an optional
 horizon trip. Beside an unstarted, paid handcraft, it offers bounded direct
 gathering for the current target's net material bill. It retains the craft as a
 choice and does not spend its ingredients, add a new production treatment, bypass
@@ -57,3 +57,11 @@ placement. Windows integration attempts hit the existing checkpoint filesystem
 identity failure before the upstream Windows identity repair was merged. The
 combined integration test also confirms that offering both repaired candidates
 does not bypass the overall choice-confidence gate.
+
+After both PRs merged, the combined signed source resumed the same native
+session under the existing owner and verified furnace construction, iron
+production and gear crafting. The raw alternative remained available at the
+later gear frontier, where both candidates passed usefulness but choice
+confidence was 0.24 below the unchanged 0.45 floor. This demonstrates preserved
+gate behavior and a remaining liveness limitation, not days-long operation.
+See the [dated operations evidence](CONTINUOUS_RUNTIME_OPERATIONS.md#combined-recovery-at-2320-utc).
