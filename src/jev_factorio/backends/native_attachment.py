@@ -623,7 +623,9 @@ def readback(client, *, receipt_path=None, connector_witness_path=None,
                 raise RuntimeError('Closed-world migration profile requires reconciliation')
         elif profile is not False:
             raise RuntimeError('Unknown native installation profile requires reconciliation')
-        if (result['modules']['connector_ownership']
+        from .native_current_attachment import is_current_direct_installation
+        current_direct = is_current_direct_installation(result)
+        if (result['modules']['connector_ownership'] and not current_direct
                 and not (profile == LEGACY_MANUAL_CYCLE_PROFILE
                          and allow_legacy_manual_cycle_repair)
                 and (result['modules']['connector_observer_bridge_v1'] is not True
@@ -641,6 +643,9 @@ def readback(client, *, receipt_path=None, connector_witness_path=None,
                 continue  # Exact e759 hash is pinned; retained closure is reused.
             if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != expected:
                 raise RuntimeError('Native Lua source differs from installed manifest')
+        if current_direct:
+            from .native_current_attachment import qualify_current_connector_snapshot
+            return qualify_current_connector_snapshot(client, result)
         if (result['modules']['connector_ownership']
                 and not (profile == LEGACY_MANUAL_CYCLE_PROFILE
                          and allow_legacy_manual_cycle_repair)
