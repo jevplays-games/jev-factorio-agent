@@ -373,3 +373,17 @@ intent list stays immutable and uses at most four disjoint routes. It is not
 enabled by the production CLI or supervisor. Automatic coal kit acquisition and the
 coal demand/payback policy remain incomplete; modeled builds do not establish
 native flow, a complete production treatment, or acceptance in #101/#92/#103.
+# Signed compatible recovery across earlier changed-contract epochs
+
+An equal-contract recovery can follow an earlier, consumed changed-contract
+handoff without rewriting the old compatible-source records. A discontinuity
+requires a separate signed epoch-boundary witness. The supervisor authenticates
+the complete terminal checkpoint and retained source receipts before signing
+the witness; its complete body binds the new authorization digest, prior epoch,
+ordered consumed handoffs, event preimages, and current epoch endpoint.
+
+Reload verifies the signature against the independently enrolled public signer
+bytes and checks the unchanged consumed ledger. The signed event preimages remain
+available after ordinary history rolls out. Only sources in the newest compatible
+epoch share selection budgets. This does not authorize another once-only decision,
+reset a budget, or make unsigned checkpoint history an authority.

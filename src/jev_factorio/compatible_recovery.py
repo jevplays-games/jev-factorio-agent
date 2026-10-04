@@ -60,8 +60,9 @@ def validate_lineage(memory) -> list[dict]:
     ids = set()
     prior = None
     contract = None
-    for record in records:
-        if (not isinstance(record, dict) or set(record) != _KEYS | {"authorization_sha256"}
+    for record_index, record in enumerate(records):
+        if (not isinstance(record, dict) or set(record) not in (_KEYS | {"authorization_sha256"},
+                                         _KEYS | {"authorization_sha256", "epoch_witness"})
                 or type(record["schema"]) is not int or record["schema"] != 1
                 or record["session_id"] != memory.session_id or record["target"] != memory.target):
             raise ValueError("Invalid compatible-source recovery record")
@@ -72,14 +73,21 @@ def validate_lineage(memory) -> list[dict]:
         old, new = _source(record["previous_source"]), _source(record["current_source"])
         _digest(old["source_sha256"])
         _digest(new["source_sha256"])
-        if old == new or prior is not None and old != prior:
+        boundary = prior is not None and (old != prior or record["decision_contract_sha256"] != contract)
+        if old == new:
             raise ValueError("Compatible-source lineage is not a directed chain")
+        if boundary:
+            from .compatible_epoch import validate_epoch_witness
+            validate_epoch_witness(record.get("epoch_witness"), memory, record, prior, contract,
+                                   prior_records=records[:record_index])
+        elif "epoch_witness" in record:
+            raise ValueError("Unexpected compatible epoch boundary witness")
         if any(r["previous_source"] == new for r in records):
             raise ValueError("Compatible-source lineage contains a cycle")
         for key in ("authorization_sha256", "checkpoint_sha256", "decision_contract_sha256",
                     "supervisor_history_sha256"):
             _digest(record[key])
-        if contract is not None and record["decision_contract_sha256"] != contract:
+        if contract is not None and record["decision_contract_sha256"] != contract and not boundary:
             raise ValueError("Compatible-source lineage changed decision contract")
         contract = record["decision_contract_sha256"]
         for key in ("provider_state_sha256", "provider_identity_sha256"):
@@ -118,7 +126,9 @@ def approved_sources(memory, current_source: dict) -> list[dict]:
     records = validate_lineage(memory)
     if not records or records[-1]["current_source"] != current:
         return [current]
-    return [records[0]["previous_source"], *(r["current_source"] for r in records)]
+    start = max((i for i, record in enumerate(records) if "epoch_witness" in record), default=0)
+    epoch = records[start:]
+    return [epoch[0]["previous_source"], *(r["current_source"] for r in epoch)]
 
 
 def validate_current_owner(memory, context: dict | None) -> None:
@@ -222,7 +232,8 @@ def validate_selected_paid_handoff(memory) -> None:
 
 
 def validate_authorization(authorization: dict, raw: bytes, memory, current_source: dict,
-                           owner_invocation: dict, *, checkout: Path | None = None) -> dict:
+                           owner_invocation: dict, *, checkout: Path | None = None,
+                           epoch_witness: dict | None = None) -> dict:
     """Validate exact source/contract/checkpoint without native observation."""
     from .blocked_reevaluation import validate_blocked_memory, validate_source_revision
     if not isinstance(authorization, dict) or set(authorization) != _KEYS:
@@ -230,6 +241,15 @@ def validate_authorization(authorization: dict, raw: bytes, memory, current_sour
     record = deepcopy(authorization)
     record["authorization_sha256"] = digest_json(authorization)
     old_records = memory.compatible_source_recoveries
+    if epoch_witness is not None:
+        if not old_records:
+            raise ValueError("Epoch boundary requires a retained compatible predecessor")
+        from .compatible_epoch import validate_epoch_witness
+        validate_epoch_witness(epoch_witness, memory, record,
+                               old_records[-1]["current_source"],
+                               old_records[-1]["decision_contract_sha256"],
+                               checkpoint_raw=raw, require_live_history=True)
+        record["epoch_witness"] = deepcopy(epoch_witness)
     # Validate with a temporary append, without mutating caller state.
     trial = copy(memory)
     trial.compatible_source_recoveries = [*old_records, record]
@@ -333,7 +353,7 @@ def provider_state_digest(checkpoint: Path) -> str | None:
 
 def migrate_checkpoint(path: Path, authorization: dict, memory_type, current_source: dict,
                        owner_invocation: dict, *, lock_fd: int, checkout: Path | None = None,
-                       provider_identity_sha256: str | None = None):
+                       provider_identity_sha256: str | None = None, epoch_witness: dict | None = None):
     """Durably consume once before attachment; never mutate native assets.
 
     A failed/ambiguous save is fatal. A later invocation must read/reconcile the
@@ -354,7 +374,7 @@ def migrate_checkpoint(path: Path, authorization: dict, memory_type, current_sou
         index = None
     try:
         record = validate_authorization(authorization, raw, memory, current_source,
-                                        owner_invocation, checkout=checkout)
+                                        owner_invocation, checkout=checkout, epoch_witness=epoch_witness)
         # Every potentially billed legacy row must have exact batch coverage.
         # Frontier-only rows prove no provider request and need no offered list.
         from itertools import chain
