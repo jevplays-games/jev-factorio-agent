@@ -7,9 +7,13 @@ from pathlib import Path
 import pytest
 
 from jev_factorio.background import BackgroundMemory, BackgroundWorkLoop
+from jev_factorio.buffer_controller import buffered_loop_type
 from jev_factorio.craft_jobs import CraftJob
+from jev_factorio.input_controller import input_loop_type
 from jev_factorio.memory import CampaignMemory, checkpoint_memory_type, load_checkpoint_data
+from jev_factorio.outpost_controller import outpost_loop_type
 from jev_factorio.planning.background_work import independent_candidates, research_demands
+from jev_factorio.planning.connection_identity import connection_key
 from jev_factorio.skills import Plan, Step
 from jev_factorio.telemetry import make_attempt
 from test_factory import catalog, machine, recipe, snapshot
@@ -122,6 +126,157 @@ def controller(backend, tmp_path, *, resume=False, research_log=None):
         loop.memory = BackgroundMemory(backend.state.session_id, loop.target,
             active_goal=loop.target, completed_goals={goal: 0 for goal in loop.order[:-1]}, last_tick=10)
     return loop
+
+
+class ConnectorPageReader:
+    """Read-only local stand-in for the bounded native connector detail page."""
+    def __init__(self, backend):
+        self.backend = backend
+        self.calls = []
+
+    def command(self, script):
+        assert "connector_page" in script
+        self.calls.append(script)
+        route, cells = self.backend.connector_route, self.backend.connector_cells
+        return json.dumps({"id": route["id"], "valid": True,
+                           "cell_count": len(cells), "offset": 1, "cells": cells})
+
+
+class PendingConnectorBackend(ReceiptBackend):
+    def __init__(self):
+        super().__init__()
+        self.output_buffers_supported = True
+        self.input_routes_supported = True
+        self.mining_outposts_supported = True
+        self.state.world_kind = "fle"
+        self.state.inventory["pipe"] = 2
+        self.state.factory["entities"].update({
+            "utility:water": machine("offshore-pump", unit_number=21,
+                                      fluid_ports=[{"id": 1, "fluid": "water"}]),
+            "utility:engine": machine("steam-engine", unit_number=23,
+                                      fluid_ports=[{"id": 2, "fluid": "steam"}]),
+        })
+        self.state.factory["connector_ownership"] = {
+            "protocol": 1, "session_id": self.state.session_id,
+            "active": None, "routes": {},
+        }
+        self.connector_route = None
+        self.connector_cells = []
+
+    def execute(self, action, parameters):
+        if action != "factory_connect":
+            return super().execute(action, parameters)
+        self.calls.append((action, deepcopy(parameters)))
+        receipt = connection_key(parameters)
+        self.connector_cells = [
+            {"index": 1, "position": {"x": 0.5, "y": 1.5},
+             "unit_number": 200, "paid": 1, "external": False},
+            {"index": 2, "position": {"x": 1.5, "y": 1.5},
+             "unit_number": None, "paid": 0, "external": False},
+        ]
+        self.connector_route = {
+            "id": receipt, **parameters, "source_unit": 21, "target_unit": 23,
+            "actor_unit": 9, "surface_index": 1, "force_index": 1,
+            "session_id": self.state.session_id, "state": "building",
+            "paid": 1, "external": 0, "pending": 2, "cell_count": 2,
+        }
+        self.state.inventory["pipe"] -= 1  # One paid native cell; one is still pending.
+        self.state.factory["connector_ownership"] = {
+            "protocol": 1, "session_id": self.state.session_id,
+            "active": receipt, "routes": {receipt: deepcopy(self.connector_route)},
+        }
+        raise TimeoutError("synthetic connector acknowledgement lost after one paid cell")
+
+
+@pytest.mark.parametrize("kind", [BackgroundWorkLoop,
+    outpost_loop_type(input_loop_type(buffered_loop_type(BackgroundWorkLoop)))])
+def test_background_connector_reconciliation_barrier_retains_paid_pending_work(
+        tmp_path, kind):
+    backend = PendingConnectorBackend()
+    backend.state.world_kind = "fle"
+    backend.state.factory["entities"].update({
+        "utility:boiler": machine("boiler", unit_number=21,
+                                   fluid_ports=[{"id": 1, "fluid": "steam"}]),
+        "utility:engine": machine("steam-engine", unit_number=23,
+                                   fluid_ports=[{"id": 2, "fluid": "steam"}]),
+    })
+    if kind is not BackgroundWorkLoop:
+        for key in ("output_buffers", "input_routes", "mining_outposts"):
+            backend.state.factory[key] = {
+                "protocol": 1, "session_id": backend.state.session_id,
+                "tick": backend.state.tick, "sources": {},
+            }
+    params = {"source": "utility:boiler", "target": "utility:engine",
+              "kind": "pipe", "fluid": "steam"}
+    plan = Plan("connector:ambiguous-paid-prefix", "rocket_launch",
+                "Build a bounded steam connection", (Step(
+                    "factory_connect", "connection", costs={"pipe": 2},
+                    parameters=params),))
+    path = tmp_path / "background-connector.json"
+    loop = kind(backend, policy="deterministic", factory_scheduling="ready-work",
+                target="rocket_launch", checkpoint=str(path), tick_seconds=0)
+    loop.memory = loop.memory_type(backend.state.session_id, loop.target,
+        active_goal=loop.target, completed_goals={goal: 0 for goal in loop.order[:-1]},
+        last_tick=backend.state.tick,
+        connector_ownership={"protocol": 1, "session_id": backend.state.session_id,
+                             "routes": {}})
+    backend._factory = ConnectorPageReader(backend)
+    loop._work_candidates = lambda _: ([plan], "")
+
+    first = loop.step()
+    assert first["action"] == "factory_connect" and not first["verified"]
+    assert loop.memory.pending["dispatch"] == "ambiguous"
+    assert len(backend.calls) == 1
+    assert backend.state.inventory["pipe"] == 1
+    pending = deepcopy(loop.memory.pending)
+    attempt = deepcopy(loop.memory.attempt)
+    active_plan = deepcopy(loop.memory.active_plan)
+    reservations = deepcopy(loop.memory.reservations)
+    outcomes = deepcopy(loop.memory.attempt_outcomes)
+
+    result = loop.step()  # Observe and bind the exact paid cell, then hit the barrier.
+
+    assert loop.memory.status == result["status"] == "uncertain"
+    assert loop.memory.reason == "Connector route needs exact reconciliation"
+    assert loop._execution_barrier(backend.state)
+    assert not result["verified"]
+    assert loop.memory.pending == pending
+    assert loop.memory.attempt == attempt
+    assert loop.memory.active_plan == active_plan
+    assert loop.memory.reservations == reservations
+    assert loop.memory.attempt_outcomes == outcomes
+    receipt = connection_key(params)
+    bound = loop.memory.connector_ownership["routes"][receipt]
+    assert bound["state"] == "building" and bound["paid"] == 1 and bound["pending"] == 2
+    assert bound["cells"][0]["unit_number"] == 200 and bound["cells"][0]["paid"]
+    assert not bound["cells"][1]["paid"] and bound["cells"][1]["unit_number"] is None
+    assert len(backend.calls) == 1 and backend.state.inventory["pipe"] == 1
+
+    loaded = loop.memory_type.load(path, backend.state.session_id, "rocket_launch")
+    assert loaded.pending == pending and loaded.attempt == attempt
+    assert loaded.active_plan == json.loads(json.dumps(active_plan))
+    assert loaded.reservations == reservations
+    assert loaded.connector_ownership == loop.memory.connector_ownership
+    result = loop.step()
+    assert result["status"] == "uncertain" and not result["verified"]
+    assert loop.memory.pending == pending and loop.memory.attempt == attempt
+    assert loop.memory.connector_ownership == loaded.connector_ownership
+    assert len(backend.calls) == 1 and backend.state.inventory["pipe"] == 1
+
+    # A checkpoint reload rechecks the same receipt/cell and cannot repay it.
+    backend._factory = None
+    resumed = kind(backend, policy="deterministic", factory_scheduling="ready-work",
+                   target="rocket_launch", checkpoint=str(path),
+                   resume_controller=True, tick_seconds=0)
+    backend._factory = ConnectorPageReader(backend)
+    before_calls = len(backend.calls)
+    recovered = resumed.reconcile_only()
+    assert recovered["status"] == "uncertain"
+    assert resumed.memory.pending == pending and resumed.memory.attempt == attempt
+    assert resumed.memory.active_plan == json.loads(json.dumps(active_plan))
+    assert resumed.memory.reservations == reservations
+    assert resumed.memory.connector_ownership == loaded.connector_ownership
+    assert len(backend.calls) == before_calls and backend.state.inventory["pipe"] == 1
 
 
 def test_craft_then_independent_gather_then_verified_completion(tmp_path):

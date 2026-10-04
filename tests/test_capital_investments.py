@@ -374,6 +374,63 @@ def test_intent_fault_does_not_release_a_pending_action(tmp_path):
     assert len(backend.calls) == 1
 
 
+@pytest.mark.parametrize('kind', [BackgroundWorkLoop,
+    outpost_loop_type(input_loop_type(buffered_loop_type(BackgroundWorkLoop)))])
+@pytest.mark.parametrize('identity_fault', ['missing', 'replaced'])
+def test_background_capital_identity_fault_retains_ambiguous_placement(
+        tmp_path, kind, identity_fault):
+    data, state = scenario()
+    state.inventory[MACHINE] = 1
+    backend = Backend(data, state)
+    backend.lose_place_ack = True
+    path = tmp_path / 'background-capital.json'
+    loop = make_loop(backend, path, kind=kind, primary=lambda s: offer(data, s))
+
+    first = loop.step()
+    assert first['action'] == 'factory_place' and not first['verified']
+    assert loop.memory.pending['dispatch'] == 'ambiguous'
+    assert len(backend.calls) == 1
+    loop._observe()  # Bind the real placement through the capital observer.
+    assert loop.memory.capital_investment['unit_number'] == 80
+
+    pending = deepcopy(loop.memory.pending)
+    attempt = deepcopy(loop.memory.attempt)
+    intent = deepcopy(loop.memory.capital_investment)
+    active_plan = deepcopy(loop.memory.active_plan)
+    outcomes = deepcopy(loop.memory.attempt_outcomes)
+    failures = deepcopy(loop.memory.failures)
+    stalled = loop.memory.stalled_decisions
+    if identity_fault == 'missing':
+        del state.factory['entities'][ROLE]
+    else:
+        state.factory['entities'][ROLE]['unit_number'] = 81
+
+    result = loop.step()
+
+    assert loop._capital_fault and loop._execution_barrier(state)
+    assert loop.memory.status == result['status'] == 'uncertain'
+    assert not result['verified'] and result['action'] == 'observe'
+    assert loop.memory.pending == pending
+    assert loop.memory.attempt == attempt
+    assert loop.memory.capital_investment == intent
+    assert loop.memory.active_plan == active_plan
+    assert loop.memory.attempt_outcomes == outcomes
+    assert loop.memory.failures == failures
+    assert loop.memory.stalled_decisions == stalled
+    assert len(backend.calls) == 1
+    assert state.inventory[MACHINE] == 0
+    loaded = loop.memory_type.load(path, state.session_id, 'rocket_launch')
+    assert loaded.pending == pending and loaded.attempt == attempt
+    assert loaded.capital_investment == intent
+    assert loaded.active_plan == json.loads(json.dumps(active_plan))
+
+    result = loop.step()
+    assert result['status'] == 'uncertain' and not result['verified']
+    assert loop.memory.pending == pending and loop.memory.attempt == attempt
+    assert loop.memory.capital_investment == intent
+    assert len(backend.calls) == 1
+
+
 def test_catalog_change_does_not_silently_reprice_committed_kit():
     data, state = scenario()
     loop = make_loop(Backend(data, state))

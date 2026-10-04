@@ -249,7 +249,8 @@ class BackgroundWorkLoop(HierarchicalLoop):
 
     def _execution_barrier(self, snapshot) -> bool:
         job = self._job()
-        return self._save_poisoned or bool(job and job.failed)
+        return (self._save_poisoned or bool(job and job.failed)
+                or super()._execution_barrier(snapshot))
 
     def _step_allowed(self, step, snapshot) -> bool:
         job = self._job()
