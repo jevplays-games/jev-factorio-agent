@@ -3500,6 +3500,11 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
         }
         if bootstrap_pickup_start is not None:
             result[plan.id]['bootstrap_output_pickup_start_evidence'] = bootstrap_pickup_start
+        if prerequisite_evidence is not None:
+            from .machine_prerequisite import raw_machine_prerequisite
+            machine_prerequisite = raw_machine_prerequisite(snapshot, catalog, plan)
+            if machine_prerequisite is not None:
+                result[plan.id]['raw_machine_prerequisite'] = machine_prerequisite
         if isinstance((plan.materials or {}).get('direct_alternative_to_proposed_outpost'), dict):
             result[plan.id]['work_scope_provenance'] = {
                 'compiled_scope': compiled_work_scope,

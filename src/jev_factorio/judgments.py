@@ -1692,6 +1692,55 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 and gather_parameters['quantity'] == (
                     gather_step.threshold - gather_start['resource_inventory_now']))
             candidate_local = (candidate_local and qualified_raw_gather) or bootstrap_local
+            machine_prerequisite = row.get('raw_machine_prerequisite')
+            machine_edges = (machine_prerequisite.get('edges', [])
+                             if isinstance(machine_prerequisite, dict) else [])
+            missing_machines = [edge for edge in machine_edges if isinstance(edge, dict)
+                                and edge.get('kind') == 'missing_production_machine']
+            machine_prerequisite_hint = ''
+            if (qualified_raw_gather and isinstance(machine_prerequisite, dict)
+                    and type(machine_prerequisite.get('schema')) is int
+                    and machine_prerequisite['schema'] == 1
+                    and machine_prerequisite.get('session_id') == facts['session_id']
+                    and type(machine_prerequisite.get('observed_tick')) is int
+                    and machine_prerequisite['observed_tick'] == tick
+                    and machine_prerequisite.get('planner_item_path') == raw_path
+                    and machine_prerequisite.get('local_target') == row.get('local_target')
+                    and machine_prerequisite.get('gather_resource') == gather_step.item
+                    and machine_prerequisite.get('gather_quantity') == gather_parameters['quantity']
+                    and machine_prerequisite.get('gather_inventory_now') ==
+                        gather_start['resource_inventory_now']
+                    and machine_prerequisite.get('gather_inventory_target') == gather_step.threshold
+                    and machine_prerequisite.get('basis') ==
+                        'current_catalog_input_edges_and_observed_missing_machine'
+                    and machine_prerequisite.get(
+                        'gather_craft_placement_and_production_require_native_verification') is True
+                    and len(missing_machines) == 1
+                    and missing_machines[0].get('role') not in facts.get('factory', {}).get('entities', {})
+                    and facts['inventory'].get(missing_machines[0].get('machine'), 0) == 0):
+                machine_prerequisite_hint = (
+                    ' `raw_machine_prerequisite` separates recipe-input edges from a '
+                    'missing-production-machine edge using the current native catalog. '
+                    'The required machine is absent from its production role and carried '
+                    'inventory. The gather supplies material for constructing that machine, '
+                    'which can then process an intermediate needed by the local target; '
+                    'the machine is not a consumed ingredient of that intermediate. '
+                    'An existing machine assigned to another recipe does not establish '
+                    'this missing producer. Consider this bounded construction prerequisite '
+                    'when judging usefulness; a later craft, placement, fuel supply or '
+                    'production result need not already exist. Those later actions and '
+                    'the gather still need native verification. This is partial progress '
+                    'evidence, not evidence of target completion or a removed blocker. '
+                    'Contrary current facts can make usefulness unsupported.'
+                )
+                questions['candidate']['instructions'] += (
+                    f' For {pointer}, `raw_machine_prerequisite` supplies the current '
+                    'catalog edges and observed missing producer behind this construction '
+                    'input. Compare gathering with observe using the missing start fact, '
+                    'if any; a repeated observation cannot supply the material or build '
+                    'the missing machine. Later craft, placement and production outcomes '
+                    'still require verification and are not assumed by this choice.'
+                )
             candidate_objective = "this candidate's local_target" if candidate_local else objective
             candidate_context_hint = (
                 " Recompiled parent demand supports recipe input; science output and route flow remain unverified."
@@ -2572,6 +2621,8 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     'and subsequent steps require fresh native verification. Contrary '
                     'current facts can make usefulness unsupported.'
                 )
+            usefulness_contribution_hint += machine_prerequisite_hint
+            contribution_hint += machine_prerequisite_hint
             if power_hint:
                 usefulness_contribution_hint += (
                     ' `utility_power_prerequisite_start_evidence` binds this exact bounded child action '
