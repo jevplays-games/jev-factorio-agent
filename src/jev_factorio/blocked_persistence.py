@@ -618,7 +618,9 @@ def validate_checkpoint_metadata(data: object, current_source: dict, *,
     from .compatible_recovery import validate_current_owner
     validate_current_owner(SimpleNamespace(
         session_id=data.get("session_id"), target=data.get("target"),
-        compatible_source_recoveries=data.get("compatible_source_recoveries", [])), owner_context)
+        compatible_source_recoveries=data.get("compatible_source_recoveries", []),
+        blocked_reevaluations=data.get("blocked_reevaluations"),
+        history=data.get("history")), owner_context)
     status, reason = data.get("status"), data.get("reason")
     state = data.get("blocked_recovery")
     session_id = data.get("session_id")
