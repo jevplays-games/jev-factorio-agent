@@ -6,8 +6,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: tests-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: tests-${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'push' && github.sha || (github.run_attempt == '1' && github.ref || format('rerun-{0}-{1}', github.run_id, github.run_attempt)) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.run_attempt == '1' }}
 jobs:
   unit:
     runs-on: ubuntu-latest

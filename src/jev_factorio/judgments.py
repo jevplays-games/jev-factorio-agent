@@ -2148,6 +2148,48 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 if qualified_placement
                 else ""
             )
+            construction = row.get('machine_construction_prerequisite')
+            construction_hint = ''
+            construction_start = placement_start if qualified_placement else craft_start
+            construction_path = ([*placement_path, placement_step.parameters.get('name')]
+                                 if qualified_placement else craft_path)
+            if (isinstance(construction, dict) and (qualified_placement or qualified_intermediate_craft)
+                    and type(construction.get('schema')) is int and construction['schema'] == 1
+                    and type(construction.get('observed_tick')) is int
+                    and construction['observed_tick'] == tick
+                    and construction.get('session_id') == facts.get('session_id')
+                    and construction.get('local_target') == row.get('local_target')
+                    and construction.get('planner_item_path') == construction_path
+                    and construction.get('step') == plan.to_dict()['steps'][0]
+                    and construction.get('start_evidence') == construction_start
+                    and isinstance(construction.get('carried_costs'), dict)
+                    and construction['carried_costs'] == {
+                        item: facts.get('inventory', {}).get(item, 0)
+                        for item in plan.steps[0].costs or {}}
+                    and construction.get('machine_role') not in facts.get('factory', {}).get('entities', {})
+                    and construction.get('machine_inventory_now') ==
+                        facts.get('inventory', {}).get(construction.get('machine_item'), 0)
+                    and construction.get('basis') ==
+                        'current_catalog_input_edges_and_observed_missing_machine'
+                    and construction.get('craft_placement_fuel_and_production_require_native_verification') is True):
+                construction_hint = (
+                    ' `machine_construction_prerequisite` validates the local target path '
+                    'with native recipe-input edges and a distinct missing-production-machine '
+                    'edge. This bounded paid craft or placement prepares the absent producer '
+                    'for a needed intermediate. A machine is not a consumed ingredient of '
+                    'its output, and an owned machine in a different recipe role does not '
+                    'fill this role. Read the supplied edges and current start evidence '
+                    'when judging useful prerequisite progress. The craft, placement, '
+                    'fuel supply and later output still require native verification; '
+                    'none is claimed complete now. Contrary current facts can make '
+                    'usefulness unsupported.'
+                )
+                questions['candidate']['instructions'] += (
+                    f' For {pointer}, `machine_construction_prerequisite` identifies '
+                    'the missing producer and its current recipe path. Judge this paid '
+                    'construction step using its own start facts; future production '
+                    'verification remains separate.'
+                )
             qualified_utility_lab = _qualified_utility_lab_dependency(
                 plan, row, local, tick)
             utility_lab_hint = (
@@ -2588,6 +2630,7 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 + transfer_hint + input_hint + outpost_kit_hint + pickup_hint
                 + research_trigger_hint + component_hint + buffer_build_hint + buffer_fuel_hint
                 + supplied_research_hint + science_transfer_hint + paid_service_hint
+                + construction_hint
             )
             usefulness_contribution_hint = ''
             if (qualified_intermediate_craft
@@ -2660,6 +2703,7 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     + candidate_context_hint
                     + direct_parent_hint.replace(' (level 1)', '')
                     + usefulness_contribution_hint
+                    + construction_hint
                     + current_target_craft_usefulness_hint
                     + component_hint
                     + buffer_build_hint
@@ -2698,6 +2742,27 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                         'mismatched or contrary CURRENT ownership, stock, headroom or recipe demand means unsupported. '
                         'No historical placement proof, completed pickup/output, route flow or blocker removal is proved; '
                         'execution and success require native verification.')
+            if construction_hint:
+                questions[plan.id + '/useful_progress']['criteria'] = {
+                    'useful': 'Current evidence supports this paid construction prerequisite for the missing production role',
+                    'unsupported': 'The current construction prerequisite is unsupported or contradicted by native evidence',
+                }
+                questions[plan.id + '/useful_progress']['instructions'] = (
+                    f'For {pointer}, read `machine_construction_prerequisite`: its native '
+                    'recipe edges, branch demand quantities, missing machine_role, exact '
+                    'paid step and current start_evidence. Would this craft or placement '
+                    'supply a useful construction prerequisite toward its local_target '
+                    'IF the native receipt and fresh postcondition verify? The machine '
+                    'is production infrastructure, not an ingredient consumed by its '
+                    'output recipe. current_native_craft_recipe discloses the paid '
+                    'craft inputs and output when this step is a craft. Demand covers '
+                    'only the selected dependency branch, not the whole target bill. '
+                    'A missing, stale, mismatched or contradicted current dependency '
+                    'means unsupported. Future fuel supply, production and target '
+                    'completion remain unverified; their absence is not by itself '
+                    'contrary evidence about this construction prerequisite. Judge '
+                    'independently; execution and completion require native verification.'
+                )
             if _qualified_recipe_transfer_chain(plan, facts, row):
                 questions[plan.id + '/useful_progress']['instructions'] = (
                     f'For {pointer}, read recipe_input_transfer_start_evidence and its '

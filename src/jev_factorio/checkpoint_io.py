@@ -24,7 +24,34 @@ def _stamp(path: Path) -> tuple | None:
 
 
 def _identity(info) -> tuple:
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    # Keep ctime and birth time separately. On Windows path stat and fstat can
+    # report different ctime domains for the same file; the remaining fields
+    # still bind the file identity, content version, and exposed attributes.
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+            info.st_mode, getattr(info, 'st_file_attributes', None),
+            getattr(info, 'st_birthtime_ns', None), getattr(info, 'st_nlink', None))
+
+
+def _same_identity_views(path_identity: tuple, descriptor_identity: tuple) -> bool:
+    """Compare one installed file through path and open-handle metadata views."""
+    if os.name == 'nt':
+        # Windows Python can expose different ctime and birth-time values through
+        # path stat, a flushed temporary handle, and the reopened installed file.
+        # Retain each full view independently across the final verification.
+        return (path_identity[:4] == descriptor_identity[:4]
+                and path_identity[5:7] == descriptor_identity[5:7]
+                and path_identity[8:] == descriptor_identity[8:])
+    return path_identity == descriptor_identity
+
+
+def _same_renamed_identity(installed: tuple, flushed: tuple) -> bool:
+    """Compare file identity across rename while allowing view-specific times."""
+    if os.name == 'nt':
+        return (installed[:4] == flushed[:4]
+                and installed[5:7] == flushed[5:7]
+                and installed[8:] == flushed[8:])
+    return (installed[:4] == flushed[:4]
+            and installed[5:] == flushed[5:])
 
 
 def _elapsed(metrics: dict, key: str, began: int, *, failed: bool) -> None:
@@ -118,12 +145,15 @@ def _provision_parent(directory: Path, metrics: dict) -> None:
 
 
 def _verify_installation(stream, path: Path, payload: bytes, flushed: tuple, metrics: dict,
-                         *, verify_bytes: bool = True, parent_identity=None) -> tuple:
-    """Bind installed entry and bytes to the flushed descriptor, not a later file.
+                         *, verify_bytes: bool = True, parent_identity=None,
+                         expected_path_identity=None, expected_descriptor_identity=None) -> tuple:
+    """Bind the installed entry and bytes to the flushed descriptor.
 
-    Rename may change ctime, so compare identity/size/mtime with the flushed file,
-    then pin the complete post-rename metadata across directory synchronization
-    and verify its bytes once after that barrier. This is not an interprocess lock or an ABA proof.
+    Rename may change ctime. Windows path stat and fstat may also expose ctime
+    through different metadata domains. Compare shared identity/metadata across
+    those boundaries, then pin the complete path and descriptor stamps
+    independently across the synchronization barrier. This is not an
+    interprocess lock or an ABA proof.
     """
     began = time.perf_counter_ns()
     failed = False
@@ -131,24 +161,35 @@ def _verify_installation(stream, path: Path, payload: bytes, flushed: tuple, met
         with span('checkpoint_installation_check'):
             installed = _stamp(path)
             descriptor = _identity(os.fstat(stream.fileno()))
-            if installed is None or installed != descriptor or installed[:4] != flushed[:4]:
+            if installed is None:
+                raise OSError(errno.EIO, 'Checkpoint installation changed before synchronization')
+            if ((expected_path_identity is not None and installed != expected_path_identity)
+                    or (expected_descriptor_identity is not None
+                        and descriptor != expected_descriptor_identity)):
+                raise OSError(errno.EIO, 'Checkpoint installation changed across synchronization')
+            if (not _same_identity_views(installed, descriptor)
+                    or not _same_renamed_identity(installed, flushed)):
                 raise OSError(errno.EIO, 'Checkpoint installation changed before synchronization')
             if not verify_bytes:
-                return installed
+                return installed, descriptor
             if parent_identity is not None:
                 current_parent = path.parent.stat()
                 if ((current_parent.st_dev, current_parent.st_ino)
                         != (parent_identity.st_dev, parent_identity.st_ino)
-                        or installed != flushed):
+                        or not _same_renamed_identity(installed, flushed)):
                     raise OSError(errno.EIO, 'Checkpoint installation changed across synchronization')
             stream.seek(0)
             metrics['verification_read_calls'] += 1
             observed = stream.read(len(payload) + 1)
             metrics['verification_read_bytes'] += len(observed)
-            if (observed != payload or _stamp(path) != installed
-                    or _identity(os.fstat(stream.fileno())) != installed):
+            path_after = _stamp(path)
+            descriptor_after = _identity(os.fstat(stream.fileno()))
+            if (observed != payload or path_after != installed
+                    or descriptor_after != descriptor
+                    or path_after is None
+                    or not _same_identity_views(path_after, descriptor_after)):
                 raise OSError(errno.EIO, 'Checkpoint installation bytes changed across synchronization')
-            return installed
+            return installed, descriptor
     except BaseException:
         failed = True
         raise
@@ -318,13 +359,21 @@ def save_checkpoint(memory, path: Path | None) -> None:
                 os.replace(temporary, path)
             temporary = None
             if os.name != 'posix':
-                stream = handles.enter_context(_managed_stream(path.open('rb')))
-            installed = _verify_installation(stream, path, payload, flushed, metrics,
-                                             verify_bytes=False)
+                try:
+                    reopened = path.open('rb')
+                except FileNotFoundError as error:
+                    raise OSError(errno.EIO,
+                                  'Checkpoint installation changed before synchronization') from error
+                stream = handles.enter_context(_managed_stream(reopened))
+            installed_path, installed_descriptor = _verify_installation(
+                stream, path, payload, flushed, metrics, verify_bytes=False)
             _directory_sync(path.parent, metrics)
-            _verify_installation(stream, path, payload, installed, metrics,
-                                 parent_identity=parent_identity)
-        memory._checkpoint_cache = (path, payload, installed, data)
+            _verify_installation(
+                stream, path, payload, installed_descriptor, metrics,
+                parent_identity=parent_identity,
+                expected_path_identity=installed_path,
+                expected_descriptor_identity=installed_descriptor)
+        memory._checkpoint_cache = (path, payload, installed_path, data)
         metrics['status'] = 'written'
     except BaseException:
         failed = True
