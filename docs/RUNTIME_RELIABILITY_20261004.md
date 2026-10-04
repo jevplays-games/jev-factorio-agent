@@ -79,10 +79,35 @@ storage-pressure incident does not explain these observations.
 During recovery, SSH then timed out before canonical carrier dispatch. Train
 became reachable after a host boot at about 19:53:53 UTC. The existing native
 guest was `shut off`, with autostart disabled and no managed save. This session
-did not restart Train or the guest. The reboot's cause is not established by
+did not restart Train; it subsequently started the already-stopped guest for
+read-only recovery inspection. The reboot's cause is not established by
 the collected journal tail. Pre-reboot process/native-state observations must
 not authorize post-reboot action replay. Recover the original save and reconcile
 it against durable receipts before continuing the same campaign.
+
+### World persistence was disabled
+
+Post-boot inspection found `autosave_interval: 0` in the game's actual server
+settings. The configured write-data directory contains the original
+`initial-working.zip`, byte-identical to `immutable-pre-controller.zip`. Both
+have SHA-256 `8e468af5e81ecc712c2d687c83a65ced6fbeeb4d3bd57a7b84ad1cd4a111bf2d`.
+A search of 46 ZIP archives across guest `/home`, `/opt` and `/var/backups`
+identified those two campaign worlds and the shipped menu simulations, with no
+newer campaign world. Libvirt reported no snapshots or managed save; the bounded
+host backup-path search found no matching recovery artifact.
+
+The controller checkpoint survived unchanged, but it cannot reconstruct the
+Factorio world. The recovered guest had no game/controller process. Resuming
+the latest controller against the initial world would falsely join incompatible
+histories. No such launch was performed. Current recovery is blocked on a
+compatible saved world or a separately authorized new campaign; an undiscovered
+external backup remains possible. The original run's evidence must be retained.
+
+This is a distinct durability failure in addition to the recurring controller
+stops. Future admitted runs must have periodic world saves, retained generations,
+verified save completion/age, and a restore protocol tied to checkpoint/receipt
+identity. A controller checkpoint alone is not a world backup. A disk snapshot
+without saved game state is not a substitute for saving the live world either.
 
 ## Fast recovery procedure
 
@@ -146,7 +171,7 @@ field check. Neither outcome constitutes native gameplay acceptance.
 | Durable owner with reconciled restart | A one-child launcher leaves the run stopped after any exit | Not established by existing launch118/126 |
 | Useful-progress watchdog | Unlimited idle observations can conceal a four-hour stall | Need receipt/progress-age health, independent of process liveness |
 | Stable accepted deployment | Routine source cutovers create avoidable stop/handoff exposure | Nine interrupted results; maintenance contract defect reproduced |
-| Boot and save recovery | Host reboot removes volatile game/control state | Guest autostart disabled; post-boot reconciliation required |
+| Boot and save recovery | Host reboot removes volatile game/control state | Autosave disabled; only initial campaign world found; guest autostart disabled |
 | Bounded evidence transport | Diagnostic collection must not disable recovery access | Oversized QGA archive response reported; bounded reads verified |
 | Fault recovery and soak acceptance | Unit tests do not demonstrate multi-day native reliability | No 48–72 hour useful-progress soak completed in this investigation |
 

@@ -138,6 +138,11 @@ failure is not permission to repeat a potentially executed mutation.
 
 For recurring blocked exits, maintenance receipt mismatches and reboot recovery,
 see the [October 4 reliability investigation](RUNTIME_RELIABILITY_20261004.md).
+After a host/guest boot, verify the actual world save and its relationship to the
+controller checkpoint before starting gameplay. Check the server's configured
+write-data directory, autosave settings, retained save timestamps and receipts.
+If only the initial world remains, preserve the stopped campaign and seek a
+compatible backup; do not attach the latest checkpoint to a reset world.
 
 ## OBS Studio Mode: Preview is not Program
 
