@@ -2541,6 +2541,26 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 + supplied_research_hint + science_transfer_hint + paid_service_hint
             )
             usefulness_contribution_hint = ''
+            if (qualified_intermediate_craft
+                    and craft_dependency.get('basis') ==
+                    'current_recursive_planner_provenance_and_native_recipe'
+                    and all(craft_start.get(key) is True for key in (
+                        'input_costs_match_native_recipe', 'inputs_in_inventory_now',
+                        'recipe_unlocked_and_handcraftable', 'player_connected_and_bound',
+                        'crafting_queue_empty', 'craft_job_protocol_ready',
+                        'native_receipt_required_for_completion'))):
+                usefulness_contribution_hint += (
+                    ' `craft_start_evidence` binds this bounded handcraft to current '
+                    'native recipe, carried ingredients, actor, queue and receipt-protocol '
+                    'facts. `craft_dependency` links its intermediate product to the '
+                    'current local target through the validated planner recipe path. '
+                    'If the native receipt and fresh postcondition verify, this can '
+                    'supply a useful intermediate; it does not establish crafted '
+                    'inventory, target completion or removal of a blocker. Later '
+                    'production still requires fresh native preconditions and '
+                    'verification. Missing, stale, mismatched or contrary current '
+                    'facts can make usefulness unsupported.'
+                )
             if qualified_raw_gather and not candidate_local:
                 usefulness_contribution_hint += (
                     ' `raw_prerequisite` binds this bounded gather to the same-tick '
