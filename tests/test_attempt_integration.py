@@ -4,7 +4,7 @@ from dataclasses import asdict
 
 import pytest
 
-from jev_factorio.background import BackgroundMemory
+from jev_factorio.background import BackgroundMemory, BackgroundWorkLoop
 from jev_factorio.diagnostics import reconciliation_report
 from jev_factorio.memory import load_checkpoint
 from jev_factorio.skills import Plan, Step
@@ -29,34 +29,89 @@ def test_primary_failure_survives_failed_diagnostic_write(error_type):
 
 @pytest.mark.parametrize("change", ["delete", "replace", "history"])
 def test_supervisor_preserves_attempt_evidence_during_repair(tmp_path, change):
+    backend = ReceiptBackend()
+    backend.state.nearby_resources["iron-ore"] = 5
     config = SupervisorConfig(
         state_dir=tmp_path / "supervisor", checkpoint=tmp_path / "checkpoint.json",
-        session_id="session", started_at=1000, repair_command=["repair"], cwd=tmp_path,
+        session_id=backend.state.session_id, started_at=1000,
+        repair_command=["repair"], cwd=tmp_path,
     )
     supervisor = Supervisor(config)
     supervisor.source_identity = lambda: ("head", "diff")
-    previous = {
-        "session_id": "session", "target": "rocket_launch", "status": "running",
-        "pending": {"dispatch": "ambiguous"}, "attempt": {"id": "original"},
-        "attempt_outcomes": [{"id": "finished"}],
-    }
+
+    class RepairEvidenceLoop(BackgroundWorkLoop):
+        def _compile_candidates(self, snapshot):
+            return [Plan("repair-attempt-evidence", "stockpile_fuel", "Build valid attempt history", (
+                Step("factory_gather", "inventory", "iron-ore", 5,
+                     parameters={"resource": "iron-ore", "quantity": 5}),
+                Step("factory_wait", "inventory", "iron-plate", 1000,
+                     timeout_ticks=1800),
+            ))], ""
+
+    loop = RepairEvidenceLoop(
+        backend, policy="deterministic", target="rocket_launch",
+        factory_scheduling="ready-work", checkpoint=str(config.checkpoint), tick_seconds=0,
+    )
+    loop.memory = BackgroundMemory(
+        backend.state.session_id, "rocket_launch", active_goal="stockpile_fuel",
+        last_tick=backend.state.tick,
+    )
+    assert loop.step()["verified"] is True
+    assert loop.memory.attempt is None and len(loop.memory.attempt_outcomes) == 1
+    assert loop.step()["verified"] is False
+    assert loop.memory.pending is not None and loop.memory.attempt is not None
+    previous_bytes = config.checkpoint.read_bytes()
+    previous = json.loads(previous_bytes)
+    # The unchanged positive is an actual production-loop checkpoint, not a
+    # hand-shaped owner fragment. Both the live write-ahead and finished ledger
+    # are accepted by the same composed loader used by repair verification.
+    loaded = load_checkpoint(config.checkpoint, backend.state.session_id, "rocket_launch")
+    assert loaded.pending == previous["pending"]
+    assert loaded.attempt == previous["attempt"]
+    assert loaded.attempt_outcomes == previous["attempt_outcomes"]
+    assert len(loaded.attempt_outcomes) == 1
+
     current = deepcopy(previous)
     if change == "delete":
         del current["attempt"]
     elif change == "replace":
-        current["attempt"] = {"id": "replacement"}
+        current["attempt"] = make_attempt(
+            backend.state.session_id, "rocket_launch", current["active_plan"],
+            current["step_index"], current["pending"], process_id="c" * 32,
+        )
     else:
         current["attempt_outcomes"] = []
     atomic_json(config.checkpoint, current)
+    changed_bytes = config.checkpoint.read_bytes()
+    if change == "delete":
+        with pytest.raises(ValueError):
+            load_checkpoint(config.checkpoint, backend.state.session_id, "rocket_launch")
+    else:
+        # These altered checkpoints remain structurally and composition-valid,
+        # so rejection must come from the repair ownership comparison itself.
+        changed = load_checkpoint(config.checkpoint, backend.state.session_id, "rocket_launch")
+        assert changed.pending == previous["pending"]
+        assert changed.attempt_outcomes == current["attempt_outcomes"]
+        if change == "replace":
+            assert changed.attempt != loaded.attempt
+        else:
+            assert changed.attempt == loaded.attempt
+
     result = tmp_path / "result.json"
     atomic_json(result, {
-        "status": "repaired", "kind": "operational", "session_id": "session",
+        "status": "repaired", "kind": "operational",
+        "session_id": backend.state.session_id,
         "checkpoint": str(config.checkpoint.resolve()), "operational_verified": True,
         "evidence": ["captured observation"],
     })
+    ledger_before = deepcopy(supervisor.state)
     assert not supervisor.validate_repair(result, previous, ("head", "diff"))
-    atomic_json(config.checkpoint, previous)
+    assert config.checkpoint.read_bytes() == changed_bytes
+    assert supervisor.state == ledger_before
+    config.checkpoint.write_bytes(previous_bytes)
     assert supervisor.validate_repair(result, previous, ("head", "diff"))
+    assert config.checkpoint.read_bytes() == previous_bytes
+    assert supervisor.state == ledger_before
 
 
 def test_background_completion_preserves_concurrent_foreground_attempt(tmp_path):
