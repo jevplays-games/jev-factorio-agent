@@ -1,4 +1,4 @@
-# Construction judgment investigation (not deployment-ready)
+# Native construction prerequisite evidence
 
 The continuous campaign's signed source `4e29e7d` verified gathering five stone
 at tick 6840816, then stopped making useful progress at the following furnace
@@ -15,7 +15,7 @@ and placement, discloses native recipes and scoped branch quantities, and binds
 the evidence to current session, tick, inventory, exact step and start facts.
 Future placement, fueling, output and local-target completion remain unverified.
 
-This is an investigation, **not a proven recovery**. Four distinct read-only
+The initial standalone experiment was **not a proven recovery**. Four distinct read-only
 diagnostic requests against the retained frontier using `jev-1.13.0` all
 selected `unsupported` for the independent usefulness judgment:
 
@@ -33,14 +33,23 @@ changed. The draft was not deployed, and the live controller remains blocked
 with its original failure history intact. An identical-request reroll is not a
 valid next experiment.
 
-Focused local validation: 179 tests passed across construction evidence,
+Focused local validation after review: 189 tests passed across construction evidence,
 raw-machine evidence, intermediate-craft usefulness, judgments, craft jobs and
 executed Lua craft-job tests. These establish deterministic behavior and
-negative-case handling, not real-model acceptance or native progression.
+negative-case handling, including invalid goal binding and non-finite recipe
+arithmetic. They do not establish native progression.
 
-Before promotion, identify a further concrete evidence or planning defect,
-retain the counterexample and all diagnostic results, and validate independent
-judgments without forcing a label. Any subsequent live recovery still needs
+The combined October 4 diagnostic, including the independent current-target
+raw alternatives from PR344, did pass the unchanged selector. Its request
+offered the paid furnace craft and the five-copper-ore gather required by the
+same lab bill. JEV reported craft choice confidence 0.89 and useful probability
+0.74; exact retained-answer replay selected the craft. The 40,958-byte request
+fit the existing 48,000-byte limit. This is a different request with both repairs,
+not an identical-request retry or a threshold change. Earlier failures remain
+retained. A live receipt is still required to establish resumed gameplay.
+
+Retain the counterexample and all diagnostic results, and validate independent
+judgments without forcing a label. Deployment of the combined recovery needs
 signed reviewed source, current native attachment proof, exact-checkpoint
 one-use admission through the existing owner, and fresh useful actions across
 the construction and production sequence. Passing one craft alone would not
