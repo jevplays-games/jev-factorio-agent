@@ -25,6 +25,44 @@ def writer(path, controller="flat", policy="jev", target="bootstrap_mining"):
     )
 
 
+def native_observation_run(path, *, world_kind="fle", victory=True,
+                           victory_source="native:base-game-rocket-launch",
+                           complete_goal=False):
+    """Build synthetic evaluator evidence; this is not a native-game claim."""
+    backend = "mock" if world_kind == "mock" else "fle"
+    config = RunConfiguration(
+        backend=backend, controller="hierarchical", policy="deterministic",
+        target="rocket_launch", mock_model=(backend == "mock"),
+        requested_model=MockJevClient.model if backend == "mock" else None,
+    )
+    session_id, trace_id, decision_id, observation_id = (
+        "session-fixture", "trace-fixture", "decision-fixture", "observation-fixture")
+    snapshot = {
+        "session_id": session_id, "world_kind": world_kind,
+        "victory": victory, "victory_source": victory_source,
+    }
+    with ResearchLog(path, config, environ={}) as log:
+        log.emit("step_started", {"trace_id": trace_id, "decision_id": decision_id})
+        log.emit("observation", {
+            "trace_id": trace_id, "decision_id": decision_id,
+            "observation_id": observation_id, "status": "ok",
+            "session_id": session_id, "world_kind": world_kind, "snapshot": snapshot,
+        }, session_id=session_id, factorio_tick=60)
+        if complete_goal:
+            log.emit("goal_checked", {
+                "trace_id": trace_id, "decision_id": decision_id,
+                "observation_id": observation_id, "goal": "rocket_launch",
+                "status": "ok", "completed": True,
+            }, session_id=session_id, factorio_tick=60)
+            log.emit("goal_completed", {
+                "trace_id": trace_id, "decision_id": decision_id,
+                "observation_id": observation_id, "goal": "rocket_launch",
+                "verification_source": "existing_goal_predicate",
+            }, session_id=session_id, factorio_tick=60)
+        log.emit("step_finished", {"trace_id": trace_id, "decision_id": decision_id})
+    return evaluate_run(path)
+
+
 def captured_files(path):
     return {entry.name: entry.read_bytes() for entry in path.iterdir() if entry.is_file()}
 
@@ -115,6 +153,42 @@ def test_core_requires_original_manifest_directory(tmp_path):
     relocated.write_bytes((path / "manifest.json").read_bytes())
     with pytest.raises(EvidenceError, match="original run-directory layout"):
         evaluate_run(path / "events.jsonl", manifest_path=relocated)
+
+
+@pytest.mark.parametrize("world_kind,victory,victory_source,expected", [
+    ("fle", True, "native:base-game-rocket-launch", True),
+    ("mock", True, "native:base-game-rocket-launch", False),
+    ("fle", True, "modded:rocket-launch", False),
+    ("fle", False, "native:base-game-rocket-launch", False),
+])
+def test_observed_native_victory_is_separate_from_goal_completion(
+        tmp_path, world_kind, victory, victory_source, expected):
+    result = native_observation_run(
+        tmp_path / "run", world_kind=world_kind, victory=victory,
+        victory_source=victory_source,
+    )
+    assert result.summary["native_victory_event_observed"] is expected
+    assert result.summary["milestones"] == []
+    assert result.summary["target_achieved"] is None
+    assert result.summary["benchmark_eligible"] is False
+
+
+def test_qualified_native_victory_milestone_completes_rocket_target(tmp_path):
+    result = native_observation_run(tmp_path / "run", complete_goal=True)
+    assert result.summary["native_victory_event_observed"] is True
+    assert result.summary["milestones"] == ["rocket_launch"]
+    assert result.summary["target_achieved"] is True
+    assert result.summary["benchmark_eligible"] is False
+
+
+def test_nonqualifying_observation_does_not_complete_rocket_milestone(tmp_path):
+    result = native_observation_run(
+        tmp_path / "run", victory_source="modded:rocket-launch", complete_goal=True,
+    )
+    assert result.summary["native_victory_event_observed"] is False
+    assert result.summary["milestones"] == ["rocket_launch"]
+    assert result.summary["target_achieved"] is None
+    assert result.summary["benchmark_eligible"] is False
 
 
 @pytest.mark.parametrize("mutation", ["payload", "reorder", "truncate", "manifest", "seal"])

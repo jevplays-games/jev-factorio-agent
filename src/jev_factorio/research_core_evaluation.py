@@ -14,6 +14,7 @@ def reduce_core_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -
     tables = {name: [] for name in ("events", "decisions", "model_calls", "actions",
                                     "milestones", "interventions")}
     observations, decisions, calls, actions, milestones = {}, {}, {}, {}, {}
+    native_victory_observations, native_victory_milestones = set(), set()
     goal_checks = {}
     observation_decisions, action_payloads, action_returns, steps = {}, {}, {}, {}
     finished_steps = set()
@@ -92,6 +93,11 @@ def reduce_core_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -
                     raise EvidenceError("Observation identity differs from causal envelope")
             observations[key] = (sequence, snapshot)
             observation_decisions[key] = row["decision_id"]
+            if (snapshot.get("world_kind") in {"native", "fle", "play_api"}
+                    and snapshot.get("victory") is True
+                    and snapshot.get("victory_source") == "native:base-game-rocket-launch"):
+                native_victory = True
+                native_victory_observations.add(key)
         elif kind == "model_request":
             key = identity(payload, "model_call_id")
             if key in calls:
@@ -233,11 +239,8 @@ def reduce_core_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -
                     "segment_id": trace, "observation_id": reference(payload, "observation_id"),
                     "factorio_tick": payload.get("factorio_tick"),
                 }
-            snapshot = observation[1]
-            if (goal == "rocket_launch" and snapshot.get("world_kind") != "mock"
-                    and snapshot.get("victory") is True
-                    and snapshot.get("victory_source") == "native:base-game-rocket-launch"):
-                native_victory = True
+            if goal == "rocket_launch" and identity(payload, "observation_id") in native_victory_observations:
+                native_victory_milestones.add(goal)
         elif kind not in passive:
             unknown_events.add(kind)
         if kind == "run_finished":
@@ -278,7 +281,8 @@ def reduce_core_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -
     if any(call["resolved_model"] is None for call in calls.values()):
         warnings.add("unknown_resolved_model")
     target = config["target"]
-    achieved = native_victory if target == "rocket_launch" and world != "mock" else target in milestones
+    achieved = ("rocket_launch" in native_victory_milestones
+                if target == "rocket_launch" and world != "mock" else target in milestones)
     elapsed = (utc(run.events[-1]["time"]["utc"]) - utc(run.events[0]["time"]["utc"])).total_seconds()
     if any(utc(right["time"]["utc"]) < utc(left["time"]["utc"])
            for left, right in zip(run.events, run.events[1:])):
