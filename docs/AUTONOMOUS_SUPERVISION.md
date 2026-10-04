@@ -41,9 +41,21 @@ hybrid policy, pinned model `jev-1.13.0`, and `rocket_launch`. Children receive
 Remaining duration comes from the original
 cutoff. Blocked/uncertain checkpoints, process exits (including exit zero without
 completion), invalid checkpoint reads, and a stale checkpoint heartbeat trigger
-repair. Completed campaigns stop successfully. The watchdog kills and reaps
-the gameplay process before launching repair. Repair and verification use bounded
-timeouts; failures back off exponentially up to fifteen minutes until cutoff.
+repair. Completed campaigns stop successfully only when no live work remains in
+the checkpoint. A completed status paired with a pending action, attempt, active
+plan, reservation, transfer-recovery record, or acknowledged background job
+and attempt is treated as unresolved checkpoint reconciliation and cannot return
+success or launch gameplay. Retained attempt outcomes and audit history are
+receipts; they do not keep an otherwise valid completion open. A changed source
+with any such live work is routed to repair before gameplay resumes. The
+background job and attempt remain intact for review. An explicitly authorized
+compatible-source migration must still satisfy its own checkpoint-scope and
+source-lineage contract; ordinary source-change detection does not infer that
+authorization from a matching decision contract.
+
+The watchdog kills and reaps the gameplay process before launching repair.
+Repair and verification use bounded timeouts; failures back off exponentially up
+to fifteen minutes until cutoff.
 SIGINT/SIGTERM requests stop; at cutoff the watchdog kills its current process
 group and reaps the leader. Descendants must remain in the inherited process
 group; deliberately detached external services are outside this process boundary.
