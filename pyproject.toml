@@ -40,8 +40,8 @@ dashboard-test = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/CompleteDotTech/jev-factorio"
-Repository = "https://github.com/CompleteDotTech/jev-factorio"
+Homepage = "https://github.com/jevplays-games/jev-factorio-agent"
+Repository = "https://github.com/jevplays-games/jev-factorio-agent"
 Author = "https://github.com/CompleteDotTech"
 Company = "https://www.complete.tech"
 
