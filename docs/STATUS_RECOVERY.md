@@ -42,6 +42,90 @@ If required evidence or authority is missing, keep the unresolved boundary and
 truthful overlay intact, complete independent authorized work, and report the
 specific missing requirement. Do not use a shared VM restart as a recovery step.
 
+## Fast path: QEMU guest-agent channel lost
+
+Use this path only when the existing Factorio QEMU domain is still running but
+the host can no longer inspect the guest through QEMU Guest Agent (QGA). A lost
+QGA channel is a management-path failure; it does not prove that the guest or
+Factorio stopped. Do not create another domain or controller.
+
+1. On the existing libvirt host, make read-only checks:
+
+   ```sh
+   D=existing-domain-name  # substitute the exact recorded libvirt domain
+   virsh -c qemu:///system domstate "$D"
+   virsh -c qemu:///system domifaddr "$D" --source arp
+   virsh -c qemu:///system qemu-agent-command "$D" '{"execute":"guest-ping"}'
+   virsh -c qemu:///system qemu-monitor-command "$D" --pretty '{"execute":"query-chardev"}'
+   ```
+
+   Confirm the domain state and whether the guest-agent channel is connected.
+   Use the existing known guest address and configured SSH identity if available;
+   keep normal SSH host-key verification enabled. A refused SSH connection or an
+   empty serial console is not evidence that the VM is stopped. If attaching to
+   the existing serial console, attach with
+   `virsh -c qemu:///system console --safe "$D"`; detach with Ctrl+] when there
+   is no login prompt. Do not send guessed credentials or commands.
+
+2. If an authorized in-guest administrative shell is available, inspect the
+   guest-agent unit and its recent logs, then restart only that unit if it is
+   stopped, failed, or demonstrably wedged in its own health/log evidence:
+
+   ```sh
+   sudo systemctl status qemu-guest-agent --no-pager
+   sudo journalctl -u qemu-guest-agent --since '-30 min' --no-pager
+   # Run these only after the checks above establish the service is unhealthy.
+   sudo systemctl restart qemu-guest-agent
+   sudo systemctl is-active qemu-guest-agent
+   ```
+
+   Do not install or enable a new access service as a shortcut. Back on the
+   libvirt host, repeat `guest-ping` and `query-chardev`. Proceed only after the
+   channel responds. Record the observed service failure as the cause only when
+   guest logs establish it; otherwise leave the cause unknown.
+
+3. Re-run the existing read-only owner census immediately. Record its timestamp
+   and preserve the same session ID, checkpoint bytes, pending action, receipts,
+   attempt history, source revision, owner lock and cutoff. Reconcile through the
+   existing owner. A terminal reconciliation that freezes restart, a missing
+   owner handoff, or a missing original cutoff remains a hard stop after QGA is
+   restored. Do not promote a prepared-but-unexecuted manifest or infer authority
+   from a null cutoff. An until-complete window applies only to a separately
+   authorized isolated identity, save and owner; it cannot remove this campaign's
+   cutoff. See [NATIVE_ACCEPTANCE_WINDOW.md](NATIVE_ACCEPTANCE_WINDOW.md).
+
+4. Resume only through the accepted existing supervisor and only inside the
+   verified original window. Follow the normal reconciliation and acceptance
+   gates above. Verify a fresh owner readback, the original attempt's outcome,
+   advancing native evidence and a subsequent useful gameplay action. Until new
+   evidence arrives, keep the overlay labeled stopped/stale; a host heartbeat or
+   repeated old snapshot must not make old game events look fresh.
+
+If QGA is disconnected and neither authorized SSH nor a usable serial login is
+available, leave the running VM untouched and report the access blocker. A full
+VM restart interrupts the live game server and may lose unsaved state. Obtain
+explicit user approval before attempting one. After approval, use only the
+existing operator's graceful procedure. On a confirmed libvirt host this is
+the following sequence, replacing the placeholder with the exact existing
+domain. Request shutdown and verify its completion:
+
+```sh
+D=existing-domain-name
+virsh -c qemu:///system shutdown "$D"
+virsh -c qemu:///system domstate "$D"
+```
+
+Run the start command only after `domstate` reports `shut off`:
+
+```sh
+virsh -c qemu:///system start "$D"
+```
+
+If graceful shutdown does not complete, stop rather than force-destroying or
+resetting the domain. Recheck QGA, the existing save, the same campaign identity
+and owner handoff before any controller resume. This QEMU procedure does not
+permit a WSL restart.
+
 ## OBS Studio Mode: Preview is not Program
 
 In Studio Mode, selecting the Maintenance scene may change only **Preview**.
