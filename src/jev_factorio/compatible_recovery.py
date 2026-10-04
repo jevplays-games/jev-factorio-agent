@@ -82,7 +82,8 @@ def validate_lineage(memory) -> list[dict]:
                                    prior_records=records[:record_index])
         elif "epoch_witness" in record:
             raise ValueError("Unexpected compatible epoch boundary witness")
-        if any(r["previous_source"] == new for r in records):
+        if any(new in (r["previous_source"], r["current_source"])
+               for r in records[:record_index]):
             raise ValueError("Compatible-source lineage contains a cycle")
         for key in ("authorization_sha256", "checkpoint_sha256", "decision_contract_sha256",
                     "supervisor_history_sha256"):
