@@ -89,3 +89,21 @@ def test_question_boundary_rejects_stale_or_contrary_construction_proof(fixture,
     elif change == 'start': proof['start_evidence']['observed_tick'] -= 1
     _, questions, _ = question_batch(context, [plan])
     assert '`machine_construction_prerequisite`' not in questions[plan.id+'/useful_progress']['instructions']
+
+
+@pytest.mark.parametrize('fixture', [craft_case, placement_case])
+@pytest.mark.parametrize('change', ['goal', 'infinite_input', 'nan_input', 'zero_output',
+                                  'overflow'])
+def test_invalid_goal_or_recipe_arithmetic_never_qualifies_construction(fixture, change):
+    from jev_factorio.planning.decision_support import (
+        machine_construction_prerequisite, _craft_start_evidence, _placement_start_evidence)
+    state, data, plan = fixture()
+    recipe = data.recipes['iron-gear-wheel']
+    if change == 'goal': plan.materials['local_objective']['ultimate_goal'] = 'other'
+    elif change == 'infinite_input': recipe['ingredients'][0]['amount'] = float('inf')
+    elif change == 'nan_input': recipe['ingredients'][0]['amount'] = float('nan')
+    elif change == 'zero_output': recipe['products'][0]['amount'] = 0
+    elif change == 'overflow': recipe['products'][0]['amount'] = 1e-320
+    assert machine_construction_prerequisite(state, data, plan,
+        _craft_start_evidence(state, data, plan.steps[0]),
+        _placement_start_evidence(state, plan)) is None

@@ -1797,7 +1797,7 @@ def _production_machine_edges(snapshot, catalog, path, goal, target, *, carried_
             carried = snapshot.inventory.get(product, 0)
             output = next(p['amount'] for p in recipe['products']
                           if p.get('type') == 'item' and p.get('name') == product)
-            if (type(carried) is not int or carried < 0 or not _finite(output)
+            if (type(carried) is not int or carried < 0 or not _finite(output) or output <= 0
                     or not _finite(requested) or requested <= carried):
                 return None
             demand = {'required_product_units': requested, 'carried_product_units': carried,
@@ -1805,7 +1805,7 @@ def _production_machine_edges(snapshot, catalog, path, goal, target, *, carried_
                       'scope': 'selected_dependency_branch_not_full_material_bill'}
             ingredient = next((r for r in recipe.get('ingredients', [])
                                if r.get('type') == 'item' and r.get('name') == dependency
-                               and type(r.get('amount')) in (int, float) and r['amount'] > 0), None)
+                               and _finite(r.get('amount')) and r['amount'] > 0), None)
             if ingredient is not None:
                 requested = math.ceil((requested - carried) / output) * ingredient['amount']
                 edges.append({'kind': 'recipe_input', 'product': product,
@@ -1832,7 +1832,7 @@ def _production_machine_edges(snapshot, catalog, path, goal, target, *, carried_
             requested = 1
         if machine_edge is None:
             return None
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, ArithmeticError):
         return None
     return edges
 
@@ -1892,6 +1892,7 @@ def machine_construction_prerequisite(snapshot, catalog, plan, craft_start, plac
     local, intent = materials.get('local_objective'), materials.get('work_intent')
     if (len(plan.steps) != 1 or not isinstance(local, dict)
             or intent != {'scope': 'immediate', 'observed_tick': snapshot.tick}
+            or local.get('ultimate_goal') != plan.goal
             or type(local.get('inventory_target')) is not int
             or type(snapshot.inventory.get(local.get('item'), 0)) is not int
             or not 0 <= snapshot.inventory.get(local.get('item'), 0) < local['inventory_target']):
