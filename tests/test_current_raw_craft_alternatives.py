@@ -95,3 +95,32 @@ def test_missing_resource_does_not_offer_exploration_as_independent_work():
     state, _, planner = case()
     state.nearby_resources.pop('copper-ore')
     assert len(planner.candidates()) == 1
+
+
+def test_combined_construction_and_gather_frontier_keeps_the_choice_gate():
+    from jev_factorio.judgments import DEFAULT_MAX_REQUEST_BYTES, question_batch, select_plan
+    from jev_factorio.jev_client import MockJevClient
+    from jev_factorio.planning.decision_support import scheduling_context
+    state, data, planner = case()
+    state.factory['craft_jobs_protocol'] = 1
+    plans = planner.candidates()
+    plans[0] = replace(plans[0], steps=(replace(plans[0].steps[0],
+        action='factory_craft_job', effect='craft_job_complete',
+        parameters={**plans[0].steps[0].parameters, 'receipt':'test-construction'}),))
+    context = {'active_goal':'rocket_launch', 'facts':state.for_jev(),
+               **scheduling_context(state, data, plans, 'rocket_launch')}
+    _, questions, offered = question_batch(context, plans, max_bytes=DEFAULT_MAX_REQUEST_BYTES)
+    assert offered == plans
+    assert context['candidate_evidence'][plans[0].id]['machine_construction_prerequisite']
+    assert context['candidate_evidence'][plans[1].id]['raw_prerequisite']
+
+    class LowChoice(MockJevClient):
+        def evaluate(self, state, questions):
+            answers = super().evaluate(state, questions)
+            answers['candidate']['confidence'] = 0.26
+            return answers
+
+    decision = select_plan(LowChoice(), context, plans)
+    assert decision.plan_id is None
+    assert decision.reason == 'low choice confidence'
+    assert all(row['passed'] for row in decision.diagnostics['usefulness_gate'].values())
