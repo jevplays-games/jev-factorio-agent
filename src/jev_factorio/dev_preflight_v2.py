@@ -233,10 +233,14 @@ def inspect_native(native, checkpoint, expected_session):
                     destination[source] = expected
         for family, expected in (('input_routes', expected_input), ('output_buffers', expected_output)):
             group = native[family]
+            schema_enabled = ('successor_schema' in checkpoint or
+                              ('input_routes_schema' in checkpoint if family == 'input_routes'
+                               else 'output_buffers_schema' in checkpoint))
             require(isinstance(group, dict) and set(group) == {'present', 'protocol', 'commitments'}
                     and type(group['present']) is bool and type(group['protocol']) is int
                     and group['protocol'] == (1 if group['present'] else 0)
-                    and (group['present'] or not expected), 'invalid_legacy_transport_projection')
+                    and (group['present'] or (not expected and not schema_enabled)),
+                    'invalid_legacy_transport_projection')
             actual = table(group['commitments'], 5)
             reason = 'ordinary_output_ownership_not_retained' if family == 'output_buffers' and set(actual) - set(expected) else 'owned_' + family + '_mismatch'
             require(same(actual, expected), reason)

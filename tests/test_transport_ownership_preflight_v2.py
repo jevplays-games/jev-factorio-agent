@@ -272,11 +272,38 @@ def test_actual_outpost_paid_cells_and_receipt_map_match_existing_checkpoint_loa
     retained = checkpoint(native)
     retained.update(input_routes_schema=1, input_commitments={}, outposts_schema=1,
                     outpost_commitments=deepcopy(native['outposts']['commitments']))
+    # Outpost ownership depends on the composed input adapter. This actual
+    # fixture has that runtime; it has no output-buffer schema or runtime.
+    assert native['input_routes'] == {'present': True, 'protocol': 1, 'commitments': {}}
+    assert native['output_buffers'] == {'present': False, 'protocol': 0, 'commitments': {}}
     path = tmp_path / 'checkpoint.json'; path.write_bytes(canonical(retained))
     assert checkpoint_read(path)[0] == retained
     assert inspect_native(native, retained, retained['session_id']) == []
     lua.execute("storage.mining_outposts.receipts['build:chest']=123456")
     assert inspect_native(projected(lua), retained, retained['session_id']) == ['outpost_receipt_mismatch']
+
+
+@pytest.mark.parametrize(('family', 'schema', 'commitments'), [
+    ('input_routes', 'input_routes_schema', 'input_commitments'),
+    ('output_buffers', 'output_buffers_schema', 'output_commitments'),
+])
+def test_schema_enabled_empty_transport_rejects_absent_runtime_with_full_present_control(
+        family, schema, commitments):
+    native = projected(prepared_runtime())
+    retained = checkpoint(native)
+    retained.update({schema: 1, commitments: {}})
+    assert native[family] == {'present': False, 'protocol': 0, 'commitments': {}}
+    assert inspect_native(native, retained, retained['session_id']) == [
+        'invalid_legacy_transport_projection']
+
+    native[family] = {'present': True, 'protocol': 1, 'commitments': {}}
+    assert inspect_native(native, retained, retained['session_id']) == []
+
+
+def test_legacy_empty_transport_without_schema_may_remain_absent():
+    native = projected(prepared_runtime())
+    retained = checkpoint(native)
+    assert inspect_native(native, retained, retained['session_id']) == []
 
 
 def test_untracked_output_roles_cannot_hide_outside_output_cells():

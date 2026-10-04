@@ -1,4 +1,4 @@
-"""Private v2 capture for complete solid/coal integration trials.
+"""Private v3 capture for complete solid/coal integration trials.
 
 This preserves transport ownership and source evidence. It checks internal
 consistency only; native authenticity and rollout authority remain external.
@@ -20,11 +20,14 @@ from .research_log import Redactor
 from .dev_preflight import checkpoint_type
 from .state import GameSnapshot
 from . import coal_supply as coal
+from . import solid_routes as solid
+from .planning import solid_funding
 
-SCHEMA = 'jev-factorio.complete-capture.v2'
+SCHEMA = 'jev-factorio.complete-capture.v3'
 TOP_FIELDS = RECORD_FIELDS | {
     'solid_routes', 'solid_route_evidence', 'solid_route_fault', 'solid_science_policy',
-    'solid_investment_evidence', 'coal_supply', 'coal_supply_evidence', 'coal_supply_fault',
+    'solid_investment_evidence', 'solid_funding_schema', 'solid_funding',
+    'coal_supply', 'coal_supply_evidence', 'coal_supply_fault',
     'coal_kit_policy', 'coal_kit_evidence', 'coal_economic_admission',
     'coal_admission_evidence', 'previous_iteration_timing',
 }
@@ -66,6 +69,48 @@ def checked_coal_observation(state: dict, checkpoint: dict | None = None) -> Non
             raise ValueError('Coal receipt or component differs from checkpoint')
 
 
+def _solid_prefix(retained: dict, current: dict) -> bool:
+    """Require immutable route identity and every already-paid receipt."""
+    identity = ('route', 'layout', 'item', 'source', 'target', 'steps')
+    return (all(canonical(retained.get(key)) == canonical(current.get(key)) for key in identity)
+            and isinstance(retained.get('parts'), dict)
+            and isinstance(current.get('parts'), dict)
+            and all(canonical(current['parts'].get(part)) == canonical(paid)
+                    for part, paid in retained['parts'].items()))
+
+
+def _solid_observation(state: dict) -> dict:
+    if not isinstance(state, dict) or not isinstance(state.get('factory'), dict):
+        raise ValueError('Missing native solid-route observation')
+    snapshot = GameSnapshot(tick=state.get('tick'), session_id=state.get('session_id'),
+                            factory=state['factory'])
+    return solid.routes(snapshot)
+
+
+def checked_solid_observation(state: dict, checkpoint: dict) -> None:
+    """Require endpoint native ownership to equal the composed checkpoint."""
+    observed = _solid_observation(state)
+    owned = {key: solid.commitment(row) for key, row in observed.items()
+             if row['state'] != 'proposed'}
+    if canonical(owned) != canonical(checkpoint['solid_commitments']):
+        raise ValueError('Solid native route ownership differs from checkpoint')
+
+
+def checked_solid_funding(row: dict, intents: list[dict]) -> None:
+    if (type(row.get('solid_funding_schema')) is not int
+            or row['solid_funding_schema'] != 1 or 'solid_funding' not in row
+            or type(row.get('tick')) is not int or row['tick'] < 0):
+        raise ValueError('Unsupported or missing solid funding record schema')
+    funding = row['solid_funding']
+    if funding is not None:
+        solid_funding.validate_state(funding, row['tick'], intents)
+        for label in ('state', 'after_state'):
+            observed = _solid_observation(row[label]).get(funding['route'])
+            if (not isinstance(observed, dict) or observed.get('state') != 'proposed'
+                    or not solid_funding.bound(funding, observed)):
+                raise ValueError('Active solid funding differs from native proposed route')
+
+
 def checked_checkpoint_progress(initial: dict, final: dict) -> None:
     if final['last_tick'] < initial['last_tick']:
         raise ValueError('Final checkpoint tick regressed')
@@ -88,6 +133,10 @@ def checked_checkpoint_progress(initial: dict, final: dict) -> None:
                 or any(new.get('parts', {}).get(part) != paid
                        for part, paid in old['parts'].items())):
             raise ValueError('Checkpoint paid coal ownership regressed')
+    for route, old in initial.get('solid_commitments', {}).items():
+        new = final.get('solid_commitments', {}).get(route)
+        if not isinstance(new, dict) or not _solid_prefix(old, new):
+            raise ValueError('Checkpoint paid solid ownership regressed')
 
 
 def checked_campaign_binding(initial: dict, final: dict, rows: list[dict]) -> None:
@@ -100,13 +149,21 @@ def checked_campaign_binding(initial: dict, final: dict, rows: list[dict]) -> No
     if not epoch or any(checkpoint.get(key) != epoch for checkpoint in (initial, final)
                         for key in ('solid_epoch', 'coal_epoch')):
         raise ValueError('Capture actor epoch mismatch')
+    last_tick = None
+    runtime_identity = None
+    retained_solid = deepcopy(initial['solid_commitments'])
+    final_solid = final['solid_commitments']
     for row in rows:
         if row.get('session_id') != session or row.get('target') != initial['target']:
             raise ValueError('Capture record campaign identity mismatch')
         for label in ('state', 'after_state'):
             state = row.get(label)
-            if not isinstance(state, dict) or state.get('session_id') != session:
+            if (not isinstance(state, dict) or state.get('session_id') != session
+                    or type(state.get('tick')) is not int or state['tick'] < 0
+                    or (last_tick is None and state['tick'] < initial['last_tick'])
+                    or (last_tick is not None and state['tick'] < last_tick)):
                 raise ValueError('Capture observation campaign identity mismatch')
+            last_tick = state['tick']
             factory = state.get('factory')
             if not isinstance(factory, dict):
                 raise ValueError('Capture native identity binding missing')
@@ -116,6 +173,41 @@ def checked_campaign_binding(initial: dict, final: dict, rows: list[dict]) -> No
                         or native.get('tick') != state.get('tick')
                         or any(native.get(key) != value for key, value in epoch.items())):
                     raise ValueError('Capture native identity binding mismatch')
+            runtime = factory.get('acceptance_runtime')
+            if (not isinstance(runtime, dict) or runtime.get('session_id') != session
+                    or type(runtime.get('actor_unit')) is not int or runtime['actor_unit'] < 1
+                    or any(type(runtime.get(key)) is not int or runtime[key] < 1
+                           for key in ('player_index', 'surface_index', 'force_index'))
+                    or not isinstance(runtime.get('mods'), dict)):
+                raise ValueError('Capture actor identity binding missing')
+            identity = canonical({key: runtime.get(key) for key in
+                                  ('session_id', 'actor_unit', 'player_index', 'surface_index',
+                                   'force_index', 'mods')})
+            if runtime_identity is None:
+                runtime_identity = identity
+            elif runtime_identity != identity:
+                raise ValueError('Capture actor identity changed')
+
+            observed_solid = _solid_observation(state)
+            for route, old in retained_solid.items():
+                current = observed_solid.get(route)
+                if current is None or not solid.reconciles(old, current):
+                    raise ValueError('Paid solid route disappeared or regressed in gameplay')
+            for route, current in observed_solid.items():
+                if current['state'] == 'proposed':
+                    continue
+                commitment = solid.commitment(current)
+                prior = retained_solid.get(route)
+                final_owned = final_solid.get(route)
+                if prior is not None and not _solid_prefix(prior, commitment):
+                    raise ValueError('Paid solid route identity or receipt changed in gameplay')
+                if not isinstance(final_owned, dict) or not _solid_prefix(commitment, final_owned):
+                    raise ValueError('Final checkpoint does not retain observed solid ownership')
+                retained_solid[route] = commitment
+    if last_tick is None or last_tick > final['last_tick']:
+        raise ValueError('Final checkpoint precedes captured gameplay')
+    checked_solid_observation(rows[0]['state'], initial)
+    checked_solid_observation(rows[-1]['after_state'], final)
 
 
 def checked_economic_binding(trial: dict, initial: dict, final: dict, rows: list[dict]) -> None:
@@ -163,6 +255,8 @@ def checked_preflight(preflight: dict, trial: dict, initial: dict, rows=None) ->
             raise ValueError('Gameplay precedes ownership preflight')
         for row in rows:
             for label in ('state', 'after_state'):
+                if row[label].get('tick', -1) < native['tick']:
+                    raise ValueError('Gameplay observation precedes ownership preflight')
                 runtime = row[label]['factory'].get('acceptance_runtime')
                 if (not isinstance(runtime, dict) or any(not same(runtime.get(k), native[k])
                         for k in ('session_id', 'player_index', 'actor_unit', 'surface_index',
@@ -174,7 +268,8 @@ def same(left, right):
     return canonical(left) == canonical(right)
 
 
-def project_record(row: dict, redactor: Redactor, omissions: Counter) -> dict:
+def project_record(row: dict, redactor: Redactor, omissions: Counter,
+                   solid_intents: list[dict] | None = None) -> dict:
     if not isinstance(row, dict):
         raise ValueError('Invalid gameplay record')
     unknown = set(row) - TOP_FIELDS - {'state', 'after_state', 'decision'}
@@ -220,7 +315,10 @@ def project_record(row: dict, redactor: Redactor, omissions: Counter) -> dict:
         elif isinstance(node, list):
             for item in node: check(item)
     check(result)
-    return redactor.clean(result)
+    cleaned = redactor.clean(result)
+    if solid_intents is not None:
+        checked_solid_funding(cleaned, solid_intents)
+    return cleaned
 
 
 def capture(*, gameplay: Path, trial_path: Path, initial_checkpoint: Path,
@@ -255,7 +353,8 @@ def capture(*, gameplay: Path, trial_path: Path, initial_checkpoint: Path,
     raw = stable_read(gameplay, MAX_LOG)
     redactor = Redactor(dict(os.environ if environ is None else environ))
     omissions = Counter()
-    projected = [project_record(row, redactor, omissions) for row in records(raw)]
+    projected = [project_record(row, redactor, omissions, trial['solid_intents'])
+                 for row in records(raw)]
     checked_preflight(preflight, trial, initial, projected)
     checked_economic_binding(trial, initial, final, projected)
     for row in projected:
@@ -312,6 +411,12 @@ def verify(directory: Path) -> dict:
     trial = load_json(content['trial.json'])
     validate_trial(trial)
     projected = records(raw)
+    reviewed = [project_record(row, Redactor({}), Counter(), trial['solid_intents'])
+                for row in projected]
+    if any(canonical(reviewed_row) != canonical(original_row)
+           for reviewed_row, original_row in zip(reviewed, projected)):
+        raise ValueError('Captured gameplay differs from reviewed record schema')
+    projected = reviewed
     preflight = load_json(content['preflight.json'])
     initial = checked_checkpoint(content['initial-checkpoint.json'])
     final = checked_checkpoint(content['final-checkpoint.json'])
