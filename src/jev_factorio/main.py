@@ -135,6 +135,8 @@ def cli() -> None:
                    help="Full Git commit supplied by the checkpoint owner for the blocked decision")
     p.add_argument("--persist-recoverable-blocks", action="store_true",
                    help="Opt in to observation-only waits and changed-evidence retries for exact recoverable blocks")
+    p.add_argument("--initialize-persistent-campaign", action="store_true",
+                   help="Explicit new dedicated campaign with persistent recovery; requires a new checkpoint and research directory")
     p.add_argument("--adopt-session", action="store_true",
                    help="Explicitly identify an older live FLE session without resetting it")
     args = p.parse_args()
@@ -179,6 +181,17 @@ def cli() -> None:
                 "ready-work scheduling, and a checkpoint")
     persistent_checkpoint_capture = None
     compatible_authorization = None
+    if args.initialize_persistent_campaign:
+        if (not args.persist_recoverable_blocks or args.resume or args.resume_controller
+                or args.adopt_session or args.reevaluate_blocked_once
+                or args.compatible_source_authorization is not None or not args.run_dir
+                or not args.checkpoint):
+            p.error("New persistent campaign requires fresh checkpoint/research paths and no resume or migration flags")
+        from .new_campaign import require_unused
+        try:
+            require_unused(Path(args.checkpoint))
+        except ValueError as error:
+            p.error(str(error))
     if args.compatible_source_authorization is not None:
         if (not args.persist_recoverable_blocks or args.reevaluate_blocked_once
                 or args.compatible_source_authorization_sha256 is None
@@ -197,13 +210,14 @@ def cli() -> None:
         p.error("Compatible-source pins require an explicit authorization file")
     if args.persist_recoverable_blocks:
         if (not args.until_complete or args.backend != "fle" or args.controller != "hierarchical"
-                or args.policy != "jev" or args.mock_model or not args.resume
-                or not args.resume_controller or not args.checkpoint or args.reconcile_only
+                or args.policy != "jev" or args.mock_model
+                or (not args.initialize_persistent_campaign and (not args.resume or not args.resume_controller))
+                or not args.checkpoint or args.reconcile_only
                 or args.owner_step_gate_dir is not None or args.owner_step_lock_path is not None
                 or args.owner_step_lock_fd is not None):
             p.error("--persist-recoverable-blocks requires until-complete resumed live FLE Jev control, "
                     "a controller checkpoint, and no reconcile-only or owner-step gate")
-        if not args.reevaluate_blocked_once:
+        if not args.reevaluate_blocked_once and not args.initialize_persistent_campaign:
             # A resumed block with no persistent ledger can only enter this mode
             # through the existing exact-checkpoint, changed-contract gate.
             try:
@@ -226,13 +240,14 @@ def cli() -> None:
             revision = owner_context.get("code_revision")
             if not isinstance(revision, dict):
                 raise ValueError("a supervisor-pinned source revision is required")
-            persistent_checkpoint_capture = Path(args.checkpoint).read_bytes()
-            checkpoint_data = json.loads(persistent_checkpoint_capture.decode("utf-8"))
-            validate_checkpoint_metadata(
-                checkpoint_data, revision,
-                allow_source_change=(args.reevaluate_blocked_once
-                                     or compatible_authorization is not None),
-                owner_context=owner_context)
+            if not args.initialize_persistent_campaign:
+                persistent_checkpoint_capture = Path(args.checkpoint).read_bytes()
+                checkpoint_data = json.loads(persistent_checkpoint_capture.decode("utf-8"))
+                validate_checkpoint_metadata(
+                    checkpoint_data, revision,
+                    allow_source_change=(args.reevaluate_blocked_once
+                                         or compatible_authorization is not None),
+                    owner_context=owner_context)
             if (args.reevaluate_blocked_once
                     and (checkpoint_data.get("status") != "blocked"
                          or checkpoint_data.get("reason") not in {
@@ -430,6 +445,7 @@ def cli() -> None:
             until_complete=args.until_complete, reconcile_only=args.reconcile_only,
             reevaluate_blocked_once=args.reevaluate_blocked_once,
             persist_recoverable_blocks=args.persist_recoverable_blocks,
+            initialize_persistent_campaign=args.initialize_persistent_campaign,
             persistent_idle_observations=persistent_idle_observations,
             exact_checkpoint_sha256=args.exact_checkpoint_sha256,
             blocked_source_revision=args.blocked_source_revision,
@@ -506,6 +522,8 @@ def cli() -> None:
             if args.persist_recoverable_blocks:
                 options["persist_recoverable_blocks"] = True
                 options["persistent_idle_observations"] = persistent_idle_observations
+                if args.initialize_persistent_campaign:
+                    options["initialize_persistent_campaign"] = True
             loop_type = HierarchicalLoop
             if args.background_work:
                 from .background import BackgroundWorkLoop
@@ -629,7 +647,15 @@ def cli() -> None:
                         raise ValueError('Checkpoint changed during blocked-decision preflight')
                 except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
                     p.error(f'Blocked decision checkpoint preflight failed: {error}')
-            if args.persist_recoverable_blocks and Path(args.checkpoint).read_bytes() != persistent_checkpoint_capture:
+            if args.initialize_persistent_campaign:
+                from .new_campaign import reserve
+                from .provenance import gameplay_context
+                try:
+                    reserve(Path(args.checkpoint), gameplay_context())
+                except (OSError, ValueError) as error:
+                    p.error(f"New campaign admission failed; backend not started: {error}")
+            if (args.persist_recoverable_blocks and not args.initialize_persistent_campaign
+                    and Path(args.checkpoint).read_bytes() != persistent_checkpoint_capture):
                 p.error("Persistent recovery checkpoint changed during pre-backend preflight")
             if setup_timing:
                 setup_timing.mark('preflight_ready')
