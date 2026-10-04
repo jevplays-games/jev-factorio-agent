@@ -8,19 +8,54 @@ import hashlib
 import json
 import math
 import os
+import re
 import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlsplit
 
 from .provenance import CONTEXT_ENV, append_audit, digest_json, identifier, source_revision
 from .operational_safety import SafetyStateError, read_json, safety_dir
 from .recovery_policy import classify, current_exit, repair_quota_exhausted
+
+
+_CANONICAL_REPOSITORY = "jevplays-games/jev-factorio-agent"
+_OWNERSHIP_FIELDS = (
+    "connector_ownership", "capital_investment", "transfer_recovery",
+    "background_schema", "background_job", "background_attempt",
+    "output_buffers_schema", "output_commitments",
+    "input_routes_schema", "input_commitments",
+    "outposts_schema", "outpost_commitments",
+    "successor_schema", "successor_projects", "successor_receipts",
+    "solid_routes_schema", "solid_science_policy", "solid_intents",
+    "solid_epoch", "solid_commitments", "solid_funding", "solid_funding_catalogs",
+    "coal_supply_schema", "coal_kit_policy", "coal_economic_admission",
+    "coal_targets", "coal_epoch", "coal_commitments", "coal_funding",
+)
+_OWNERSHIP_FAMILIES = {
+    "connector": {"connector_ownership"},
+    "capital": {"capital_investment"},
+    "background": {"background_schema", "background_job", "background_attempt"},
+    "output": {"output_buffers_schema", "output_commitments"},
+    "input": {"input_routes_schema", "input_commitments"},
+    "outpost": {"outposts_schema", "outpost_commitments"},
+    "successor": {"successor_schema", "successor_projects", "successor_receipts"},
+    "solid": {"solid_routes_schema", "solid_science_policy", "solid_intents",
+              "solid_epoch", "solid_commitments", "solid_funding", "solid_funding_catalogs"},
+    "coal": {"coal_supply_schema", "coal_kit_policy", "coal_economic_admission",
+             "coal_targets", "coal_epoch", "coal_commitments", "coal_funding"},
+}
+_OWNERSHIP_MIGRATIONS = {
+    "output": ("output_ownership_enabled", "explicit_empty_ownership_at_idle_boundary"),
+    "outpost": ("mining_outposts_enabled", "explicit_capability_at_idle_boundary"),
+    "successor": ("successors_enabled", "explicit_idle_boundary_capability"),
+}
 
 
 def atomic_json(path: Path, value: dict) -> None:
@@ -46,6 +81,7 @@ class SupervisorConfig:
     repair_command: list[str]
     cwd: Path
     python: str = sys.executable
+    model: str | None = None
     duration_hours: float = 12
     poll_seconds: float = 5
     hang_seconds: float = 600
@@ -100,6 +136,10 @@ class SupervisorConfig:
             if self.factory_scheduling != 'ready-work':
                 raise ValueError('Production treatment requires ready-work scheduling')
             load(self.production_treatment)
+        if (self.model is not None and
+                (not isinstance(self.model, str)
+                 or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}", self.model) is None)):
+            raise ValueError("model must be a provider model ID with at most 128 safe characters")
         if self.run_id is not None:
             identifier(self.run_id)
         for name in ("started_at", "duration_hours", "poll_seconds", "hang_seconds",
@@ -328,6 +368,7 @@ class Supervisor:
 
     def initialize(self, *, record_only: bool = False) -> None:
         self.config.validate()
+        current_selection = self.model_selection()
         cutoff = self.config.started_at + self.config.duration_hours * 3600
         identity = {"session_id": self.config.session_id,
                     "checkpoint": str(self.config.checkpoint.resolve()),
@@ -347,6 +388,7 @@ class Supervisor:
                 "furnace_output_buffers", "furnace_input_belts",
             )
         }
+        configuration["model_selection"] = current_selection
         # Keep old disabled configurations byte-for-byte comparable. Enabling is
         # a distinct treatment, never a silent change to a running supervisor.
         if self.config.mining_outposts:
@@ -360,12 +402,86 @@ class Supervisor:
                      "lead_time_supply", "coverage_margin_lookahead"):
             if getattr(self.config, name):
                 configuration[name] = True
-        if self.state.get("gameplay_configuration", configuration) != configuration:
+        saved_configuration = self.state.get("gameplay_configuration")
+        saved_digest = self.state.get("gameplay_configuration_sha256")
+        if saved_configuration is not None and not isinstance(saved_configuration, dict):
+            raise ValueError("Existing gameplay configuration is invalid")
+        if (saved_digest is not None
+                and (not isinstance(saved_digest, str)
+                     or digest_json(saved_configuration) != saved_digest)):
+            raise ValueError("Existing gameplay configuration integrity check failed")
+
+        # Pre-binding supervisor states did not retain their effective provider.
+        # Keep the existing run and its cutoff, but hold gameplay until an
+        # operator supplies an explicit model pin with the current live
+        # provider credentials. Never infer the missing provider from today's
+        # environment and silently resume the old campaign.
+        binding_review_required = False
+        binding_reviewed = False
+        if existing:
+            if saved_configuration is None:
+                legacy_options_are_default = (
+                    configuration.get("factory_scheduling") == "serial"
+                    and not any(configuration.get(name, False) for name in (
+                        "background_work", "furnace_output_buffers", "furnace_input_belts",
+                        "mining_outposts", "ore_side_successors", "campaign_diagnostics",
+                        "profile_observations", "consolidated_observations", "lead_time_supply",
+                        "coverage_margin_lookahead", "production_treatment_sha256"))
+                )
+                if not legacy_options_are_default:
+                    raise ValueError("Legacy supervisor state requires an explicit gameplay configuration review")
+                binding_review_required = True
+            else:
+                saved_base = {key: value for key, value in saved_configuration.items()
+                               if key != "model_selection"}
+                if any(configuration.get(key) != value for key, value in saved_base.items()):
+                    raise ValueError("Existing gameplay configuration cannot be changed")
+                if any(value not in (False, None, "serial")
+                       for key, value in configuration.items()
+                       if key not in saved_base and key != "model_selection"):
+                    raise ValueError("Existing gameplay configuration cannot be changed")
+                saved_selection = saved_configuration.get("model_selection")
+                if not isinstance(saved_selection, dict):
+                    binding_review_required = True
+                elif saved_selection.get("needs_review") is True:
+                    binding_review_required = True
+                elif saved_selection != current_selection:
+                    raise ValueError("Provider/model configuration cannot be changed")
+
+            if binding_review_required:
+                if self.config.model is not None and current_selection["provider"] is not None:
+                    configuration["model_selection"] = current_selection
+                    binding_review_required = False
+                    binding_reviewed = True
+                else:
+                    configuration["model_selection"] = {
+                        "provider": None, "model": None, "explicit": False,
+                        "needs_review": True,
+                    }
+            else:
+                configuration["model_selection"] = current_selection
+        else:
+            configuration["model_selection"] = current_selection
+
+        configuration_digest = digest_json(configuration)
+        if (saved_digest is not None and saved_configuration != configuration
+                and not binding_reviewed):
             raise ValueError("Existing gameplay configuration cannot be changed")
-        self.save(gameplay_configuration=configuration)
+        attach_configuration_binding = saved_digest is None or binding_reviewed
+        self.save(gameplay_configuration=configuration,
+                  gameplay_configuration_sha256=configuration_digest)
         if record_only and self.state.get("process"):
             raise ValueError("Manual intervention requires no saved process; recover supervision separately")
         self.initialize_provenance(existing=existing)
+        if attach_configuration_binding:
+            event = "gameplay_model_binding_reviewed" if binding_reviewed else (
+                "gameplay_model_binding_review_required" if binding_review_required else
+                "gameplay_configuration_pinned")
+            selection = configuration["model_selection"]
+            self.event(event, configuration_sha256=configuration_digest,
+                       provider=selection.get("provider"), model=selection.get("model"),
+                       explicit=selection.get("explicit"),
+                       legacy_state=existing)
         if record_only:
             return
         self.recover_process()
@@ -407,6 +523,10 @@ class Supervisor:
     def launch(self, command: list[str], phase: str, prompt: Path | None = None) -> None:
         if self.remaining() <= 0 or self.stop_requested:
             return
+        environment = (self.gameplay_environment() if phase == "gameplay"
+                       else os.environ.copy())
+        if phase == "gameplay":
+            self._check_gameplay_model_binding(environment)
         execution_id = str(uuid4())
         if not self.transition("process_prepared", phase=phase, execution_id=execution_id):
             return
@@ -414,7 +534,6 @@ class Supervisor:
         input_stream = prompt.open("rb") if prompt else subprocess.DEVNULL
         temporary = self.config.cwd / "runs" / "tmp"
         temporary.mkdir(parents=True, exist_ok=True)
-        environment = os.environ.copy()
         environment["TMPDIR"] = str(temporary)
         environment["PYTHONPATH"] = str(self.config.cwd / "src")
         # Do not leak a gameplay context into repair tests or Git verification.
@@ -455,16 +574,25 @@ class Supervisor:
 
     def gameplay_command(self) -> list[str]:
         self.config.validate()
+        current_selection = self.model_selection()
         command = [
             self.config.python, "-m", "jev_factorio", "--backend", "fle", "--resume",
             "--resume-controller", "--controller", "hierarchical", "--policy", "hybrid",
-            "--model", "jev-1.13.0",
             "--target", "rocket_launch", "--checkpoint", str(self.config.checkpoint),
             "--duration-hours", str(self.remaining() / 3600),
             "--tick-seconds", str(self.config.tick_seconds),
             "--log-file", str(self.config.state_dir / "gameplay.jsonl"),
             "--factory-scheduling", self.config.factory_scheduling,
         ]
+        selection = self.state.get("gameplay_configuration", {}).get("model_selection")
+        if selection is None:
+            selection = current_selection
+        if selection.get("needs_review") is True:
+            raise ValueError("Legacy provider/model binding requires an explicit reviewed --model pin")
+        elif current_selection != selection:
+            raise ValueError("Provider/model configuration changed; start a reviewed supervisor run")
+        if selection.get("model") is not None:
+            command.extend(["--model", selection["model"]])
         for name in ("background_work", "furnace_output_buffers", "furnace_input_belts", "mining_outposts", "ore_side_successors",
                      "campaign_diagnostics", "profile_observations", "consolidated_observations",
                      "lead_time_supply", "coverage_margin_lookahead"):
@@ -481,6 +609,77 @@ class Supervisor:
                 self.config.research_dir.resolve() / f"invocation-{uuid4()}"
             )])
         return command
+
+    def gameplay_environment(self) -> dict[str, str]:
+        """Resolve the child environment with main.cli's dotenv precedence."""
+        environment = os.environ.copy()
+        dotenv_path = self.config.cwd / ".env"
+        if dotenv_path.is_file():
+            from dotenv.main import DotEnv
+            values = DotEnv(dotenv_path=dotenv_path, override=False, interpolate=True).dict()
+            for key, value in values.items():
+                if key not in environment and value is not None:
+                    environment[key] = value
+        # main.cli loads dotenv again inside the child. Empty sentinels preserve
+        # the captured absence so a file edit between selection and child startup
+        # cannot add a provider credential after the supervisor's drift check.
+        for key in ("TYPESAFE_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"):
+            environment.setdefault(key, "")
+        return environment
+
+    @staticmethod
+    def _make_client_for_environment(environment: dict, model: str | None):
+        """Call the existing provider selector against the exact child credentials."""
+        from .jev_client import make_client
+
+        keys = ("TYPESAFE_API_KEY", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID")
+        previous = {key: (key in os.environ, os.environ.get(key)) for key in keys}
+        try:
+            for key in keys:
+                if key in environment:
+                    os.environ[key] = environment[key]
+                else:
+                    os.environ.pop(key, None)
+            return make_client(allow_mock=False, model=model)
+        finally:
+            for key, (present, value) in previous.items():
+                if present:
+                    os.environ[key] = value
+                else:
+                    os.environ.pop(key, None)
+
+    def model_selection(self, environment: dict | None = None) -> dict:
+        """Return the credential-free identity selected in the child environment."""
+        from .jev_client import CloudflareJevClient, JevClient
+
+        environment = environment or self.gameplay_environment()
+        try:
+            client = self._make_client_for_environment(environment, self.config.model)
+        except ValueError:
+            if (environment.get("TYPESAFE_API_KEY")
+                    or (environment.get("CLOUDFLARE_API_TOKEN")
+                        and environment.get("CLOUDFLARE_ACCOUNT_ID"))):
+                raise
+            return {"provider": None, "model": self.config.model,
+                    "explicit": self.config.model is not None}
+        if isinstance(client, JevClient):
+            provider = "typesafe"
+        elif isinstance(client, CloudflareJevClient):
+            provider = "cloudflare"
+        else:
+            raise ValueError("Supervisor requires a live Jev provider")
+        return {"provider": provider, "model": client.model,
+                "explicit": self.config.model is not None}
+
+    def _check_gameplay_model_binding(self, environment: dict | None = None) -> None:
+        current = self.model_selection(environment)
+        configured = self.state.get("gameplay_configuration", {}).get("model_selection")
+        if not isinstance(configured, dict) or configured.get("needs_review") is True:
+            raise ValueError("Legacy provider/model binding requires an explicit reviewed --model pin")
+        if configured is not None and current != configured:
+            raise ValueError("Provider/model configuration changed; start a reviewed supervisor run")
+        if current["provider"] is None:
+            raise ValueError("Live Jev credentials are required before gameplay can launch")
 
     def watch_game(self) -> str:
         checkpoint = self.checkpoint()
@@ -703,6 +902,169 @@ Only report repaired when every acceptance requirement is verified.
                 and isinstance(evidence, list) and bool(evidence)
                 and all(isinstance(item, str) and item.strip() for item in evidence))
 
+    @staticmethod
+    def _github_repository_identity(value: str) -> tuple[str, str] | None:
+        """Parse a credential-free GitHub remote to its owner and repository."""
+        if not isinstance(value, str) or not value or value != value.strip():
+            return None
+        if value.startswith("git@github.com:"):
+            path = value.removeprefix("git@github.com:")
+        else:
+            try:
+                parsed = urlsplit(value)
+                port = parsed.port
+            except ValueError:
+                return None
+            if (parsed.scheme != "https" or parsed.hostname != "github.com"
+                    or parsed.username is not None or parsed.password is not None
+                    or port is not None or parsed.query or parsed.fragment):
+                return None
+            path = parsed.path.lstrip("/")
+        if path.endswith(".git"):
+            path = path[:-4]
+        parts = path.split("/")
+        if len(parts) != 2 or not all(re.fullmatch(r"[A-Za-z0-9_.-]+", part) for part in parts):
+            return None
+        remote_owner, repository = parts
+        if repository != "jev-factorio-agent":
+            return None
+        return remote_owner, repository
+
+    @staticmethod
+    def _github_repository_remote(value: str, *, owner: str | None) -> bool:
+        """Accept credential-free GitHub remotes bound to the expected repository."""
+        identity = Supervisor._github_repository_identity(value)
+        if identity is None:
+            return False
+        remote_owner, _ = identity
+        if owner is not None:
+            return remote_owner == owner
+        return remote_owner != "jevplays-games"
+
+    @staticmethod
+    def _canonical_pr_number(value: str) -> str | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            return None
+        match = re.fullmatch(r"/jevplays-games/jev-factorio-agent/pull/([1-9][0-9]*)/?", parsed.path)
+        if (parsed.scheme != "https" or parsed.netloc != "github.com"
+                or parsed.username is not None or parsed.password is not None
+                or parsed.query or parsed.fragment or match is None):
+            return None
+        return match.group(1)
+
+    def _repair_ownership_is_preserved(self, previous: dict, current: dict) -> bool:
+        """Validate both full checkpoints and retain every paid owner exactly.
+
+        The union memory type makes an old checkpoint pass through the same
+        composed loader as the candidate. That preserves loader-authenticated
+        empty legacy upgrades while exposing any newly added owner commitment.
+        """
+        from .memory import checkpoint_memory_type, load_checkpoint_data
+
+        if not isinstance(previous, dict) or not isinstance(current, dict):
+            return False
+        try:
+            union_type = checkpoint_memory_type({key: None for key in previous.keys() | current.keys()})
+            old_memory = load_checkpoint_data(
+                previous, self.config.session_id, "rocket_launch",
+                checkpoint_path=self.config.checkpoint, memory_type=union_type,
+            )
+            new_memory = load_checkpoint_data(
+                current, self.config.session_id, "rocket_launch",
+                checkpoint_path=self.config.checkpoint, memory_type=union_type,
+            )
+            old_state, new_state = asdict(old_memory), asdict(new_memory)
+            index = getattr(old_memory, "_blocked_recovery_archive_index", None)
+            if index is not None:
+                index.close()
+                del old_memory._blocked_recovery_archive_index
+            index = getattr(new_memory, "_blocked_recovery_archive_index", None)
+            if index is not None:
+                index.close()
+                del new_memory._blocked_recovery_archive_index
+        except (OSError, ValueError, TypeError, AttributeError, KeyError):
+            for memory in (locals().get("old_memory"), locals().get("new_memory")):
+                index = getattr(memory, "_blocked_recovery_archive_index", None)
+                if index is not None:
+                    index.close()
+            return False
+
+        # History is the receipt sequence for every ownership family. Even an
+        # otherwise-empty legacy checkpoint must not be re-authored to make a
+        # later owner binding or migration event appear native.
+        if new_memory.history[:len(old_memory.history)] != old_memory.history:
+            return False
+
+        old_owners = {name: old_state[name] for name in _OWNERSHIP_FIELDS if name in old_state}
+        new_owners = {name: new_state[name] for name in _OWNERSHIP_FIELDS if name in new_state}
+        if old_owners != new_owners:
+            return False
+        def enabled(data: dict, family: str) -> bool:
+            fields = _OWNERSHIP_FAMILIES[family]
+            if family in {"connector", "capital"}:
+                name = next(iter(fields))
+                return data.get(name) is not None
+            return bool(fields & data.keys())
+
+        changed_families = {
+            family for family in _OWNERSHIP_FAMILIES
+            if enabled(previous, family) != enabled(current, family)
+        }
+        removed_families = {
+            family for family in _OWNERSHIP_FAMILIES
+            if enabled(previous, family) and not enabled(current, family)
+        }
+        if removed_families:
+            return False
+        # A new extension is accepted only when the existing loader explicitly
+        # records its empty idle-boundary migration. These events enable only
+        # empty metadata; the owner equality check above rejects paid units,
+        # receipts, funding, or native bindings that differ.
+        authorized_families: set[str] = set()
+        for family, (kind, reason) in _OWNERSHIP_MIGRATIONS.items():
+            if any(isinstance(row, dict) and set(row) == {"kind", "tick", "reason"}
+                   and row == {"kind": kind, "tick": old_memory.last_tick, "reason": reason}
+                   for row in current.get("history", [])):
+                if family == "output":
+                    authorized_families.add("output")
+                elif family == "outpost":
+                    authorized_families.update({"outpost", "input"})
+                elif family == "successor":
+                    authorized_families.update({"successor", "background", "input"})
+        if not changed_families <= authorized_families:
+            return False
+
+        # Recovery budgets and their append-only source lineage are also part
+        # of the retained obligation. A single #265 migration is the only
+        # exception: its reviewed scope must bind this exact old composed state.
+        for name in ("blocked_recovery", "blocked_recovery_archive", "blocked_reevaluations"):
+            if name in old_state and old_state[name] != new_state.get(name):
+                if name != "blocked_recovery":
+                    return False
+        old_lineage = old_memory.compatible_source_recoveries
+        new_lineage = new_memory.compatible_source_recoveries
+        if new_lineage[:len(old_lineage)] != old_lineage or len(new_lineage) not in {
+                len(old_lineage), len(old_lineage) + 1}:
+            return False
+        if len(new_lineage) == len(old_lineage) + 1:
+            from .compatible_recovery import scope
+            record = new_lineage[-1]
+            old_blocked = old_memory.blocked_recovery
+            if (old_blocked is None or new_memory.blocked_recovery is None
+                    or record.get("scope") != scope(old_memory)
+                    or record.get("previous_source") != old_blocked.get("source_revision")):
+                return False
+            expected_blocked = dict(old_blocked, source_revision=record.get("current_source"))
+            if new_memory.blocked_recovery != expected_blocked:
+                return False
+        elif old_state.get("blocked_recovery") != new_state.get("blocked_recovery"):
+            return False
+        return True
+
     def verify_code(self, result: dict) -> bool:
         commit = result["commit"]
         code, head = self.capture(["git", "rev-parse", "HEAD"])
@@ -714,6 +1076,22 @@ Only report repaired when every acceptance requirement is verified.
         code, configured = self.capture(["git", "remote"])
         if code != 0 or "origin" not in configured.splitlines():
             return False
+        for remote, expected_owner in (("origin", "jevplays-games"), ("fork", None)):
+            if remote == "fork" and remote not in configured.splitlines():
+                continue
+            resolved_owners = []
+            for arguments in (("--all",), ("--push", "--all")):
+                code, urls = self.capture(["git", "remote", "get-url", *arguments, remote])
+                identities = [self._github_repository_identity(url) for url in urls.splitlines()]
+                if (code != 0 or not identities or any(identity is None for identity in identities)
+                        or any(not self._github_repository_remote(url, owner=expected_owner)
+                               for url in urls.splitlines())):
+                    return False
+                resolved_owners.extend(identity[0] for identity in identities)
+            if len(set(resolved_owners)) != 1:
+                # A split fetch/push fork can make the fetch-side main look
+                # synchronized while later publication targets another owner.
+                return False
         for remote in ("origin", "fork"):
             if remote == "fork" and remote not in configured.splitlines():
                 continue
@@ -721,16 +1099,20 @@ Only report repaired when every acceptance requirement is verified.
             if code != 0 or reference.split() != [commit, "refs/heads/main"]:
                 return False
         url = result.get("pr_url", "")
-        if not isinstance(url, str) or not url.startswith("https://github.com/"):
+        number = self._canonical_pr_number(url)
+        if number is None:
             return False
         code, raw = self.capture([
-            "gh", "pr", "view", url, "--json",
-            "state,headRefOid,mergeCommit,reviews,statusCheckRollup",
+            "gh", "pr", "view", number, "--repo", _CANONICAL_REPOSITORY, "--json",
+            "url,baseRefName,state,headRefOid,mergeCommit,reviews,statusCheckRollup",
         ])
         if code != 0:
             return False
         pull = json.loads(raw)
-        if pull["state"] != "MERGED" or pull["mergeCommit"]["oid"] != commit:
+        expected_url = f"https://github.com/{_CANONICAL_REPOSITORY}/pull/{number}"
+        if (pull.get("url") != expected_url or pull.get("baseRefName") != "main"
+                or pull.get("state") != "MERGED"
+                or pull.get("mergeCommit", {}).get("oid") != commit):
             return False
         reviews = pull.get("reviews", [])
         latest = {}
@@ -799,12 +1181,7 @@ Only report repaired when every acceptance requirement is verified.
                     return False
             if current.get('connection_failure_attribution', {}) != previous.get('connection_failure_attribution', {}):
                 return False
-            extension_keys = ("background_schema", "background_job", "background_attempt",
-                              "output_buffers_schema", "output_commitments",
-                              "input_routes_schema", "input_commitments", "outposts_schema", "outpost_commitments",
-                              "successor_schema", "successor_projects", "successor_receipts")
-            if any(key in previous and current.get(key) != previous[key]
-                   for key in extension_keys):
+            if not self._repair_ownership_is_preserved(previous, current):
                 return False
             if (previous.get("background_job") or previous.get("output_commitments")
                     or previous.get("input_commitments") or previous.get("outpost_commitments")
@@ -1043,6 +1420,8 @@ def cli() -> None:
     parser.add_argument("--repair-command-json", required=True)
     parser.add_argument("--cwd", type=Path, default=Path.cwd())
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--model", required=True,
+                        help="Pin the provider-specific Jev model ID for this supervised run")
     parser.add_argument("--duration-hours", type=float, default=12)
     parser.add_argument("--hang-seconds", type=float, default=600)
     parser.add_argument("--repair-seconds", type=float, default=1800)

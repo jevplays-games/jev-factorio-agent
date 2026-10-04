@@ -14,6 +14,7 @@ python -m jev_factorio.supervisor \
   --session-id SESSION_ID --started-at UNIX_TIMESTAMP \
   --duration-hours 12 --cwd /absolute/repository \
   --python /absolute/venv/bin/python \
+  --model PROVIDER_MODEL_ID \
   --repair-command-json '["/usr/local/bin/codex2","exec","-m","gpt-5.6-sol","-c","model_reasoning_effort=\"high\"","-s","danger-full-access","-"]'
 ```
 
@@ -36,7 +37,26 @@ changing the start or duration is rejected. Recovery kills the prior recorded
 process group before proceeding, and refuses a reused leader PID.
 
 Every gameplay launch uses FLE `--resume`, `--resume-controller`, hierarchical
-hybrid policy, pinned model `jev-1.13.0`, and `rocket_launch`. Children receive
+hybrid policy, a provider-bound Jev model, and `rocket_launch`. `--model` is a
+required provider-specific pin. The supervisor records only the selected
+provider, effective model ID, explicitness, and a digest of its full gameplay
+configuration; credentials are never copied into supervision state. It passes
+the saved model ID explicitly to every gameplay child. Restart rejects a
+changed provider, model, or gameplay option, including provider priority
+changes caused by environment credentials or edits to the saved configuration.
+Provider resolution follows the gameplay CLI's `cwd/.env` loading with
+`override=False`: process environment values win, and dotenv values fill only
+missing variables. The same effective environment is used for the launch-time
+drift check and passed to that child; credentials stay transient and are not
+written to supervisor state or audit events. Empty environment sentinels seal
+provider variables that were absent at capture, so a later `.env` edit cannot
+change the child's provider between review and startup. Missing live credentials
+block gameplay before a child starts. Existing legacy
+supervisor state without a provider/model binding retains its original run and
+cutoff but stays on hold until an operator restarts it with an explicit
+`--model` pin and working provider credentials. That reviewed migration is
+audited and does not clear campaign obligations or reset the run.
+Children receive
 `TMPDIR=<repository>/runs/tmp` and `PYTHONPATH=<repository>/src`.
 Remaining duration comes from the original
 cutoff. Blocked/uncertain checkpoints, process exits (including exit zero without
@@ -52,6 +72,16 @@ background job and attempt remain intact for review. An explicitly authorized
 compatible-source migration must still satisfy its own checkpoint-scope and
 source-lineage contract; ordinary source-change detection does not infer that
 authorization from a matching decision contract.
+
+Repair acceptance loads both the incident checkpoint and candidate through the
+union of their complete controller schemas. It preserves connector and capital
+bindings, background work, output/input/outpost/successor commitments,
+solid/coal route ownership and funding, paid receipts, and recovery budgets.
+An empty output, outpost, or successor legacy upgrade is accepted only when its
+existing loader records the exact idle-boundary migration event. That event
+cannot authorize a changed or newly populated owner. Source migration may append
+one #265 lineage entry only when its scope hashes the exact old composed state
+and the retained blocked-recovery source changes to the pinned lineage target.
 
 The watchdog kills and reaps the gameplay process before launching repair.
 Repair and verification use bounded timeouts; failures back off exponentially up
@@ -107,6 +137,10 @@ distinguish source findings and mock tests from native observation evidence.
   and `pr_url`. The watchdog independently verifies local HEAD, origin main, and
   a configured fork main match that SHA, the PR is merged at that SHA, an approval refers to the
   exact PR head, no current reviewer requests changes, and checks succeeded.
+  Origin fetch and push URLs are pinned to `jevplays-games/jev-factorio-agent`;
+  a configured fork must use the same repository name. The PR URL and GitHub CLI
+  lookup are pinned to that canonical repository, and its base branch must be
+  `main`.
   Alternatively `independent_review` names a JSON file inside the state directory,
   containing `head`, `verdict: "approved"`, `reviewer`, and nonempty
   `source_evidence`. Its reviewer ID must differ from the result's `repair_agent`.
