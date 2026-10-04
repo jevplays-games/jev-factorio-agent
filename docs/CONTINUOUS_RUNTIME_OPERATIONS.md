@@ -129,6 +129,29 @@ OBS startup waits for its guest login keyring to unlock. Once it starts, verify
 **Program**, including the Acceptance HUD, stream and audio. Preview alone is
 not broadcast verification. Never publish source URLs containing passphrases.
 
+The October 4 unlock failure was a session-binding problem, not proof that the
+supplied password was wrong. `completetrain` is the Train host account;
+`ubuntu` owns the OBS desktop and its login keyring. A new
+`gnome-keyring-daemon --unlock` process did not unlock the existing desktop
+Secret Service. Recovery targeted that existing service on the Ubuntu user's
+session bus and verified the login collection's `Locked` property became false.
+Prefer the desktop keyring UI; any scripted unlock must use that same session
+and transient secret input, never an argument, saved script or log containing
+the password. Do not replace or delete the keyring.
+
+After unlock, the existing `sts2-obs.service` started OBS. Dismiss its crash
+recovery dialog in normal mode if present, then transition the Acceptance HUD
+to Program. Query the live OBS WebSocket for Program and stream state and take
+a Program-source screenshot; a retained `status.json` or a black desktop preview
+is not authoritative. Remove obsolete static recovery text only after checking
+the live HUD, and read back stream state and audio settings afterward.
+
+The dashboard's generic supervisor panel is not connected to this private
+service owner. Its `Not connected` runtime label does not establish that the
+controller process is absent. Use `run/owner-status.json` for this owner's
+actual phase, child PID, save age and last useful action. Do not manufacture a
+generic supervisor record to make the panel appear connected.
+
 ## Incident evidence and remaining qualification
 
 The original stoppages had several distinct causes: clean exits after bounded
@@ -142,7 +165,23 @@ compatible world. See [the incident analysis](RUNTIME_RELIABILITY_20261004.md),
 
 The new campaign verified gathering, furnace construction, ten copper plates
 and thirty-six iron ore before a separate stone-prerequisite model rejection.
-Keep that later planning failure distinct from process supervision and save
+The signed recovery source `4e29e7d7634369e0a13be8fdb71921d0a270b390`
+then passed current native attachment and resumed the same session under owner
+v3. It verified gathering five stone at tick 6840816. The next decision, at
+tick 6840858, rejected crafting the iron-production furnace: actor, carried
+inputs and native recipe were ready, but the independent usefulness judgment
+selected `unsupported`. The controller is alive and backed off at that blocked
+frontier, with no pending action. It has not resumed sustained useful work.
+
+Four distinct offline construction-evidence revisions also failed that
+judgment. The last diagnostic selected `unsupported` with probability 0.52
+versus 0.48 for `useful`; neither a high candidate-choice probability nor a
+positive benefit score overrides the separate usefulness gate. The proposed
+construction evidence is not deployed or a qualified fix. Preserve the
+requests, answers, checkpoint and rejection ledger; do not repeatedly sample an
+unchanged request until it happens to pass.
+
+Keep this planning failure distinct from process supervision and save
 durability. An unattended 48–72-hour soak with continuing useful actions,
 current valid saves and truthful status is still required before claiming
 multi-day reliability. Do not reboot the live game to manufacture a recovery
