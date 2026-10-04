@@ -509,7 +509,7 @@ def _validate_state(value: object, session_id: str) -> dict:
         if (type(outcome) is not str
                 or outcome not in {"pending", "rejected", "selected", "provider_blocked", "failed", "frontier"}
                 or row["reason"] is not None and (
-                    type(row["reason"]) is not str or row["reason"] not in RECOVERABLE_REASONS)
+                    type(row["reason"]) is not str or not is_recoverable_reason(row["reason"]))
                 or type(row["tick"]) is not int or row["tick"] < 0
                 or type(row["decision_input_sha256"]) is not str
                 or not _SHA256.fullmatch(row["decision_input_sha256"])):
@@ -540,6 +540,17 @@ def _validate_state(value: object, session_id: str) -> dict:
             or not 0 <= value["wait_level"] <= MAX_WAIT_LEVEL):
         raise ValueError("Invalid persistent blocked-recovery backoff")
     return value
+
+
+
+def is_recoverable_reason(reason: object) -> bool:
+    """Classify refusal for observation; never grant selection or another bill.
+
+    The immutable fingerprint protocol's legacy reason set remains unchanged.
+    Abstention extends runtime/ledger recovery only; all input identities and
+    selection limits are still validated by the original protocol.
+    """
+    return type(reason) is str and (reason in RECOVERABLE_REASONS or reason == "model abstention")
 
 
 def _has_provider_operator_handoff(reason: object, history: object, attempts: list) -> bool:
@@ -580,7 +591,7 @@ def _has_provider_operator_handoff(reason: object, history: object, attempts: li
 def validate_memory_state(memory, current_source: dict, *, allow_source_change: bool = False) -> None:
     current = _source(current_source)
     if memory.blocked_recovery is None:
-        if memory.status == "blocked" and memory.reason in RECOVERABLE_REASONS and not allow_source_change:
+        if memory.status == "blocked" and is_recoverable_reason(memory.reason) and not allow_source_change:
             raise ValueError("Blocked resume requires a prior durable recovery attempt or source authorization")
         return
     state = _validate_state(memory.blocked_recovery, memory.session_id)
@@ -589,9 +600,9 @@ def validate_memory_state(memory, current_source: dict, *, allow_source_change: 
         raise ValueError("First blocked recovery requires explicit changed-contract authorization")
     if state["source_revision"] != current and not (
             allow_source_change and memory.status == "blocked"
-            and memory.reason in RECOVERABLE_REASONS):
+            and is_recoverable_reason(memory.reason)):
         raise ValueError("Persistent blocked-recovery source changed; explicit source authorization is required")
-    if (memory.status == "blocked" and memory.reason not in RECOVERABLE_REASONS
+    if (memory.status == "blocked" and not is_recoverable_reason(memory.reason)
             and not _has_provider_operator_handoff(
                 memory.reason, memory.history, state["attempts"])):
         raise ValueError("Persistent recovery does not admit this blocked reason")
@@ -614,7 +625,7 @@ def validate_checkpoint_metadata(data: object, current_source: dict, *,
     if type(session_id) is not str or not session_id:
         raise ValueError("Persistent blocked-recovery session identity is missing")
     if state is None:
-        if status == "blocked" and reason not in RECOVERABLE_REASONS:
+        if status == "blocked" and not is_recoverable_reason(reason):
             raise ValueError("Persistent recovery does not admit this blocked reason")
         if status == "blocked" and not allow_source_change:
             raise ValueError("Blocked resume requires source-authorized first recovery")
@@ -624,9 +635,9 @@ def validate_checkpoint_metadata(data: object, current_source: dict, *,
         raise ValueError("First blocked recovery requires explicit changed-contract authorization")
     if state["source_revision"] != _source(current_source) and not (
             allow_source_change and status == "blocked"
-            and reason in RECOVERABLE_REASONS):
+            and is_recoverable_reason(reason)):
         raise ValueError("Persistent blocked-recovery source changed; explicit source authorization is required")
-    if (status == "blocked" and reason not in RECOVERABLE_REASONS
+    if (status == "blocked" and not is_recoverable_reason(reason)
             and not _has_provider_operator_handoff(
                 reason, data.get("history"), state["attempts"])):
         raise ValueError("Persistent recovery does not admit this blocked reason")
@@ -642,7 +653,7 @@ def ensure_state(memory, source_revision: dict, *, allow_source_change: bool = F
     state = _validate_state(memory.blocked_recovery, memory.session_id)
     if state["source_revision"] != source:
         if not (allow_source_change and memory.status == "blocked"
-                and memory.reason in RECOVERABLE_REASONS):
+                and is_recoverable_reason(memory.reason)):
             raise ValueError("Persistent blocked-recovery source changed")
         state["source_revision"] = source
     return state
@@ -754,7 +765,7 @@ def selection_attempts_for_state(memory, source_revision: dict, state_sha256: st
 def record_attempt(memory, source_revision: dict, input_sha256: str,
                    reason: str | None, tick: int, *, allow_source_change: bool = False,
                    archive_index=None, selection_batch: dict | None = None) -> None:
-    if (reason is not None and (type(reason) is not str or reason not in RECOVERABLE_REASONS)
+    if (reason is not None and (type(reason) is not str or not is_recoverable_reason(reason))
             or not _SHA256.fullmatch(input_sha256)
             or type(tick) is not int or tick < 0):
         raise ValueError("Invalid persistent blocked-recovery attempt input")
@@ -787,7 +798,7 @@ def record_attempt(memory, source_revision: dict, input_sha256: str,
 def finish_attempt(memory, source_revision: dict, input_sha256: str, outcome: str,
                    reason: str | None = None, *, archive_index=None) -> None:
     if (outcome not in {"rejected", "selected", "provider_blocked", "failed", "frontier"}
-            or reason is not None and (type(reason) is not str or reason not in RECOVERABLE_REASONS)):
+            or reason is not None and (type(reason) is not str or not is_recoverable_reason(reason))):
         raise ValueError("Invalid persistent blocked-recovery attempt outcome")
     row = find_attempt(memory, source_revision, input_sha256,
                        archive_index=archive_index)

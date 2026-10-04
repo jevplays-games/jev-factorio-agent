@@ -208,12 +208,12 @@ def cli() -> None:
             # through the existing exact-checkpoint, changed-contract gate.
             try:
                 import json
-                from .blocked_persistence import RECOVERABLE_REASONS
+                from .blocked_persistence import is_recoverable_reason
                 raw = Path(args.checkpoint).read_bytes()
                 checkpoint_data = json.loads(raw.decode("utf-8"))
                 if (not isinstance(checkpoint_data, dict)
                         or checkpoint_data.get("status") == "blocked"
-                        and checkpoint_data.get("reason") in RECOVERABLE_REASONS
+                        and is_recoverable_reason(checkpoint_data.get("reason"))
                         and checkpoint_data.get("blocked_recovery") is None):
                     raise ValueError("first blocked recovery requires --reevaluate-blocked-once")
             except (OSError, UnicodeError, ValueError, TypeError) as error:
