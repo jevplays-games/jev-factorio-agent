@@ -1,5 +1,8 @@
 # Starting a new persistent native campaign
 
+The deployed Train service layout, save checks and recovery sequence are in
+[continuous-runtime operations](CONTINUOUS_RUNTIME_OPERATIONS.md).
+
 Use `--initialize-persistent-campaign` only when the operator explicitly
 authorizes a new dedicated world. It enables persistent blocked recovery from
 the first decision, instead of requiring the first invocation to stop before

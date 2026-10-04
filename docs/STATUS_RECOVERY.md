@@ -1,5 +1,8 @@
 # Status checks, recovery, and the live overlay
 
+For the replacement October 4 Train campaign, start with the concrete
+[continuous-runtime operations runbook](CONTINUOUS_RUNTIME_OPERATIONS.md).
+
 A status question about an expected ongoing campaign includes authorization to
 repair an unexpected stop. Complete diagnosis, safe recovery, and verification
 instead of returning only a stopped status. This does not authorize restarting
