@@ -1780,14 +1780,69 @@ def _bootstrap_output_pickup_start_evidence(snapshot, catalog, plan):
     }
 
 
+def _production_machine_edges(snapshot, catalog, path, goal, target, *, carried_machine=False):
+    from .factory import FactoryPlanner
+
+    edges, machine_edge = [], None
+    requested = target
+    try:
+        for product, dependency in zip(path, path[1:]):
+            recipe = catalog.recipe_for(product)
+            if (recipe.get('hidden') or not catalog.enabled(recipe, snapshot.researched or [])
+                    or not any(p.get('type') == 'item' and p.get('name') == product
+                               and type(p.get('amount')) in (int, float) and p['amount'] > 0
+                               and p.get('probability', 1) == 1
+                               for p in recipe.get('products', []))):
+                return None
+            carried = snapshot.inventory.get(product, 0)
+            output = next(p['amount'] for p in recipe['products']
+                          if p.get('type') == 'item' and p.get('name') == product)
+            if (type(carried) is not int or carried < 0 or not _finite(output) or output <= 0
+                    or not _finite(requested) or requested <= carried):
+                return None
+            demand = {'required_product_units': requested, 'carried_product_units': carried,
+                      'missing_product_units': requested - carried,
+                      'scope': 'selected_dependency_branch_not_full_material_bill'}
+            ingredient = next((r for r in recipe.get('ingredients', [])
+                               if r.get('type') == 'item' and r.get('name') == dependency
+                               and _finite(r.get('amount')) and r['amount'] > 0), None)
+            if ingredient is not None:
+                requested = math.ceil((requested - carried) / output) * ingredient['amount']
+                edges.append({'kind': 'recipe_input', 'product': product,
+                              'input': dependency, 'recipe': deepcopy(recipe),
+                              'demand': demand, 'required_input_units': requested})
+                continue
+            role = 'recipe:' + recipe['name']
+            # The base planner selects this machine for a new producer. Existing
+            # machines, carried machines and handcraftable recipes contradict
+            # this particular missing-machine acquisition explanation.
+            if (machine_edge is not None or role in snapshot.factory.get('entities', {})
+                    or type(snapshot.inventory.get(dependency, 0)) is not int
+                    or (snapshot.inventory.get(dependency, 0) < 1 if carried_machine
+                        else snapshot.inventory.get(dependency, 0) != 0)
+                    or catalog.hand_categories.get(recipe['category'])
+                    or FactoryPlanner(catalog, snapshot, goal)._machine_type(recipe) != dependency):
+                return None
+            machine_edge = {'kind': 'missing_production_machine', 'product': product,
+                            'machine': dependency, 'role': role,
+                            'demand': demand,
+                            'recipe': deepcopy(recipe),
+                            'prototype': deepcopy(catalog.machines[dependency])}
+            edges.append(machine_edge)
+            requested = 1
+        if machine_edge is None:
+            return None
+    except (KeyError, TypeError, ValueError, ArithmeticError):
+        return None
+    return edges
+
+
 def raw_machine_prerequisite(snapshot, catalog, plan):
     """Qualify one missing-machine edge in a current bounded raw-input path.
 
     A furnace is not an ingredient of iron plate. Validate both kinds of edge
     explicitly; an arbitrary planner path alone is not a dependency proof.
     """
-    from .factory import FactoryPlanner
-
     materials = plan.materials or {}
     raw = materials.get('raw_prerequisite')
     local = materials.get('local_objective')
@@ -1818,41 +1873,9 @@ def raw_machine_prerequisite(snapshot, catalog, plan):
             or type(snapshot.inventory.get(path[0], 0)) is not int
             or snapshot.inventory.get(path[0], 0) >= target):
         return None
-    edges, machine_edge = [], None
-    try:
-        for product, dependency in zip(path, path[1:]):
-            recipe = catalog.recipe_for(product)
-            if (recipe.get('hidden') or not catalog.enabled(recipe, snapshot.researched or [])
-                    or not any(p.get('type') == 'item' and p.get('name') == product
-                               and type(p.get('amount')) in (int, float) and p['amount'] > 0
-                               and p.get('probability', 1) == 1
-                               for p in recipe.get('products', []))):
-                return None
-            ingredient = next((r for r in recipe.get('ingredients', [])
-                               if r.get('type') == 'item' and r.get('name') == dependency
-                               and type(r.get('amount')) in (int, float) and r['amount'] > 0), None)
-            if ingredient is not None:
-                edges.append({'kind': 'recipe_input', 'product': product,
-                              'input': dependency, 'recipe': deepcopy(recipe)})
-                continue
-            role = 'recipe:' + recipe['name']
-            # The base planner selects this machine for a new producer. Existing
-            # machines, carried machines and handcraftable recipes contradict
-            # this particular missing-machine acquisition explanation.
-            if (machine_edge is not None or role in snapshot.factory.get('entities', {})
-                    or snapshot.inventory.get(dependency, 0) != 0
-                    or catalog.hand_categories.get(recipe['category'])
-                    or FactoryPlanner(catalog, snapshot, plan.goal)._machine_type(recipe) != dependency):
-                return None
-            machine_edge = {'kind': 'missing_production_machine', 'product': product,
-                            'machine': dependency, 'role': role,
-                            'recipe': deepcopy(recipe),
-                            'prototype': deepcopy(catalog.machines[dependency])}
-            edges.append(machine_edge)
-        if (machine_edge is None or edges[-1]['kind'] != 'recipe_input'
-                or edges[-1]['recipe']['name'] != raw.get('recipe')):
-            return None
-    except (KeyError, TypeError, ValueError):
+    edges = _production_machine_edges(snapshot, catalog, path, plan.goal, target)
+    if (edges is None or edges[-1]['kind'] != 'recipe_input'
+            or edges[-1]['recipe']['name'] != raw.get('recipe')):
         return None
     return {'schema': 1, 'session_id': snapshot.session_id, 'observed_tick': snapshot.tick,
             'planner_item_path': list(path), 'local_target': deepcopy(local),
@@ -1861,6 +1884,75 @@ def raw_machine_prerequisite(snapshot, catalog, plan):
             'gather_inventory_target': step.threshold, 'edges': edges,
             'basis': 'current_catalog_input_edges_and_observed_missing_machine',
             'gather_craft_placement_and_production_require_native_verification': True}
+
+
+def machine_construction_prerequisite(snapshot, catalog, plan, craft_start, placement_start):
+    """Carry the missing-machine purpose through paid crafting and placement."""
+    materials = plan.materials or {}
+    local, intent = materials.get('local_objective'), materials.get('work_intent')
+    if (len(plan.steps) != 1 or not isinstance(local, dict)
+            or intent != {'scope': 'immediate', 'observed_tick': snapshot.tick}
+            or local.get('ultimate_goal') != plan.goal
+            or type(local.get('inventory_target')) is not int
+            or type(snapshot.inventory.get(local.get('item'), 0)) is not int
+            or not 0 <= snapshot.inventory.get(local.get('item'), 0) < local['inventory_target']):
+        return None
+    step = plan.steps[0]
+    params = step.parameters or {}
+    placing = step.action == 'factory_place'
+    start = placement_start if placing else craft_start
+    annotation = materials.get('placement_dependency' if placing else 'craft_dependency')
+    if (not isinstance(annotation, dict) or annotation.get('observed_tick') != snapshot.tick
+            or not isinstance(start, dict) or start.get('observed_tick') != snapshot.tick):
+        return None
+    path = annotation.get('planner_item_path')
+    if (not isinstance(path, list) or not 1 <= len(path) <= 31
+            or any(not isinstance(item, str) or not item for item in path)
+            or path[0] != local.get('item')):
+        return None
+    if placing:
+        machine = params.get('name')
+        if (start != _placement_start_evidence(snapshot, plan)
+                or any(start.get(k) is not True for k in (
+                    'paid_furnace_in_inventory_now', 'no_source_owned_at_role_now',
+                    'player_connected_and_bound_now', 'crafting_queue_empty_now'))
+                or annotation.get('machine') != machine
+                or annotation.get('source_role') != params.get('role')
+                or annotation.get('site_anchor') != params.get('anchor')
+                or params.get('role') != 'recipe:' + path[-1]):
+            return None
+        path = [*path, machine]
+    else:
+        if (step.action != 'factory_craft_job' or step.effect != 'craft_job_complete'
+                or not isinstance(params.get('receipt'), str) or not params['receipt']
+                or start != _craft_start_evidence(snapshot, catalog, step)
+                or any(start.get(k) is not True for k in (
+                    'input_costs_match_native_recipe', 'inputs_in_inventory_now',
+                    'recipe_unlocked_and_handcraftable', 'player_connected_and_bound',
+                    'crafting_queue_empty', 'craft_job_protocol_ready',
+                    'native_receipt_required_for_completion'))
+                or annotation.get('recipe') != params.get('recipe')
+                or annotation.get('product') != step.item or path[-1] != step.item):
+            return None
+    if len(set(path)) != len(path):
+        return None
+    edges = _production_machine_edges(snapshot, catalog, path, plan.goal,
+                                      local['inventory_target'], carried_machine=placing)
+    if edges is None:
+        return None
+    missing = next(edge for edge in edges if edge['kind'] == 'missing_production_machine')
+    if placing and (edges[-1] != missing or missing['role'] != params['role']):
+        return None
+    return {'schema': 1, 'session_id': snapshot.session_id, 'observed_tick': snapshot.tick,
+            'local_target': deepcopy(local), 'planner_item_path': path, 'edges': edges,
+            'step': plan.to_dict()['steps'][0], 'start_evidence': deepcopy(start),
+            'current_native_craft_recipe': (None if placing else deepcopy(
+                catalog.recipes[params['recipe']])),
+            'carried_costs': {item: snapshot.inventory.get(item, 0) for item in step.costs or {}},
+            'machine_role': missing['role'], 'machine_item': missing['machine'],
+            'machine_inventory_now': snapshot.inventory.get(missing['machine'], 0),
+            'basis': 'current_catalog_input_edges_and_observed_missing_machine',
+            'craft_placement_fuel_and_production_require_native_verification': True}
 
 
 def _current_item_dependency_path(snapshot, catalog, path, root, tail):
@@ -3583,6 +3675,10 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
         }
         if bootstrap_pickup_start is not None:
             result[plan.id]['bootstrap_output_pickup_start_evidence'] = bootstrap_pickup_start
+        construction = machine_construction_prerequisite(
+            snapshot, catalog, plan, craft_start, placement_start)
+        if construction is not None:
+            result[plan.id]['machine_construction_prerequisite'] = construction
         if prerequisite_evidence is not None:
             machine_prerequisite = raw_machine_prerequisite(snapshot, catalog, plan)
             if machine_prerequisite is not None:
