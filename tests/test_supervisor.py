@@ -39,9 +39,11 @@ class FakeProcess:
 
 @pytest.fixture
 def supervisor(tmp_path, monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-supervisor-key")
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
     checkpoint = tmp_path / "checkpoint.json"
-    atomic_json(checkpoint, {"session_id": "fresh", "target": "rocket_launch",
-                             "status": "running", "pending": None})
+    atomic_json(checkpoint, asdict(CampaignMemory("fresh", "rocket_launch")))
     clock = FakeClock()
     config = SupervisorConfig(
         state_dir=tmp_path / "watchdog", checkpoint=checkpoint,
@@ -74,11 +76,242 @@ def test_resume_command_preserves_world_and_controller(supervisor):
     assert "--resume" in command and "--resume-controller" in command
     assert command[command.index("--policy") + 1] == "hybrid"
     assert command[command.index("--target") + 1] == "rocket_launch"
+    assert command[command.index("--model") + 1] == "jev-latest"
+    assert supervisor.state["gameplay_configuration"]["model_selection"] == {
+        "provider": "typesafe", "model": "jev-latest", "explicit": False,
+    }
+    assert "test-supervisor-key" not in supervisor.state_path.read_text()
     assert "--run-dir" not in command
     assert command[command.index("--factory-scheduling") + 1] == "serial"
     assert "--background-work" not in command
     assert "--furnace-output-buffers" not in command
     assert "--furnace-input-belts" not in command
+
+
+def test_provider_default_model_is_selected_by_the_active_client(monkeypatch):
+    from jev_factorio import jev_client
+
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
+    monkeypatch.setattr(jev_client, "JevClient", lambda **kwargs: ("typesafe", kwargs))
+    monkeypatch.setattr(jev_client, "CloudflareJevClient", lambda **kwargs: ("cloudflare", kwargs))
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    assert jev_client.make_client(allow_mock=False) == (
+        "typesafe", {"api_key": "test-key", "model": "jev-latest"})
+    monkeypatch.delenv("TYPESAFE_API_KEY")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "test-token")
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "test-account")
+    assert jev_client.make_client(allow_mock=False) == (
+        "cloudflare", {"account_id": "test-account", "api_token": "test-token",
+                       "model": "typesafe/jev"})
+
+
+def model_supervisor(tmp_path, *, model=None, popen=None):
+    checkpoint = tmp_path / "checkpoint.json"
+    atomic_json(checkpoint, asdict(CampaignMemory("fresh", "rocket_launch")))
+    state_dir = tmp_path / "supervisor"
+    state_dir.mkdir()
+    config = SupervisorConfig(state_dir=state_dir, checkpoint=checkpoint,
+        session_id="fresh", started_at=1000, repair_command=["repair"], cwd=tmp_path,
+        model=model)
+    return Supervisor(config, clock=FakeClock(), popen=popen or (lambda *args, **kwargs: FakeProcess()))
+
+
+def test_cloudflare_supervisor_persists_its_provider_default_without_credentials(tmp_path, monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "test-cloudflare-token")
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "test-cloudflare-account")
+    supervisor = model_supervisor(tmp_path)
+
+    supervisor.initialize(record_only=True)
+
+    assert supervisor.state["gameplay_configuration"]["model_selection"] == {
+        "provider": "cloudflare", "model": "typesafe/jev", "explicit": False,
+    }
+    command = supervisor.gameplay_command()
+    assert command[command.index("--model") + 1] == "typesafe/jev"
+    saved = supervisor.state_path.read_text()
+    assert "test-cloudflare-token" not in saved
+    assert "test-cloudflare-account" not in saved
+
+
+@pytest.mark.parametrize("dotenv,process_cloudflare,provider,model", [
+    ("TYPESAFE_API_KEY=dotenv-typesafe-key\n", True, "typesafe", "jev-latest"),
+    ("CLOUDFLARE_API_TOKEN=dotenv-cloudflare-token\nCLOUDFLARE_ACCOUNT_ID=dotenv-cloudflare-account\n",
+     False, "cloudflare", "typesafe/jev"),
+])
+def test_model_binding_matches_child_dotenv_provider_selection(
+        tmp_path, monkeypatch, dotenv, process_cloudflare, provider, model):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
+    if process_cloudflare:
+        monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "process-cloudflare-token")
+        monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "process-cloudflare-account")
+    (tmp_path / ".env").write_text(dotenv)
+    child_environments = []
+    supervisor = model_supervisor(tmp_path, popen=lambda command, **kwargs: (
+        child_environments.append(kwargs["env"]) or FakeProcess()))
+
+    supervisor.initialize(record_only=True)
+    selection = supervisor.state["gameplay_configuration"]["model_selection"]
+    supervisor.launch(["gameplay"], "gameplay")
+
+    assert selection == {"provider": provider, "model": model, "explicit": False}
+    assert child_environments[0].get("TYPESAFE_API_KEY") == (
+        "dotenv-typesafe-key" if provider == "typesafe" else "")
+    if provider == "cloudflare":
+        assert child_environments[0]["CLOUDFLARE_API_TOKEN"] == "dotenv-cloudflare-token"
+        assert child_environments[0]["CLOUDFLARE_ACCOUNT_ID"] == "dotenv-cloudflare-account"
+    saved = supervisor.state_path.read_text()
+    for secret in ("dotenv-typesafe-key", "process-cloudflare-token",
+                   "process-cloudflare-account", "dotenv-cloudflare-token",
+                   "dotenv-cloudflare-account"):
+        assert secret not in saved
+    assert child_environments[0]["PYTHONPATH"] == str(tmp_path / "src")
+    assert child_environments[0]["TMPDIR"] == str(tmp_path / "runs" / "tmp")
+
+
+def test_dotenv_provider_drift_blocks_gameplay_launch_before_audit_or_child(
+        tmp_path, monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "process-cloudflare-token")
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "process-cloudflare-account")
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("TYPESAFE_API_KEY=dotenv-typesafe-key\n")
+    launches = []
+    supervisor = model_supervisor(tmp_path, popen=lambda *args, **kwargs: (
+        launches.append(kwargs["env"]) or FakeProcess()))
+    supervisor.initialize(record_only=True)
+    assert supervisor.state["gameplay_configuration"]["model_selection"]["provider"] == "typesafe"
+
+    dotenv.write_text("# The process environment now selects Cloudflare.\n")
+    before = supervisor.state_path.read_bytes()
+    with pytest.raises(ValueError, match="Provider/model configuration changed"):
+        supervisor.launch(["gameplay"], "gameplay")
+
+    assert supervisor.state_path.read_bytes() == before
+    assert launches == []
+
+
+def test_dotenv_edit_after_capture_cannot_change_child_provider(tmp_path, monkeypatch):
+    from dotenv.main import DotEnv
+    from jev_factorio.jev_client import CloudflareJevClient
+
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("CLOUDFLARE_API_TOKEN=dotenv-cloudflare-token\n"
+                      "CLOUDFLARE_ACCOUNT_ID=dotenv-cloudflare-account\n")
+    selections = []
+
+    def start(command, **kwargs):
+        child_environment = kwargs["env"]
+        # Simulate the child's `load_dotenv(..., override=False)` after a file
+        # edit lands between capture and Popen.
+        late_values = DotEnv(dotenv_path=dotenv, override=False, interpolate=True).dict()
+        for key, value in late_values.items():
+            if key not in child_environment and value is not None:
+                child_environment[key] = value
+        client = Supervisor._make_client_for_environment(child_environment, None)
+        selections.append(type(client))
+        return FakeProcess()
+
+    supervisor = model_supervisor(tmp_path, popen=start)
+    supervisor.initialize(record_only=True)
+    original_transition = supervisor.transition
+
+    def edit_dotenv_after_binding(kind, *args, **kwargs):
+        result = original_transition(kind, *args, **kwargs)
+        if kind == "process_prepared":
+            dotenv.write_text("TYPESAFE_API_KEY=late-typesafe-key\n"
+                              "CLOUDFLARE_API_TOKEN=dotenv-cloudflare-token\n"
+                              "CLOUDFLARE_ACCOUNT_ID=dotenv-cloudflare-account\n")
+        return result
+
+    monkeypatch.setattr(supervisor, "transition", edit_dotenv_after_binding)
+    supervisor.launch(["gameplay"], "gameplay")
+
+    assert selections == [CloudflareJevClient]
+    assert supervisor.state["gameplay_configuration"]["model_selection"]["provider"] == "cloudflare"
+    assert "late-typesafe-key" not in supervisor.state_path.read_text()
+
+
+def test_explicit_model_pin_is_used_and_immutable_for_the_supervised_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-typesafe-key")
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
+    supervisor = model_supervisor(tmp_path, model="jev-1.13.0")
+    supervisor.initialize(record_only=True)
+
+    assert supervisor.state["gameplay_configuration"]["model_selection"] == {
+        "provider": "typesafe", "model": "jev-1.13.0", "explicit": True,
+    }
+    command = supervisor.gameplay_command()
+    assert command[command.index("--model") + 1] == "jev-1.13.0"
+    supervisor.config.model = "jev-latest"
+    with pytest.raises(ValueError, match="configuration cannot be changed"):
+        supervisor.initialize(record_only=True)
+
+
+def test_missing_credentials_block_gameplay_before_any_process_or_audit_write(tmp_path, monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_API_TOKEN", raising=False)
+    monkeypatch.delenv("CLOUDFLARE_ACCOUNT_ID", raising=False)
+    popen = lambda *args, **kwargs: pytest.fail("missing provider credentials launched a child")
+    supervisor = model_supervisor(tmp_path, popen=popen)
+    supervisor.initialize()
+    before = supervisor.state_path.read_text()
+
+    with pytest.raises(ValueError, match="credentials are required"):
+        supervisor.launch(["gameplay"], "gameplay")
+
+    assert supervisor.state_path.read_text() == before
+    assert supervisor.state.get("process") is None
+
+
+def test_supervisor_cli_requires_an_explicit_model_pin(tmp_path, monkeypatch, capsys):
+    import sys
+    from jev_factorio.supervisor import cli
+
+    monkeypatch.setattr(sys, "argv", ["jev-factorio-supervisor",
+        "--state-dir", str(tmp_path / "state"), "--checkpoint", str(tmp_path / "checkpoint.json"),
+        "--session-id", "fresh", "--started-at", "1000", "--cwd", str(tmp_path),
+        "--repair-command-json", '["repair"]'])
+
+    with pytest.raises(SystemExit) as raised:
+        cli()
+
+    assert raised.value.code == 2
+    assert "--model" in capsys.readouterr().err
+
+
+def test_provider_change_after_binding_requires_a_new_reviewed_run(supervisor, monkeypatch):
+    before = supervisor.state_path.read_text()
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "test-cloudflare-token")
+    monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "test-cloudflare-account")
+
+    with pytest.raises(ValueError, match="Provider/model configuration changed"):
+        supervisor.gameplay_command()
+    with pytest.raises(ValueError, match="configuration cannot be changed"):
+        supervisor.initialize()
+
+    assert supervisor.state_path.read_text() == before
+
+
+def test_saved_gameplay_configuration_tampering_is_detected(supervisor):
+    supervisor.state["gameplay_configuration"]["factory_scheduling"] = "ready-work"
+    atomic_json(supervisor.state_path, supervisor.state)
+    tampered = supervisor.state_path.read_bytes()
+
+    with pytest.raises(ValueError, match="integrity check failed"):
+        supervisor.initialize(record_only=True)
+
+    assert supervisor.state_path.read_bytes() == tampered
 
 
 def test_production_extensions_forwarded_on_every_launch(supervisor):
@@ -432,6 +665,185 @@ def test_pending_cannot_be_cleared_by_repair_ack(supervisor, tmp_path, monkeypat
     assert not supervisor.validate_repair(result, previous, ("head", "diff"))
 
 
+def test_repair_rejects_new_paid_output_ownership_even_when_baseline_had_no_extension(
+        supervisor, tmp_path, monkeypatch):
+    from jev_factorio.controller import HierarchicalLoop
+    from jev_factorio.buffer_controller import buffered_loop_type
+
+    previous = asdict(CampaignMemory("fresh", "rocket_launch", status="running", last_tick=1))
+    loader = buffered_loop_type(HierarchicalLoop).memory_type
+    current_memory = loader(
+        "fresh", "rocket_launch", status="running", last_tick=1,
+        output_commitments={"recipe:iron-plate": {
+            "source_unit": 17, "layout": "output:17",
+            "parts": {"chest": {"role": "paid:chest", "unit_number": 18,
+                                   "receipt": "paid-receipt", "paid": 1}},
+        }},
+    )
+    current = asdict(current_memory)
+    # Both objects are valid under the same composed loader; this is a real
+    # owner addition, not a malformed-schema rejection.
+    loader.from_bytes(json.dumps(current).encode(), "fresh", "rocket_launch")
+    atomic_json(supervisor.config.checkpoint, current)
+    result = operational_result(supervisor, tmp_path)
+    monkeypatch.setattr(supervisor, "source_identity", lambda: ("head", "diff"))
+
+    assert not supervisor.validate_repair(result, previous, ("head", "diff"))
+    assert supervisor.checkpoint()["output_commitments"] == current["output_commitments"]
+
+
+def test_repair_accepts_loader_recorded_empty_output_legacy_migration(
+        supervisor, tmp_path, monkeypatch):
+    from jev_factorio.controller import HierarchicalLoop
+    from jev_factorio.buffer_controller import buffered_loop_type
+
+    previous = asdict(CampaignMemory("fresh", "rocket_launch", status="running", last_tick=1))
+    loader = buffered_loop_type(HierarchicalLoop).memory_type
+    migrated = loader.from_bytes(json.dumps(previous).encode(), "fresh", "rocket_launch")
+    current = asdict(migrated)
+    assert current["output_commitments"] == {}
+    assert current["history"][-1] == {
+        "kind": "output_ownership_enabled", "tick": 1,
+        "reason": "explicit_empty_ownership_at_idle_boundary",
+    }
+    atomic_json(supervisor.config.checkpoint, current)
+    result = operational_result(supervisor, tmp_path)
+    monkeypatch.setattr(supervisor, "source_identity", lambda: ("head", "diff"))
+
+    assert supervisor.validate_repair(result, previous, ("head", "diff"))
+
+
+def test_repair_rejects_new_connector_binding_without_reviewed_native_lineage(
+        supervisor, tmp_path, monkeypatch):
+    previous = asdict(CampaignMemory("fresh", "rocket_launch", status="running", last_tick=1))
+    current = {**previous, "connector_ownership": {
+        "protocol": 1, "session_id": "fresh", "routes": {},
+    }}
+    atomic_json(supervisor.config.checkpoint, current)
+    result = operational_result(supervisor, tmp_path)
+    monkeypatch.setattr(supervisor, "source_identity", lambda: ("head", "diff"))
+
+    assert not supervisor.validate_repair(result, previous, ("head", "diff"))
+    assert supervisor.checkpoint()["connector_ownership"] == current["connector_ownership"]
+
+
+def test_composed_loader_preserves_valid_solid_funding_checkpoint():
+    from test_solid_funding_evidence import funded_evidence
+    from jev_factorio.memory import checkpoint_memory_type, load_checkpoint_data
+
+    _, _, checkpoint, _ = funded_evidence()
+    memory_type = checkpoint_memory_type(checkpoint)
+    memory = load_checkpoint_data(checkpoint, checkpoint["session_id"], checkpoint["target"],
+                                  memory_type=memory_type)
+
+    assert memory.solid_funding == checkpoint["solid_funding"]
+    assert memory.solid_funding_catalogs == checkpoint["solid_funding_catalogs"]
+
+
+@pytest.mark.parametrize("field", [
+    "solid_funding", "solid_funding_catalogs", "coal_funding", "coal_kit_policy",
+    "coal_economic_admission",
+])
+def test_composed_loader_rejects_orphaned_funding_extension_fields(field):
+    from jev_factorio.memory import checkpoint_memory_type, load_checkpoint_data
+
+    checkpoint = asdict(CampaignMemory("fresh", "rocket_launch"))
+    checkpoint[field] = {} if field.endswith("catalogs") else None
+    with pytest.raises(ValueError):
+        memory_type = checkpoint_memory_type(checkpoint)
+        load_checkpoint_data(checkpoint, "fresh", "rocket_launch", memory_type=memory_type)
+
+
+def test_repair_preserves_history_prefix_even_when_all_owner_families_are_empty(
+        supervisor, tmp_path, monkeypatch):
+    previous = asdict(CampaignMemory("fresh", "rocket_launch", status="running", last_tick=1,
+                                     history=[{"kind": "prior_receipt", "receipt": "retained"}]))
+    current = {**previous, "history": [{"kind": "replacement_receipt", "receipt": "rewritten"}]}
+    CampaignMemory.from_bytes(json.dumps(previous).encode(), "fresh", "rocket_launch")
+    CampaignMemory.from_bytes(json.dumps(current).encode(), "fresh", "rocket_launch")
+    atomic_json(supervisor.config.checkpoint, current)
+    result = operational_result(supervisor, tmp_path)
+    monkeypatch.setattr(supervisor, "source_identity", lambda: ("head", "diff"))
+
+    assert not supervisor.validate_repair(result, previous, ("head", "diff"))
+    assert supervisor.checkpoint()["history"] == current["history"]
+
+
+@pytest.mark.parametrize("family", ["outpost", "successor"])
+def test_repair_accepts_only_loader_recorded_idle_capability_migrations(
+        supervisor, tmp_path, monkeypatch, family):
+    from jev_factorio.background import BackgroundWorkLoop
+    from jev_factorio.buffer_controller import buffered_loop_type
+    from jev_factorio.controller import HierarchicalLoop
+    from jev_factorio.input_controller import input_loop_type
+
+    previous = asdict(CampaignMemory("fresh", "rocket_launch", status="running", last_tick=1))
+    if family == "outpost":
+        from jev_factorio.outpost_controller import outpost_loop_type
+        memory_type = outpost_loop_type(input_loop_type(buffered_loop_type(HierarchicalLoop))).memory_type
+        expected_event = "mining_outposts_enabled"
+    else:
+        from jev_factorio.successor_controller import successor_loop_type
+        base = input_loop_type(buffered_loop_type(BackgroundWorkLoop))
+        memory_type = successor_loop_type(base).memory_type
+        expected_event = "successors_enabled"
+    # The exact production loader both authenticates the explicit idle event
+    # and validates the complete composed checkpoint used by repair.
+    current = asdict(memory_type.from_bytes(json.dumps(previous).encode(), "fresh", "rocket_launch"))
+    memory_type.from_bytes(json.dumps(current).encode(), "fresh", "rocket_launch")
+    assert current["history"][:len(previous["history"])] == previous["history"]
+    assert any(row.get("kind") == expected_event for row in current["history"])
+    atomic_json(supervisor.config.checkpoint, current)
+    result = operational_result(supervisor, tmp_path)
+    monkeypatch.setattr(supervisor, "source_identity", lambda: ("head", "diff"))
+
+    assert supervisor.validate_repair(result, previous, ("head", "diff"))
+
+    # A schema-valid downgrade is still an ownership removal. The loader will
+    # normalize this legacy-shaped value by recording its idle event again.
+    fields = {
+        "outpost": ("outposts_schema", "outpost_commitments"),
+        "successor": ("successor_schema", "successor_projects", "successor_receipts"),
+    }[family]
+    removed = {key: value for key, value in current.items() if key not in fields}
+    memory_type.from_bytes(json.dumps(removed).encode(), "fresh", "rocket_launch")
+    atomic_json(supervisor.config.checkpoint, removed)
+    assert not supervisor.validate_repair(result, current, ("head", "diff"))
+
+    # A valid current schema without the loader-authenticated event is not a
+    # migration contract, even though all owner collections are empty.
+    tampered = {**current, "history": previous["history"]}
+    memory_type.from_bytes(json.dumps(tampered).encode(), "fresh", "rocket_launch")
+    atomic_json(supervisor.config.checkpoint, tampered)
+    assert not supervisor.validate_repair(result, previous, ("head", "diff"))
+
+
+def test_repair_rejects_immutable_coal_ownership_policy_change(supervisor, tmp_path, monkeypatch):
+    from jev_factorio.coal_controller import coal_loop_type
+    from jev_factorio.controller import HierarchicalLoop
+    from jev_factorio.solid_controller import UNBOUND_FAULT, solid_loop_type
+    from coal_supply_fixtures import INTENTS, TARGETS
+
+    previous = asdict(CampaignMemory("fresh", "rocket_launch", status="uncertain",
+                                     reason=UNBOUND_FAULT, last_tick=1))
+    memory_type = coal_loop_type(solid_loop_type(HierarchicalLoop)).memory_type
+    previous.update(solid_routes_schema=1, solid_science_policy=False,
+                    solid_intents=INTENTS, solid_epoch={}, solid_commitments={},
+                    solid_funding=None, solid_funding_catalogs={},
+                    coal_supply_schema=1, coal_kit_policy=False,
+                    coal_economic_admission=False, coal_funding=None,
+                    coal_targets=TARGETS, coal_epoch={}, coal_commitments={})
+    memory_type.from_bytes(json.dumps(previous).encode(), "fresh", "rocket_launch")
+    current = {**previous, "coal_kit_policy": True}
+    memory_type.from_bytes(json.dumps(current).encode(), "fresh", "rocket_launch")
+    atomic_json(supervisor.config.checkpoint, current)
+    result = operational_result(supervisor, tmp_path)
+    monkeypatch.setattr(supervisor, "source_identity", lambda: ("head", "diff"))
+
+    assert not supervisor.validate_repair(result, previous, ("head", "diff"))
+    assert supervisor.checkpoint()["coal_kit_policy"] is True
+
+
 def test_repair_ack_alone_is_rejected(supervisor, tmp_path):
     result = tmp_path / "result.json"
     atomic_json(result, {"status": "repaired"})
@@ -495,7 +907,8 @@ def test_code_claim_requires_independent_git_and_check_validation(supervisor, tm
         "checkpoint": str(supervisor.config.checkpoint.resolve()),
         "tests_passed": True, "checks_passed": True, "exact_head_reviewed": True,
         "merged": True, "remotes_synced": True, "commit": "a" * 40,
-        "evidence": ["tests and review"], "pr_url": "https://github.com/owner/repo/pull/1",
+        "evidence": ["tests and review"],
+        "pr_url": "https://github.com/jevplays-games/jev-factorio-agent/pull/1",
     })
     monkeypatch.setattr(supervisor, "verify_code", lambda value: False)
     assert not supervisor.validate_repair(result, supervisor.checkpoint())
@@ -570,20 +983,79 @@ def test_code_verification_rejects_dirty_worktree(supervisor, monkeypatch):
     assert not supervisor.verify_code({"commit": "a" * 40})
 
 
+@pytest.mark.parametrize("value,accepted", [
+    ("https://github.com/jevplays-games/jev-factorio-agent.git", True),
+    ("git@github.com:jevplays-games/jev-factorio-agent.git", True),
+    ("https://github.com/attacker/jev-factorio-agent", False),
+    ("https://user@github.com/jevplays-games/jev-factorio-agent", False),
+    ("https://github.com:443/jevplays-games/jev-factorio-agent", False),
+    ("https://github.com/jevplays-games/other-repo", False),
+])
+def test_origin_remote_is_credential_free_and_canonical(value, accepted):
+    assert Supervisor._github_repository_remote(value, owner="jevplays-games") is accepted
+
+
+def test_code_verification_rejects_split_fetch_and_push_fork_owners(supervisor, monkeypatch):
+    commit = "a" * 40
+    calls = []
+
+    def capture(command):
+        calls.append(command)
+        if command == ["git", "rev-parse", "HEAD"]:
+            return 0, commit
+        if command == ["git", "status", "--porcelain"]:
+            return 0, ""
+        if command == ["git", "remote"]:
+            return 0, "origin\nfork"
+        if command == ["git", "remote", "get-url", "--all", "origin"]:
+            return 0, "git@github.com:jevplays-games/jev-factorio-agent.git"
+        if command == ["git", "remote", "get-url", "--push", "--all", "origin"]:
+            return 0, "git@github.com:jevplays-games/jev-factorio-agent.git"
+        if command == ["git", "remote", "get-url", "--all", "fork"]:
+            return 0, "git@github.com:timotgl/jev-factorio-agent.git"
+        if command == ["git", "remote", "get-url", "--push", "--all", "fork"]:
+            return 0, "git@github.com:other-owner/jev-factorio-agent.git"
+        pytest.fail(f"unexpected verification command: {command}")
+
+    monkeypatch.setattr(supervisor, "capture", capture)
+
+    assert not supervisor.verify_code({"commit": commit,
+        "pr_url": "https://github.com/jevplays-games/jev-factorio-agent/pull/1"})
+    assert not any(command[:2] == ["git", "ls-remote"] for command in calls)
+
+
+@pytest.mark.parametrize("value,number", [
+    ("https://github.com/jevplays-games/jev-factorio-agent/pull/42", "42"),
+    ("https://github.com/attacker/jev-factorio-agent/pull/42", None),
+    ("https://github.com/jevplays-games/other-repo/pull/42", None),
+    ("https://github.com/jevplays-games/jev-factorio-agent/pull/42?tab=files", None),
+    ("https://github.com.evil/jevplays-games/jev-factorio-agent/pull/42", None),
+])
+def test_pull_request_url_is_bound_to_canonical_repository(value, number):
+    assert Supervisor._canonical_pr_number(value) == number
+
+
 @pytest.mark.parametrize("status,head", [(" M source.py", "a" * 40), ("", "b" * 40)])
 def test_code_verification_rechecks_source_after_tests(supervisor, monkeypatch, status, head):
     commit = "a" * 40
-    pull = {"state": "MERGED", "mergeCommit": {"oid": commit}, "headRefOid": "c" * 40,
+    pull = {"url": "https://github.com/jevplays-games/jev-factorio-agent/pull/1",
+            "baseRefName": "main", "state": "MERGED", "mergeCommit": {"oid": commit}, "headRefOid": "c" * 40,
             "reviews": [{"author": {"login": "reviewer"}, "state": "APPROVED",
                          "commit": {"oid": "c" * 40}}],
             "statusCheckRollup": [{"conclusion": "SUCCESS"}]}
     calls = iter([
-        (0, commit), (0, ""), (0, "origin\nfork"), (0, commit + "\trefs/heads/main"),
-        (0, commit + "\trefs/heads/main"), (0, json.dumps(pull)),
+        (0, commit), (0, ""), (0, "origin\nfork"),
+        (0, "git@github.com:jevplays-games/jev-factorio-agent.git"),
+        (0, "git@github.com:jevplays-games/jev-factorio-agent.git"),
+        (0, "git@github.com:timotgl/jev-factorio-agent.git"),
+        (0, "git@github.com:timotgl/jev-factorio-agent.git"),
+        (0, commit + "\trefs/heads/main"), (0, commit + "\trefs/heads/main"),
+        (0, json.dumps(pull)),
         (0, "passed"), (0, status), (0, head),
     ])
     monkeypatch.setattr(supervisor, "capture", lambda command: next(calls))
-    assert not supervisor.verify_code({"commit": commit, "pr_url": "https://github.com/o/r/pull/1"})
+    assert not supervisor.verify_code({"commit": commit,
+        "pr_url": "https://github.com/jevplays-games/jev-factorio-agent/pull/1"})
 
 
 def test_crash_after_pending_write_uses_latest_checkpoint(supervisor):
@@ -626,7 +1098,8 @@ def test_non_object_checkpoint_is_repairable(supervisor, invalid):
 def test_code_verification_requires_origin_and_checks_configured_fork(
         supervisor, monkeypatch, remotes, fork_head, accepted):
     commit = 'a' * 40
-    pull = {'state': 'MERGED', 'mergeCommit': {'oid': commit}, 'headRefOid': 'c' * 40,
+    pull = {'url': 'https://github.com/jevplays-games/jev-factorio-agent/pull/1',
+            'baseRefName': 'main', 'state': 'MERGED', 'mergeCommit': {'oid': commit}, 'headRefOid': 'c' * 40,
             'reviews': [{'author': {'login': 'reviewer'}, 'state': 'APPROVED',
                          'commit': {'oid': 'c' * 40}}],
             'statusCheckRollup': [{'conclusion': 'SUCCESS'}]}
@@ -636,14 +1109,27 @@ def test_code_verification_requires_origin_and_checks_configured_fork(
         if command == ['git', 'rev-parse', 'HEAD']: return 0, commit
         if command == ['git', 'status', '--porcelain']: return 0, ''
         if command == ['git', 'remote']: return 0, remotes
+        if command[:4] == ['git', 'remote', 'get-url', '--all']:
+            assert command[4] in remotes.splitlines()
+            return 0, ('https://github.com/jevplays-games/jev-factorio-agent.git'
+                       if command[4] == 'origin'
+                       else 'git@github.com:timotgl/jev-factorio-agent.git')
+        if command[:4] == ['git', 'remote', 'get-url', '--push']:
+            assert command[4] == '--all' and command[5] in remotes.splitlines()
+            return 0, ('https://github.com/jevplays-games/jev-factorio-agent.git'
+                       if command[5] == 'origin'
+                       else 'git@github.com:timotgl/jev-factorio-agent.git')
         if command[:2] == ['git', 'ls-remote']:
             assert command[2] in remotes.splitlines()
             return 0, (fork_head if command[2] == 'fork' else commit) + '\trefs/heads/main'
-        if command[:3] == ['gh', 'pr', 'view']: return 0, json.dumps(pull)
+        if command[:3] == ['gh', 'pr', 'view']:
+            assert command[3:6] == ['1', '--repo', 'jevplays-games/jev-factorio-agent']
+            return 0, json.dumps(pull)
         if command == [supervisor.config.python, '-m', 'pytest', 'tests/']: return 0, 'passed'
         pytest.fail(f'Unexpected command: {command}')
     monkeypatch.setattr(supervisor, 'capture', capture)
-    assert supervisor.verify_code({'commit': commit, 'pr_url': 'https://github.com/o/r/pull/1'}) is accepted
+    assert supervisor.verify_code({'commit': commit,
+        'pr_url': 'https://github.com/jevplays-games/jev-factorio-agent/pull/1'}) is accepted
     assert ([supervisor.config.python, '-m', 'pytest', 'tests/'] in seen) is accepted
 
 
@@ -653,7 +1139,8 @@ def test_code_verification_requires_origin_and_checks_configured_fork(
 ])
 def test_explicit_prevalidation_replaces_only_full_suite(supervisor, monkeypatch, reference, cache_exit, accepted):
     commit = "a" * 40
-    pull = {"state": "MERGED", "mergeCommit": {"oid": commit}, "headRefOid": "c" * 40,
+    pull = {"url": "https://github.com/jevplays-games/jev-factorio-agent/pull/1",
+            "baseRefName": "main", "state": "MERGED", "mergeCommit": {"oid": commit}, "headRefOid": "c" * 40,
             "reviews": [{"author": {"login": "reviewer"}, "state": "APPROVED",
                          "commit": {"oid": "c" * 40}}],
             "statusCheckRollup": [{"conclusion": "SUCCESS"}]}
@@ -663,15 +1150,22 @@ def test_explicit_prevalidation_replaces_only_full_suite(supervisor, monkeypatch
         if command == ["git", "rev-parse", "HEAD"]: return 0, commit
         if command == ["git", "status", "--porcelain"]: return 0, ""
         if command == ["git", "remote"]: return 0, "origin"
+        if command == ["git", "remote", "get-url", "--all", "origin"]:
+            return 0, "https://github.com/jevplays-games/jev-factorio-agent.git"
+        if command == ["git", "remote", "get-url", "--push", "--all", "origin"]:
+            return 0, "https://github.com/jevplays-games/jev-factorio-agent.git"
         if command[:2] == ["git", "ls-remote"]: return 0, commit + "\trefs/heads/main"
-        if command[:3] == ["gh", "pr", "view"]: return 0, json.dumps(pull)
+        if command[:3] == ["gh", "pr", "view"]:
+            assert command[3:6] == ["1", "--repo", "jevplays-games/jev-factorio-agent"]
+            return 0, json.dumps(pull)
         if command[1:4] == ["-m", "jev_factorio.prevalidation", "check"]:
             assert command[-1] == reference
             assert command[-3] == str(supervisor.config.state_dir)
             return cache_exit, ""
         pytest.fail(f"Unexpected command: {command}")
     monkeypatch.setattr(supervisor, "capture", capture)
-    assert supervisor.verify_code({"commit": commit, "pr_url": "https://github.com/o/r/pull/1",
+    assert supervisor.verify_code({"commit": commit,
+                                   "pr_url": "https://github.com/jevplays-games/jev-factorio-agent/pull/1",
                                    "prevalidation": reference}) is accepted
     assert any(c[:3] == ["gh", "pr", "view"] for c in seen)
     assert not any("pytest" in c for c in seen)

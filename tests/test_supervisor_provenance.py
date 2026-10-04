@@ -1,5 +1,6 @@
 """Provenance and crash-boundary tests; no live game, model, or GitHub calls."""
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,7 @@ import pytest
 from jev_factorio import supervisor as module
 from jev_factorio.provenance import CONTEXT_ENV, append_audit, gameplay_context
 from jev_factorio.supervisor import Supervisor, atomic_json
-from test_supervisor import FakeProcess, operational_result, supervisor
+from test_supervisor import FakeProcess, background_checkpoint, operational_result, supervisor
 
 A = {"commit": "a" * 40, "source_sha256": "1" * 64}
 B = {"commit": "b" * 40, "source_sha256": "2" * 64}
@@ -88,6 +89,21 @@ def test_legacy_upgrade_keeps_original_evidence_and_deadline(supervisor):
     assert events(supervisor)[1]["legacy_history"] is True
     assert supervisor.state["cutoff"] == state["cutoff"]
     assert "run_id" not in events(supervisor)[0]
+    assert supervisor.state["gameplay_configuration"]["model_selection"]["needs_review"] is True
+    before_launch = log.read_text()
+    with pytest.raises(ValueError, match="explicit reviewed --model pin"):
+        supervisor.launch(["game"], "gameplay")
+    assert log.read_text() == before_launch
+
+    # An explicit model plus live provider credentials is the reviewed
+    # migration action. It binds the current provider to this same run.
+    supervisor.config.model = "jev-1.13.0"
+    supervisor.initialize(record_only=True)
+    assert supervisor.state["gameplay_configuration"]["model_selection"] == {
+        "provider": "typesafe", "model": "jev-1.13.0", "explicit": True,
+    }
+    assert log.read_text().startswith(legacy)
+    assert events(supervisor)[-1]["event"] == "gameplay_model_binding_reviewed"
 
 
 def test_gameplay_child_and_audit_share_frozen_context(supervisor, monkeypatch):
@@ -400,18 +416,62 @@ def test_manual_snapshot_after_cutoff_is_bounded_and_keeps_deadline(supervisor, 
     assert events(supervisor)[-1]["source_after"] == B
 
 
-@pytest.mark.parametrize("extension", ["background_job", "input_commitments"])
+@pytest.mark.parametrize("extension", ["background_job", "output_commitments", "input_commitments"])
 @pytest.mark.parametrize("changed", ["extension", "history", "reservations"])
 def test_repair_preserves_extension_locks_without_foreground_pending(
         supervisor, tmp_path, extension, changed):
-    previous = {**supervisor.checkpoint(), extension: {"receipt": "paid"},
-                "history": [{"kind": "paid", "receipt": "paid"}],
-                "reservations": {"owner": {"iron-plate": 2}}}
+    if extension == "background_job":
+        previous = background_checkpoint(supervisor)
+    elif extension == "output_commitments":
+        from jev_factorio.buffer_controller import buffered_loop_type
+        from jev_factorio.controller import HierarchicalLoop
+
+        memory_type = buffered_loop_type(HierarchicalLoop).memory_type
+        previous = asdict(memory_type(
+            "fresh", "rocket_launch", status="running", last_tick=2,
+            output_commitments={"recipe:iron-plate": {
+                "source_unit": 17, "layout": "output:17",
+                "parts": {"chest": {"role": "paid:chest", "unit_number": 18,
+                                       "receipt": "paid-receipt", "paid": 1}},
+            }},
+        ))
+    else:
+        from jev_factorio.buffer_controller import buffered_loop_type
+        from jev_factorio.controller import HierarchicalLoop
+        from jev_factorio.input_controller import input_loop_type
+
+        memory_type = input_loop_type(buffered_loop_type(HierarchicalLoop)).memory_type
+        previous = asdict(memory_type(
+            "fresh", "rocket_launch", status="running", last_tick=2,
+            input_commitments={"recipe:iron-plate": {
+                "layout": "input:17", "source_unit": 17, "parts": {},
+            }},
+        ))
+    previous.update(history=[{"kind": "paid", "receipt": "paid"}],
+                    reservations={"owner": {"iron-plate": 2}})
+    from jev_factorio.memory import checkpoint_memory_type
+    from jev_factorio.memory import load_checkpoint_data
+    memory_type = checkpoint_memory_type(previous)
+    load_checkpoint_data(previous, "fresh", "rocket_launch", memory_type=memory_type)
     atomic_json(supervisor.config.checkpoint, previous)
     result = operational_result(supervisor, tmp_path)
     assert supervisor.validate_repair(result, previous, ("head", "diff"))
     current = {**previous}
-    current[extension if changed == "extension" else changed] = None if changed == "extension" else {}
+    if changed == "extension":
+        if extension == "background_job":
+            current["background_job"] = None
+            current["background_attempt"] = None
+        else:
+            current[extension] = {}
+    elif changed == "history":
+        current["history"] = [{"kind": "paid", "receipt": "rewritten"}]
+    else:
+        current["reservations"] = {}
+    if changed == "extension":
+        assert current[extension] != previous[extension]
+    else:
+        assert current[extension] == previous[extension]
+    load_checkpoint_data(current, "fresh", "rocket_launch", memory_type=memory_type)
     atomic_json(supervisor.config.checkpoint, current)
     assert not supervisor.validate_repair(result, previous, ("head", "diff"))
 
