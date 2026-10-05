@@ -68,7 +68,7 @@ The repairs were reviewed and merged in PRs
 [#430](https://github.com/jevplays-games/jev-factorio-agent/pull/430),
 [#432](https://github.com/jevplays-games/jev-factorio-agent/pull/432) and
 [#434](https://github.com/jevplays-games/jev-factorio-agent/pull/434).
-The production controller uses merged commit
+The 17:35 UTC V22 deployment used merged commit
 `9ba7d55477f76130781cbb0b57e2a5e49f4dd9ac`. Its source fingerprint is
 `a2627811f7bb547af902b16616478063b1f1a298ee62c34bb5f7a040a7cb7e14`.
 The deployed observer independently includes the tracked-craft progress repair.
@@ -82,11 +82,44 @@ source header and appended the signed compatibility record. No new JEV
 reevaluation allowance was granted. Fresh coal gathering was verified after the
 17:35 UTC deployment; subsequent iron gathering and extraction also progressed.
 
-The final combined source passed 204 focused tests before deployment. The
+That combined source passed 204 focused tests before deployment. The
 individual final PR heads passed their hosted Python, browser and research
 checks. Retained native receipt and archive fixtures supplement these tests;
 they do not establish uninterrupted multi-day operation. Continue the soak and
 record any later stall separately. Strict JEV can still abstain, and this direct
 attachment path does not authorize recovery of an unfinished native craft.
+
+## Later deployment: a healthy process can still be held
+
+At 18:36 UTC, production V23 installation verification passed for merged commit
+`d5ccc9abb025057938b57bb15c3445abc43f28ca`, source fingerprint
+`1174b63e81570e34f7d9ca5de9cf4f19c169326bd9dd2786a8fa007d46815cde`.
+The [capital power repair](CAPITAL_POWER_RECOVERY.md) retained the same campaign,
+all 1,451 prior decision records, both compatibility records, failed investment
+history and native ownership. It consumed one reviewed changed-source
+reevaluation, bringing the retained total to 16. All final-head and post-merge
+Python and browser checks passed.
+
+Installation success did **not** establish gameplay recovery. The first V23
+decision at tick 11401189 contained the formerly missing native power witness.
+JEV judged the wood action useful with probability 0.71, passing the usefulness
+gate. Its separate choice confidence was 0.42, below the unchanged 0.45 floor.
+The next batch contained the remaining copper-input action, which JEV judged
+unsupported with probability 0.59. The owner and child remained alive, with no
+pending action or background craft and no fresh V23 gameplay dispatch.
+
+These are distinct boundaries: a live process is not useful progress, a valid
+native prerequisite is not a JEV choice, and a merged repair is not a completed
+multi-day soak. Read the exact request, answer and decision diagnostics. Do not
+mistake the usefulness answer's confidence field for the usefulness probability
+used by its gate. Preserve the strict choice floor and historical rejection;
+restarting or rephrasing solely to obtain another vote is not a repair. Resume
+only when the existing policy admits genuinely changed evidence or a reviewed
+source repair through its normal authority.
+
+At 18:54 UTC the persistent monitor correctly displayed the block, OBS remained
+streaming its actual Program scene, and autosaves were current. The requested
+multi-day reliability remained unproven. The later disk expansion below succeeded
+without restarting the controller and did not release this JEV hold.
 
 For multi-day capacity planning, see [storage headroom and guarded online expansion](CONTINUOUS_STORAGE_HEADROOM.md).
