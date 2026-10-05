@@ -27,6 +27,7 @@ for name, technology in pairs(force.technologies) do
     for key in pairs(technology.prerequisites) do
         table.insert(prerequisites, key)
     end
+    table.sort(prerequisites)
     catalog.technologies[name] = {
         prerequisites = prerequisites,
         researched = technology.researched,
