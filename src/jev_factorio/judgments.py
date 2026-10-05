@@ -2521,7 +2521,7 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 'factory_craft_job': 'paid_native_handcraft_start',
             }
             qualified_nested_kit = (
-                len(selected) == 1 and input_step is not None
+                input_step is not None
                 and input_step.action in nested_action_kinds
                 and input_step.effect in {'inventory', 'transfer', 'craft_job_complete'}
                 and isinstance(nested_kit, dict)
@@ -2582,7 +2582,15 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     and nested_action.get('native_dispatch_checks_receiver_insertable_count') is True)
             if qualified_nested_kit and input_step.action == 'factory_gather':
                 qualified_nested_kit = (
-                    nested_action.get('fair_target_identity_observed') is True
+                    nested_kit.get('current_action_item') == input_step.item
+                    and nested_action.get('resource') == input_step.item
+                    and (input_step.parameters or {}).get('resource') == input_step.item
+                    and type(nested_action.get('quantity')) is int
+                    and nested_action['quantity'] == (input_step.parameters or {}).get('quantity')
+                    and type(nested_action.get('inventory_now')) is int
+                    and nested_action['inventory_now'] == facts.get('inventory', {}).get(input_step.item, 0)
+                    and input_step.threshold == nested_action['inventory_now'] + nested_action['quantity']
+                    and nested_action.get('fair_target_identity_observed') is True
                     and nested_action.get('native_target_session_bound') is True
                     and type(nested_action.get('fair_target_surface_index')) is int
                     and nested_action['fair_target_surface_index'] > 0
@@ -2824,6 +2832,19 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 )
             usefulness_contribution_hint += machine_prerequisite_hint
             contribution_hint += machine_prerequisite_hint
+            if qualified_nested_kit:
+                usefulness_contribution_hint += (
+                    ' `outpost_kit_prerequisite_start_evidence` binds this exact child '
+                    'action to its current kit request and a separately traced outer '
+                    'material demand. Judge its conditional contribution to that child '
+                    'request; its item need not be a direct ingredient of the outer target. '
+                    'Outpost admission remains a declared planner policy heuristic or '
+                    'paid-prefix continuation, not measured payback. The native action, '
+                    'kit construction, outpost output and outer target remain unverified. '
+                    'Missing, stale, mismatched or contrary facts can make usefulness '
+                    'unsupported. Another offered alternative does not invalidate this '
+                    'candidate-specific evidence or authorize either action.'
+                )
             if power_hint:
                 usefulness_contribution_hint += (
                     ' `utility_power_prerequisite_start_evidence` binds this exact bounded child action '

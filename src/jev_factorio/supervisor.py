@@ -311,8 +311,42 @@ class Supervisor:
         ):
             raise ValueError("Manual intervention requires nonempty evidence strings")
         before = self.state.get("code_revision")
-        after = self.snapshot_revision(manual=True)
-        checkpoint = self.checkpoint()
+        try:
+            after = self.snapshot_revision(manual=True)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            after = None
+        checkpoint, capture = self._manual_checkpoint_capture()
+        if capture["state"] != "valid":
+            obligations = self._saved_checkpoint_obligations(checkpoint)
+            reject_source_change = (
+                checkpoint is not None and self.has_unresolved_work(checkpoint)
+                and (before is None or after is None or before != after))
+            if after is None:
+                source_state = "unavailable"
+            elif before is None:
+                source_state = "unbound"
+            elif before == after:
+                source_state = "matches_saved"
+            else:
+                source_state = "changed"
+            durable = self.transition("manual_intervention", {
+                "manual_interventions": self.state.get("manual_interventions", 0) + 1,
+            }, actor_type="human", actor=actor, intervention_type="manual_intervention",
+                reason=reason, declaration_only=True, report_sha256=digest_json(report),
+                evidence_count=len(evidence), source_before=before, source_observed=after,
+                source_revision_state=source_state,
+                source_transition_pending=source_state != "matches_saved",
+                source_adopted=False, checkpoint_state=capture["state"],
+                checkpoint_sha256=capture["sha256"],
+                checkpoint_obligations=obligations)
+            if not durable:
+                return
+            if reject_source_change:
+                raise ValueError(
+                    "Code provenance changed while a pending action requires reconciliation "
+                    "or acknowledged background work requires compatible-source review"
+                )
+            return
         if (self.has_unresolved_work(checkpoint)
                 and (before is None or after is None or before != after)):
             raise ValueError(
@@ -366,6 +400,98 @@ class Supervisor:
                 or checkpoint.get("active_plan") is not None
                 or bool(checkpoint.get("reservations")))
 
+    def _manual_checkpoint_capture(self) -> tuple[dict | None, dict]:
+        """Return a fully composed, stable checkpoint capture for manual review.
+
+        A failed capture is evidence of unknown live state, not evidence that
+        the supervised run has no pending work. The returned metadata is safe
+        to persist in the audit log; raw bytes and exception text are not.
+        """
+        path = self.config.checkpoint
+        try:
+            captured = path.read_bytes()
+        except FileNotFoundError:
+            return None, {"state": "missing", "sha256": None}
+        except OSError:
+            return None, {"state": "unreadable", "sha256": None}
+
+        checksum = hashlib.sha256(captured).hexdigest()
+        try:
+            data = json.loads(captured.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None, {"state": "malformed", "sha256": checksum}
+        if not isinstance(data, dict):
+            return None, {"state": "non_object", "sha256": checksum}
+        if (data.get("session_id") != self.config.session_id
+                or data.get("target") != "rocket_launch"):
+            return None, {"state": "wrong_identity", "sha256": checksum}
+
+        declared_memory = selected_memory = None
+        failure_state = None
+        try:
+            from .memory import load_checkpoint_bytes
+
+            treatment = None
+            if self.config.production_treatment is not None:
+                from .treatment import load
+                treatment, _ = load(self.config.production_treatment)
+            try:
+                declared_memory = load_checkpoint_bytes(
+                    captured, self.config.session_id, "rocket_launch", checkpoint_path=path)
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                failure_state = "invalid"
+            if failure_state is None:
+                try:
+                    selected_memory = load_checkpoint_bytes(
+                        captured, self.config.session_id, "rocket_launch", checkpoint_path=path,
+                        memory_type=self._launch_memory_type(treatment))
+                    self._validate_launch_treatment(captured, selected_memory, treatment)
+                except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                    failure_state = "launch_incompatible"
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            failure_state = "invalid"
+        finally:
+            for memory in (declared_memory, selected_memory):
+                archive_index = getattr(memory, "_blocked_recovery_archive_index", None)
+                if archive_index is not None:
+                    archive_index.close()
+        if failure_state is not None:
+            try:
+                current = path.read_bytes()
+            except OSError:
+                return None, {"state": "changed_or_unavailable", "sha256": checksum}
+            if current != captured:
+                return None, {"state": "changed_during_validation", "sha256": checksum}
+            return data, {"state": failure_state, "sha256": checksum}
+
+        try:
+            current = path.read_bytes()
+        except OSError:
+            return None, {"state": "changed_or_unavailable", "sha256": checksum}
+        if current != captured:
+            return None, {"state": "changed_during_validation", "sha256": checksum}
+        return data, {"state": "valid", "sha256": checksum}
+
+    def _saved_checkpoint_obligations(self, live_checkpoint: dict | None = None) -> dict:
+        """Summarize obligation evidence without treating a cached idle view as current."""
+        snapshots = []
+        if isinstance(live_checkpoint, dict):
+            snapshots.append(("captured_checkpoint", live_checkpoint))
+        incident = self.state.get("incident")
+        if isinstance(incident, dict) and isinstance(incident.get("checkpoint"), dict):
+            snapshots.append(("incident_checkpoint", incident["checkpoint"]))
+        last_valid = self.state.get("last_valid_checkpoint")
+        if isinstance(last_valid, dict):
+            snapshots.append(("last_valid_checkpoint", last_valid))
+        if not snapshots:
+            return {"state": "unknown", "known_unresolved": None, "saved_sources": []}
+        return {
+            "state": "unknown",
+            "known_unresolved": any(self.has_unresolved_work(checkpoint)
+                                     for _, checkpoint in snapshots),
+            "saved_sources": [name for name, _ in snapshots],
+        }
+
     def _launch_memory_type(self, treatment: dict | None):
         """Select the same checkpoint reader that the gameplay command will launch."""
         from .controller import HierarchicalLoop
@@ -398,14 +524,22 @@ class Supervisor:
         return loop_type.memory_type
 
     def _preflight_launch_checkpoint(self, treatment: dict | None, *,
-                                    allow_invalid_checkpoint: bool = False) -> None:
+                                    allow_invalid_checkpoint: bool = False,
+                                    allow_launch_incompatible: bool = False) -> None:
         """Validate a sound checkpoint with the exact composition to be launched."""
         path = self.config.checkpoint
         if not path.exists():
             return
         if not path.is_file():
+            if allow_invalid_checkpoint:
+                return
             raise ValueError("Controller checkpoint is not a regular file")
-        captured = path.read_bytes()
+        try:
+            captured = path.read_bytes()
+        except OSError:
+            if allow_invalid_checkpoint:
+                return
+            raise
         from .memory import load_checkpoint_bytes
 
         # First establish that the capture is valid under its own declared
@@ -435,6 +569,16 @@ class Supervisor:
                 memory_type=self._launch_memory_type(treatment))
             self._validate_launch_treatment(captured, selected_memory, treatment)
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
+            if allow_launch_incompatible:
+                try:
+                    current = path.read_bytes()
+                except OSError as read_error:
+                    raise ValueError(
+                        "Checkpoint changed or became unavailable during launch composition preflight"
+                    ) from read_error
+                if current != captured:
+                    raise ValueError("Checkpoint changed during launch composition preflight")
+                return
             raise ValueError(
                 f"Checkpoint failed configured launch composition preflight: {error}") from error
         finally:
@@ -470,7 +614,8 @@ class Supervisor:
                 or getattr(memory, "coal_supply_schema", None) != expected_schema):
             raise ValueError("Checkpoint production treatment differs from retained coal ownership")
 
-    def initialize(self, *, record_only: bool = False) -> None:
+    def initialize(self, *, record_only: bool = False,
+                   manual_audit: bool = False) -> None:
         self.config.validate()
         treatment = treatment_digest = None
         if self.config.production_treatment is not None:
@@ -497,7 +642,8 @@ class Supervisor:
         # corrected retry. Corrupt captures in an already-bound run still reach
         # the established repair path without being rewritten here.
         self._preflight_launch_checkpoint(
-            treatment, allow_invalid_checkpoint=bound_configuration_exists)
+            treatment, allow_invalid_checkpoint=bound_configuration_exists or manual_audit,
+            allow_launch_incompatible=manual_audit)
         current_selection = self.model_selection()
         if not existing:
             self.save()
@@ -1632,7 +1778,8 @@ Only report repaired when every acceptance requirement is verified.
                 raise RuntimeError("Another supervisor owns this repository") from error
             if manual_intervention is not None and not self.state_path.exists():
                 raise ValueError("Manual intervention requires an existing supervised run")
-            self.initialize(record_only=manual_intervention is not None)
+            self.initialize(record_only=manual_intervention is not None,
+                            manual_audit=manual_intervention is not None)
             if manual_intervention is not None:
                 self.record_manual_intervention(manual_intervention)
                 return 1 if self.stop_requested else 0
