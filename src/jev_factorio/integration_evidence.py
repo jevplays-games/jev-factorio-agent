@@ -65,6 +65,9 @@ REQUIRED_GATES = [
 ]
 METRIC_COUNTERS = ('command_calls', 'batch_calls', 'failed_calls', 'request_bytes',
                    'response_bytes', 'unknown_request_size_calls', 'unknown_response_size_calls')
+INPUT_FAILURE_STAGES = {'route_schema', 'production_sites', 'commitment', 'live_route'}
+INPUT_FAILURE_EXCEPTIONS = {'ValueError', 'KeyError', 'TypeError', 'AttributeError'}
+INPUT_FAILURE_SOURCES = {'recipe:iron-plate', 'recipe:copper-plate', 'growth:iron-plate', 'growth:copper-plate'}
 
 
 def _number(value, minimum=0, maximum=2**53 - 1):
@@ -157,7 +160,8 @@ def validate_trial(trial: dict) -> None:
     if campaign is not None and (
             not isinstance(campaign, dict) or set(campaign) != campaign_flags | {'schema'}
             or not _integer(campaign['schema'], 1, 1)
-            or any(type(campaign[k]) is not bool for k in campaign_flags)):
+            or any(type(campaign[k]) is not bool for k in campaign_flags)
+            or campaign['coverage_margin_lookahead'] and not campaign['lead_time_supply']):
         raise ValueError('Invalid explicit campaign treatment')
     for key in ('requested_model', 'resolved_model'):
         value = trial[key]
@@ -249,6 +253,94 @@ def _identity(row):
     return {key: row.get(key) for key in ('session_id', 'world_kind', 'process_id', 'execution_id',
              'run_id', 'segment_id', 'policy', 'target', 'requested_model', 'code_revision',
              'acceptance_configuration', 'campaign_treatment')}
+
+
+def valid_input_validation_failure(value: object) -> bool:
+    """Accept only the bounded diagnostic shape emitted by InputRouteMixin."""
+    if not isinstance(value, dict) or len(value) > 3:
+        return False
+    if not value:
+        return True
+    if (set(value) not in ({'stage', 'exception_class'}, {'stage', 'exception_class', 'source'})
+            or type(value['stage']) is not str or value['stage'] not in INPUT_FAILURE_STAGES
+            or type(value['exception_class']) is not str
+            or value['exception_class'] not in INPUT_FAILURE_EXCEPTIONS):
+        return False
+    return ('source' not in value or value['stage'] in {'commitment', 'live_route'}
+            and type(value.get('source')) is str
+            and value['source'] in INPUT_FAILURE_SOURCES)
+
+
+def _record_feature_mismatch(record, configuration):
+    """Bind declared treatments to fields emitted by the current ``_record`` MRO."""
+    # Core _record always emits mining_outposts as a boolean. Optional wrappers
+    # emit their true flag and evidence together; disabled wrappers emit neither.
+    if record.get('factory_scheduling') != configuration['factory_scheduling']:
+        return True
+    if (type(record.get('mining_outposts')) is not bool
+            or record['mining_outposts'] is not configuration['mining_outposts']):
+        return True
+    if configuration['mining_outposts']:
+        if not isinstance(record.get('mining_outpost_evidence'), dict):
+            return True
+    elif 'mining_outpost_evidence' in record:
+        return True
+    optional = {
+        'background_work': ('background_schema', 'background_job', 'background_attempt'),
+        'furnace_output_buffers': ('buffer_evidence',),
+        'furnace_input_belts': ('input_route_evidence', 'input_validation_failure'),
+        'ore_side_successors': ('successor_evidence', 'successor_projects'),
+    }
+    for flag, fields in optional.items():
+        enabled = configuration[flag]
+        if flag in record and type(record[flag]) is not bool:
+            return True
+        if enabled:
+            if record.get(flag) is not True or any(field not in record for field in fields):
+                return True
+            for field in fields:
+                if field == 'background_schema':
+                    continue
+                if field in {'background_job', 'background_attempt'}:
+                    if record[field] is not None and not isinstance(record[field], dict):
+                        return True
+                elif field == 'input_validation_failure':
+                    if not valid_input_validation_failure(record[field]):
+                        return True
+                elif not isinstance(record[field], dict):
+                    return True
+            if flag == 'background_work' and (
+                    not _integer(record['background_schema'], 2, 3)
+                    or (record['background_job'] is None) != (record['background_attempt'] is None)):
+                return True
+        elif record.get(flag) is True or any(field in record for field in fields):
+            return True
+    if configuration['solid_routes']:
+        if (record.get('solid_routes') is not True
+                or type(record.get('solid_science_policy')) is not bool
+                or record['solid_science_policy'] is not configuration['solid_science_policy']
+                or type(record.get('solid_funding_schema')) is not int
+                or record['solid_funding_schema'] != 1
+                or not isinstance(record.get('solid_route_evidence'), dict)
+                or record.get('solid_funding') is not None and not isinstance(record.get('solid_funding'), dict)
+                or not isinstance(record.get('solid_investment_evidence'), dict)):
+            return True
+    elif record.get('solid_routes') is True:
+        return True
+    if 'coal_supply' in configuration:
+        if configuration['coal_supply']:
+            if (record.get('coal_supply') is not True
+                    or type(record.get('coal_kit_policy')) is not bool
+                    or record['coal_kit_policy'] is not configuration['coal_kit_policy']
+                    or type(record.get('coal_economic_admission')) is not bool
+                    or record['coal_economic_admission'] is not configuration.get('coal_economic_admission', False)
+                    or not isinstance(record.get('coal_supply_evidence'), dict)
+                    or not isinstance(record.get('coal_kit_evidence'), dict)
+                    or not isinstance(record.get('coal_admission_evidence'), dict)):
+                return True
+        elif record.get('coal_supply') is True:
+            return True
+    return False
 
 
 def _receipt_stock_consumption(chain, rows, receipts):
@@ -665,6 +757,9 @@ def analyze_rows(rows: list[dict], trial: dict, initial: dict, final: dict) -> d
     for field in ('output_commitments', 'input_commitments', 'outpost_commitments', 'successor_receipts'):
         reject(not _retains_prefix(initial.get(field, {}), final.get(field, {})),
                'composed_ownership_regressed')
+    reject(not _retains_prefix(initial.get('connection_failure_attribution', {}),
+                               final.get('connection_failure_attribution', {})),
+           'connection_failure_attribution_regressed')
     if trial['schema'] in {TRIAL_SCHEMA_V2, TRIAL_SCHEMA_V3}:
         reject(not _retains_prefix(initial.get('coal_commitments', {}),
                                    final.get('coal_commitments', {})),
@@ -712,6 +807,8 @@ def analyze_rows(rows: list[dict], trial: dict, initial: dict, final: dict) -> d
     for index, record in enumerate(rows):
         if not isinstance(record, dict):
             raise ValueError('Invalid gameplay record')
+        reject(type(record.get('schema_version')) is not int or record['schema_version'] != 2,
+               'gameplay_schema_mismatch')
         digest = sha256(canonical(record))
         if digest in seen:
             raise ValueError('Duplicate gameplay record')
@@ -731,6 +828,7 @@ def analyze_rows(rows: list[dict], trial: dict, initial: dict, final: dict) -> d
                or ('dirty' in revision and revision['dirty'] is not False), 'source_readback_mismatch')
         reject(record.get('acceptance_configuration') != trial['configuration']
                or record.get('campaign_treatment') != trial['campaign_treatment'], 'configuration_mismatch')
+        reject(_record_feature_mismatch(record, trial['configuration']), 'feature_composition_mismatch')
         if trial['configuration'].get('coal_economic_admission', False):
             reject(record.get('coal_economic_admission') is not True
                    or not isinstance(record.get('coal_admission_evidence'), dict),
@@ -835,6 +933,9 @@ def analyze_rows(rows: list[dict], trial: dict, initial: dict, final: dict) -> d
                 raise ValueError('Missing complete native observation')
             tick = state['tick']
             factory = state['factory']
+            reject(index == 0 and label == 'state'
+                   and (not _integer(initial.get('last_tick')) or tick < initial['last_tick']),
+                   'initial_checkpoint_before_state')
             if not isinstance(factory.get('entities'), dict) or len(factory['entities']) > 4096:
                 raise ValueError('Missing bounded owned entity map')
             reject(state.get('session_id') != session or state.get('world_kind') != 'fle', 'observation_session_mismatch')

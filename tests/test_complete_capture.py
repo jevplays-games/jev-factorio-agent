@@ -58,6 +58,55 @@ def test_projection_retains_paid_coal_solid_and_model_evidence():
         project_record(row, Redactor({}), Counter())
 
 
+def _complete_capture_projection_row():
+    rows, _, _, _ = evidence()
+    row = rows[1]
+    for label in ("state", "after_state"):
+        row[label]["factory"].update(solid_routes={"routes": {}, "diagnostics": []},
+                                      coal_supply={"sources": {}})
+    return row
+
+
+def test_input_route_validation_diagnostic_roundtrips_only_supported_schema():
+    row = _complete_capture_projection_row()
+    row.update(furnace_input_belts=True, input_route_evidence={})
+    for diagnostic in (
+        {},
+        {"stage": "route_schema", "exception_class": "ValueError"},
+        {"stage": "commitment", "exception_class": "KeyError", "source": "recipe:iron-plate"},
+    ):
+        row["input_validation_failure"] = deepcopy(diagnostic)
+        projected = project_record(row, Redactor({}), Counter())
+        assert projected["input_validation_failure"] == diagnostic
+
+
+@pytest.mark.parametrize("diagnostic", [
+    None,
+    [],
+    {"stage": "unknown", "exception_class": "ValueError"},
+    {"stage": "route_schema", "exception_class": "RuntimeError"},
+    {"stage": "route_schema", "exception_class": "ValueError", "extra": "unreviewed"},
+    {"stage": "production_sites", "exception_class": "ValueError", "source": "recipe:iron-plate"},
+    {"stage": "commitment", "exception_class": "ValueError", "source": "unreviewed-source"},
+])
+def test_input_route_validation_diagnostic_rejects_unknown_or_malformed_fields(diagnostic):
+    row = _complete_capture_projection_row()
+    row.update(furnace_input_belts=True, input_route_evidence={},
+               input_validation_failure=deepcopy(diagnostic))
+    with pytest.raises(ValueError, match="Invalid input-route validation failure evidence"):
+        project_record(row, Redactor({}), Counter())
+
+
+def test_input_route_validation_diagnostic_rejects_sensitive_nested_fields():
+    row = _complete_capture_projection_row()
+    row.update(furnace_input_belts=True, input_route_evidence={},
+               input_validation_failure={
+                   "stage": "commitment", "exception_class": "ValueError",
+                   "authorization": "synthetic-secret"})
+    with pytest.raises(ValueError, match="Sensitive key in selected evidence"):
+        project_record(row, Redactor({}), Counter())
+
+
 def test_economic_capture_requires_bound_checkpoint_record_and_native_protocol():
     rows, trial, initial, final = evidence()
     trial['configuration'].update(coal_supply=True, coal_kit_policy=True,

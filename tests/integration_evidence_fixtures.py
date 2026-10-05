@@ -130,12 +130,20 @@ def evidence():
             run_id='private-fixture-run', segment_id='private-fixture-segment', policy='hybrid', target='rocket_launch', requested_model='fixture-model',
             resolved_model='fixture-model' if i == 1 else None, model_call=i == 1,
             code_revision={'commit': trial['expected_commit'], 'source_sha256': trial['expected_source_sha256']},
-            acceptance_configuration=deepcopy(config), recorded_at_utc=(start + timedelta(minutes=i)).isoformat(),
+            acceptance_configuration=deepcopy(config), factory_scheduling='ready-work',
+            recorded_at_utc=(start + timedelta(minutes=i)).isoformat(),
             tick=state['tick'], state=deepcopy(rows[-1]['after_state']) if rows else deepcopy(state),
             after_state=deepcopy(state), status='running', completed_goals={},
             decision={'model_called': i == 1} if i == 1 else None,
             pending=None, attempt=None, phases=[],
             action='observe', verified=True, solid_route_fault=False, failure_budgets={},
+            mining_outposts=False,
+            solid_routes=True,
+            solid_route_evidence=deepcopy(state['factory']['solid_routes']),
+            solid_science_policy=False,
+            solid_funding_schema=1,
+            solid_funding=None,
+            solid_investment_evidence={},
             **({'previous_iteration_timing': timing(i)} if i else {})))
         # The preceding after-state can share the tick with this before-state.
         # Its flow evidence stays bound to its own snapshot, not this later tick.

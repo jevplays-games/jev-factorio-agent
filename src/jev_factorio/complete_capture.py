@@ -15,7 +15,8 @@ from pathlib import Path
 
 from .acceptance_capture import RECORD_FIELDS, STATE_FIELDS, FACTORY_FIELDS, DENIED
 from .acceptance_io import MAX_JSON, MAX_LOG, canonical, hash_file, load_json, records, sha256, stable_read, write_new
-from .integration_evidence import TRIAL_SCHEMA_V2, TRIAL_SCHEMA_V3, validate_trial
+from .integration_evidence import (TRIAL_SCHEMA_V2, TRIAL_SCHEMA_V3,
+                                   valid_input_validation_failure, validate_trial)
 from .research_log import Redactor
 from .dev_preflight import checkpoint_type
 from .state import GameSnapshot
@@ -29,7 +30,7 @@ TOP_FIELDS = RECORD_FIELDS | {
     'solid_investment_evidence', 'solid_funding_schema', 'solid_funding',
     'coal_supply', 'coal_supply_evidence', 'coal_supply_fault',
     'coal_kit_policy', 'coal_kit_evidence', 'coal_economic_admission',
-    'coal_admission_evidence', 'previous_iteration_timing',
+    'coal_admission_evidence', 'input_validation_failure', 'previous_iteration_timing',
 }
 NATIVE_FIELDS = FACTORY_FIELDS | {'solid_routes', 'coal_supply'}
 CRITICAL = ('coal', 'solid', 'owner', 'receipt', 'funding', 'flow', 'commitment', 'pending')
@@ -328,6 +329,9 @@ def project_record(row: dict, redactor: Redactor, omissions: Counter,
         elif isinstance(node, list):
             for item in node: check(item)
     check(result)
+    if ('input_validation_failure' in result
+            and not valid_input_validation_failure(result['input_validation_failure'])):
+        raise ValueError('Invalid input-route validation failure evidence')
     cleaned = redactor.clean(result)
     if solid_intents is not None:
         checked_solid_funding(cleaned, solid_intents)
