@@ -89,7 +89,9 @@ compares each supported craft with one independent gather, retaining all other
 options. A lookahead craft qualifies only with the existing same-tick current
 material-bill proof, matching product and target, observed carried inventory,
 positive unfilled demand and sufficient native expected output. Discretionary
-stockpiling does not qualify. Each pair still independently requires all craft,
+stockpiling does not qualify. Active-research horizons are excluded because their
+shared bill can contain science demand beyond the gather's local target.
+Each pair still independently requires all craft,
 gather and output-lock witnesses. Compiler scopes, ranking and all gates stay
 unchanged; the evidence neither forces crafting nor asserts simultaneous jobs.
 
@@ -97,7 +99,7 @@ One diagnostic added only these comparisons to the exact three-candidate request
 at tick 7574399, retaining every question. JEV selected copper gathering with
 0.66 confidence and 0.75 choice probability; exact retained-answer replay passed
 the unchanged selector. Its 45,075 bytes fit the unchanged 48,000-byte budget.
-The focused suite passed 356 tests. Production deployment and subsequent native
+The focused suite passed 357 tests. Production deployment and subsequent native
 progress remain separate acceptance steps for this extension.
 
 ## Fast recurrence triage

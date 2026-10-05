@@ -3924,6 +3924,11 @@ def _current_overlap_craft(snapshot, craft, row):
                 and path[0] == local.get('item') and path[-1] == step.item)
     if row.get('work_scope') != 'lookahead' or not isinstance(bill, dict):
         return False
+    # horizon_demands can mix the local target with active-research science.
+    # Without a separate current-only bill proof, do not attribute those extra
+    # ingredients to this gather's local target.
+    if snapshot.factory.get('research') not in (None, ''):
+        return False
     carried, target = bill.get('inventory_now'), bill.get('bounded_bill_inventory_target')
     needed, produced = bill.get('unfilled_bill_units'), bill.get('expected_products_after_native_verification')
     outputs = start.get('expected_products_after_native_verification')

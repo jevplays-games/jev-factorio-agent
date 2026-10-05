@@ -63,3 +63,11 @@ def test_discretionary_lookahead_has_no_current_bill_comparison():
         rows[p.id]['shared_bill_craft'] = None
     add_craft_overlap_evidence(state, plans, rows)
     assert all('independent_gather_overlap' not in row for row in rows.values())
+
+
+def test_active_research_horizon_cannot_be_claimed_as_the_local_target_bill():
+    state, data, plans, crafts = bill_case()
+    rows = candidate_evidence(state, data, plans)
+    state.factory['research'] = 'other-science-demand'
+    add_craft_overlap_evidence(state, plans, rows)
+    assert all('independent_gather_overlap' not in row for row in rows.values())
