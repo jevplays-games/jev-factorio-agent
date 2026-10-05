@@ -444,6 +444,11 @@ def background_checkpoint(supervisor):
     return value
 
 
+def audit_events(supervisor):
+    path = supervisor.config.state_dir / "events.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
 def test_completed_pending_memory_is_rejected_by_repair(supervisor, tmp_path):
     previous = memory_checkpoint(supervisor)
     completed = {**previous, "status": "completed"}
@@ -492,14 +497,20 @@ def test_manual_source_change_rejects_step_only_background_owner(supervisor, mon
     checkpoint["background_step"] = {"action": "factory_craft_job", "receipt": "retained-owner"}
     atomic_json(supervisor.config.checkpoint, checkpoint)
     supervisor.save(code_revision=before)
-    state = json.dumps(supervisor.state, sort_keys=True)
+    state = json.loads(json.dumps(supervisor.state))
     monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: after)
 
     with pytest.raises(ValueError, match="pending action requires reconciliation"):
         supervisor.record_manual_intervention(
             {"actor": "operator", "reason": "code_change", "evidence": ["reviewed"]})
 
-    assert json.dumps(supervisor.state, sort_keys=True) == state
+    row = [row for row in audit_events(supervisor) if row["event"] == "manual_intervention"][-1]
+    assert row["declaration_only"] is True and row["source_adopted"] is False
+    assert row["source_revision_state"] == "changed"
+    assert row["checkpoint_obligations"]["known_unresolved"] is True
+    assert supervisor.state["segment_id"] == state["segment_id"]
+    assert supervisor.state["code_revision"] == before
+    assert supervisor.state["cutoff"] == state["cutoff"]
     assert supervisor.checkpoint() == checkpoint
 
 
@@ -576,14 +587,20 @@ def test_manual_changed_code_with_acknowledged_background_job_is_rejected(superv
     checkpoint = background_checkpoint(supervisor)
     atomic_json(supervisor.config.checkpoint, checkpoint)
     supervisor.save(code_revision=before)
-    state = json.dumps(supervisor.state, sort_keys=True)
+    state = json.loads(json.dumps(supervisor.state))
     monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: after)
 
     with pytest.raises(ValueError, match="pending action requires reconciliation"):
         supervisor.record_manual_intervention(
             {"actor": "operator", "reason": "code_change", "evidence": ["reviewed"]})
 
-    assert json.dumps(supervisor.state, sort_keys=True) == state
+    row = [row for row in audit_events(supervisor) if row["event"] == "manual_intervention"][-1]
+    assert row["declaration_only"] is True and row["source_adopted"] is False
+    assert row["source_revision_state"] == "changed"
+    assert row["checkpoint_obligations"]["known_unresolved"] is True
+    assert supervisor.state["segment_id"] == state["segment_id"]
+    assert supervisor.state["code_revision"] == before
+    assert supervisor.state["cutoff"] == state["cutoff"]
     assert supervisor.checkpoint() == checkpoint
 
 
@@ -610,7 +627,8 @@ def test_changed_code_with_pending_action_starts_repair_without_gameplay(supervi
     assert json.dumps(supervisor.checkpoint(), sort_keys=True) == original
 
 
-def test_manual_changed_code_with_pending_action_is_rejected_before_audit(supervisor, monkeypatch):
+def test_manual_changed_code_with_pending_action_records_declaration_without_adoption(
+        supervisor, monkeypatch):
     before = {"commit": "a" * 40, "source_sha256": "1" * 64}
     after = {"commit": "b" * 40, "source_sha256": "2" * 64}
     checkpoint = supervisor.checkpoint()
@@ -622,7 +640,7 @@ def test_manual_changed_code_with_pending_action_is_rejected_before_audit(superv
     )
     atomic_json(supervisor.config.checkpoint, checkpoint)
     supervisor.save(code_revision=before)
-    state = json.dumps(supervisor.state, sort_keys=True)
+    state = json.loads(json.dumps(supervisor.state))
     monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: after)
 
     with pytest.raises(ValueError, match="pending action requires reconciliation"):
@@ -630,7 +648,13 @@ def test_manual_changed_code_with_pending_action_is_rejected_before_audit(superv
             {"actor": "operator", "reason": "code_change", "evidence": ["reviewed"]}
         )
 
-    assert json.dumps(supervisor.state, sort_keys=True) == state
+    row = [row for row in audit_events(supervisor) if row["event"] == "manual_intervention"][-1]
+    assert row["declaration_only"] is True and row["source_adopted"] is False
+    assert row["source_revision_state"] == "changed"
+    assert row["checkpoint_obligations"]["known_unresolved"] is True
+    assert supervisor.state["segment_id"] == state["segment_id"]
+    assert supervisor.state["code_revision"] == before
+    assert supervisor.state["cutoff"] == state["cutoff"]
     assert supervisor.checkpoint() == checkpoint
 
 
