@@ -293,6 +293,86 @@ def _qualified_paid_service_input(plan, facts, row):
     except (KeyError, TypeError, ValueError, AttributeError, ArithmeticError):
         return False
 
+def _qualified_paid_service_output(plan, facts, row):
+    """Bind a service's first pickup independently; later fuel is still unverified."""
+    import hashlib
+    from types import SimpleNamespace
+    from dataclasses import replace
+    from .planning.catalog import Catalog
+    from .planning.decision_support import _output_pickup_start_evidence, _current_item_dependency_path
+    try:
+        proof = row['paid_service_output_start_evidence']
+        marker = plan.materials['service_visit']
+        first, second = plan.steps
+        p, tail = first.parameters, second.parameters
+        factory, tick = facts['factory'], facts['tick']
+        role, item = p['role'], p['item']
+        machine = factory['entities'][role]
+        stock = marker['paid_stock_now']
+        identity = [{k:v for k,v in step.parameters.items() if k != 'receipt'}
+                    | {'action':step.action} for step in plan.steps]
+        digest = hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()[:16]
+        if (facts.get('world_kind') != 'fle' or type(tick) is not int
+                or type(factory.get('tick')) is not int or factory['tick'] != tick
+                or proof.get('observed_tick') != tick or proof['session_id'] != facts['session_id']
+                or proof['native_catalog_version'] != facts['game_version']
+                or proof['basis'] != 'current_recompiled_paid_service_first_output_pickup'
+                or plan.id != f'service:{role}:{digest}' or proof['service_visit'] != marker
+                or marker['schema'] != 1 or marker['observed_tick'] != tick
+                or marker['scope'] != 'same_cell_paid_service' or marker['first_role'] != role
+                or marker['steps'] != 2 or marker['collections_are_spendable'] is not False
+                or marker['unit_numbers'] != [machine['unit_number']] * 2
+                or any(type(unit) is not int for unit in marker['unit_numbers'])
+                or marker['max_extra_ticks'] != 900 or marker['max_leg_tiles'] != 8
+                or type(marker['extra_ticks_estimate']) is not int
+                or not 0 < marker['extra_ticks_estimate'] <= 900
+                or marker['research_deadline_tick'] is not None
+                or row.get('work_scope') != 'immediate' or row.get('unknowns') != []
+                or row.get('local_target') != plan.materials['local_objective']
+                or plan.materials['local_objective'].get('ultimate_goal') != plan.goal
+                or row.get('material_costs') != second.costs
+                or type(factory.get('crafting_queue')) is not int or factory['crafting_queue'] != 0
+                or factory.get('craft_job', {}).get('status') not in {None, 'completed'}
+                or first.action != 'factory_extract' or first.costs != {}
+                or second.action != 'factory_insert' or tail.get('item') != 'coal'
+                or tail.get('role') != role or second.costs != {'coal':tail['quantity']}
+                or item == 'coal' or set(stock) != {'coal'}
+                or type(stock['coal']) is not int or type(facts['inventory'].get('coal')) is not int
+                or not tail['quantity'] <= stock['coal'] <= facts['inventory']['coal']
+                or proof['combined_paid_costs'] != second.costs
+                or machine['name'] not in {'stone-furnace','steel-furnace'}
+                or type(machine['fuel'].get('coal',0)) is not int
+                or not 0 <= machine['fuel'].get('coal',0) < 5
+                or tail['quantity'] != min(50-machine['fuel'].get('coal',0),stock['coal'])
+                or proof['native_receiver_capacity_and_each_step_require_rechecks'] is not True
+                or proof['later_fuel_output_and_target_completion_unverified'] is not True):
+            return False
+        for step,query in zip(plan.steps,proof['native_receipt_queries'],strict=True):
+            params=step.parameters
+            if (step.effect != 'transfer' or step.item != ''
+                    or set(params) != {'role','item','quantity','receipt'}
+                    or type(params['quantity']) is not int or not 1 <= params['quantity'] <= 200
+                    or params['receipt'] != f"{tick}:{step.action}:{role}:{params['item']}"
+                    or not _qualified_unused_buffer_receipt(facts,
+                        {'native_receipt_query':query},params['receipt'],tick)):
+                return False
+        recipe=proof['native_recipe']
+        if role != 'recipe:'+recipe['name']:
+            return False
+        recipes={**proof['native_parent_recipes'],recipe['name']:recipe}
+        catalog=Catalog(facts['game_version'],recipes,{}, {}, {})
+        snapshot=SimpleNamespace(**{k:facts[k] for k in ('tick','session_id','world_kind','inventory','factory')},
+                                 researched=facts.get('researched',[]))
+        atomic=replace(plan,steps=(first,))
+        expected=_output_pickup_start_evidence(snapshot,catalog,atomic)
+        path=plan.materials['output_pickup']['planner_item_path']
+        return (expected is not None and expected == proof['first_output_pickup']
+                and _current_item_dependency_path(snapshot,catalog,path,
+                    plan.materials['local_objective']['item'],item))
+    except (KeyError,TypeError,ValueError,AttributeError,ArithmeticError):
+        return False
+
+
 def _qualified_research_science_transfer(plan, facts, row):
     """Recheck current paid inputs; disclosed technology bill is native producer evidence."""
     proof = row.get('research_science_transfer_start_evidence')
@@ -2690,6 +2770,16 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 'capacity and each step still require fresh native rechecks and receipts; '
                 'contrary current evidence can make usefulness unsupported.'
                 if _qualified_paid_service_input(plan, facts, row) else '')
+            if _qualified_paid_service_output(plan, facts, row):
+                paid_service_hint += (
+                    ' `paid_service_output_start_evidence` binds the FIRST transfer to '
+                    'already observed output at an owned furnace, the current recipe '
+                    'dependency and an unused receipt. The later coal transfer uses '
+                    'carried stock, not expected pickup proceeds. Judge the first pickup '
+                    'against its present start facts; the later refuel remains subject '
+                    'to fresh receiver checks and its own receipt. Neither transfer is '
+                    'already completed and this evidence does not establish later '
+                    'production or target completion.')
             # Reuse the same qualifications for independent eligibility and
             # magnitude; score-level guidance belongs only to magnitude.
             contribution_hint = (

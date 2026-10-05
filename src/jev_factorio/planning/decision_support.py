@@ -1529,8 +1529,8 @@ def _recipe_input_transfer_start_evidence(snapshot, catalog, plan, *, path_root=
 
 
 
-def _paid_service_input_start_evidence(snapshot, catalog, plan):
-    """Qualify the first ingredient insert of an exactly recompiled paid visit."""
+def _paid_service_start_evidence(snapshot, catalog, plan, *, pickup=False):
+    """Qualify only the first transfer of an exactly recompiled paid visit."""
     from types import SimpleNamespace
     from .factory import FactoryPlanner
     from .service_visits import service_visit
@@ -1551,8 +1551,9 @@ def _paid_service_input_start_evidence(snapshot, catalog, plan):
                     'identity': identity, 'marker': marker}):
             return None
         first, second = plan.steps
+        first_action = 'factory_extract' if pickup else 'factory_insert'
         role = first.parameters['role']
-        if (first.action != 'factory_insert' or second.action != 'factory_insert'
+        if (first.action != first_action or second.action != 'factory_insert'
                 or second.parameters.get('role') != role
                 or first.parameters.get('item') == 'coal'
                 or second.parameters.get('item') != 'coal'):
@@ -1564,20 +1565,22 @@ def _paid_service_input_start_evidence(snapshot, catalog, plan):
             p = step.parameters
             item, quantity = p['item'], p['quantity']
             if (step.effect != 'transfer' or type(quantity) is not int or quantity < 1
-                    or step.costs != {item: quantity}
-                    or p['receipt'] != f'{snapshot.tick}:factory_insert:{role}:{item}'
+                    or step.costs != ({} if step.action == 'factory_extract' else {item: quantity})
+                    or p['receipt'] != f'{snapshot.tick}:{step.action}:{role}:{item}'
                     or p['receipt'] in factory['receipts']
                     or not step.allowed(snapshot) or step.satisfied(snapshot)):
                 return None
-            costs[item] = costs.get(item, 0) + quantity
+            for name, count in step.costs.items():
+                costs[name] = costs.get(name, 0) + count
         if (set(stock) != set(costs) or any(type(stock[item]) is not int
                 or not costs[item] <= stock[item] <= current_supply.get(item, -1)
                 for item in costs)):
             return None
         materials = {k: v for k, v in plan.materials.items() if k != 'service_visit'}
-        atomic = replace(plan, id=f'factory:factory_insert:{role}',
+        atomic = replace(plan, id=f'factory:{first_action}:{role}',
                          steps=(first,), materials=materials)
-        input_start = _recipe_input_transfer_start_evidence(snapshot, catalog, atomic)
+        input_start = (_output_pickup_start_evidence(snapshot, catalog, atomic) if pickup
+                       else _recipe_input_transfer_start_evidence(snapshot, catalog, atomic))
         if input_start is None:
             return None
         planner = FactoryPlanner(catalog, snapshot, plan.goal)
@@ -1587,7 +1590,8 @@ def _paid_service_input_start_evidence(snapshot, catalog, plan):
         if (compiled.id != plan.id or compiled.steps != plan.steps
                 or compiled.materials.get('service_visit') != marker):
             return None
-        recipe = catalog.recipes[input_start['direct_native_recipe']]
+        recipe = catalog.recipes[role.removeprefix('recipe:') if pickup
+                                 else input_start['direct_native_recipe']]
         path = input_start['planner_item_path']
         native_path = {}
         for product, ingredient in zip(path, path[1:]):
@@ -1600,11 +1604,12 @@ def _paid_service_input_start_evidence(snapshot, catalog, plan):
                 return None
             native_path[product] = deepcopy(native)
         return {
-            'basis': 'current_recompiled_paid_service_first_recipe_input',
+            'basis': ('current_recompiled_paid_service_first_output_pickup' if pickup
+                      else 'current_recompiled_paid_service_first_recipe_input'),
             'observed_tick': snapshot.tick, 'session_id': snapshot.session_id,
             'native_catalog_version': catalog.version,
             'service_visit': deepcopy(marker), 'combined_paid_costs': costs,
-            'first_recipe_input': input_start,
+            ('first_output_pickup' if pickup else 'first_recipe_input'): input_start,
             'native_recipe': deepcopy(recipe), 'native_parent_recipes': native_path,
             'native_receipt_queries': [{
                 'schema': 1, 'session_id': snapshot.session_id, 'tick': snapshot.tick,
@@ -1615,6 +1620,14 @@ def _paid_service_input_start_evidence(snapshot, catalog, plan):
         }
     except (KeyError, TypeError, ValueError, AttributeError, ArithmeticError):
         return None
+
+def _paid_service_input_start_evidence(snapshot, catalog, plan):
+    return _paid_service_start_evidence(snapshot, catalog, plan)
+
+
+def _paid_service_output_start_evidence(snapshot, catalog, plan):
+    return _paid_service_start_evidence(snapshot, catalog, plan, pickup=True)
+
 
 def _output_pickup_start_evidence(snapshot, catalog, plan, *, path_root=None):
     """Describe ready output at an owned native source, never a completed pickup."""
@@ -3673,6 +3686,9 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
                                       'factory_buffer_build', 'factory_input_build', 'factory_solid_build'} for s in plan.steps),
             'estimate_basis': 'native_observation_and_catalog_with_declared_policy_heuristics',
         }
+        service_output_start = _paid_service_output_start_evidence(snapshot, catalog, plan)
+        if service_output_start is not None:
+            result[plan.id]['paid_service_output_start_evidence'] = service_output_start
         if bootstrap_pickup_start is not None:
             result[plan.id]['bootstrap_output_pickup_start_evidence'] = bootstrap_pickup_start
         construction = machine_construction_prerequisite(
