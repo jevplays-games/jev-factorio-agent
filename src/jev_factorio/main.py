@@ -27,7 +27,8 @@ class _ReconcileOnlyDecisionClient:
 
 
 def make_backend(name: str, resume: bool = False, adopt_session: bool = False,
-                 setup_timing=None, connector_witness_path=None, connector_binding=None):
+                 setup_timing=None, connector_witness_path=None, connector_binding=None,
+                 completed_craft=None):
     if name == "mock":
         return MockBackend()
     if name == "play_api":
@@ -39,6 +40,8 @@ def make_backend(name: str, resume: bool = False, adopt_session: bool = False,
         b = FleBackend()
         attachment = ({'connector_binding': connector_binding}
                       if connector_binding is not None else {})
+        if completed_craft is not None:
+            attachment['completed_craft'] = completed_craft
         if setup_timing is None:
             b.start(resume=resume, adopt_session=adopt_session,
                     connector_witness_path=connector_witness_path, **attachment)
@@ -735,6 +738,10 @@ def cli() -> None:
                 binding = json.loads(selected_resume_checkpoint_capture).get('connector_ownership')
                 if isinstance(binding, dict) and binding.get('routes'):
                     attachment['connector_binding'] = binding
+                    from .backends.native_completed_craft import checkpoint_completed_craft
+                    craft = checkpoint_completed_craft(json.loads(selected_resume_checkpoint_capture))
+                    if craft is not None:
+                        attachment['completed_craft'] = craft
             if setup_timing:
                 backend = make_backend(args.backend, resume=args.resume,
                                        adopt_session=args.adopt_session,

@@ -1,7 +1,8 @@
 """Read-only reattachment to completed, checkpoint-owned ordinary connectors.
 
-This is not an owner migration. All optional owner registries must still be
-empty. Partial/faulted/uncheckpointed routes require their existing recovery.
+This is not an owner migration. Optional component ownership must still be
+empty; native manual furnaces and unspent proposals have a separate read-only
+qualification. Partial/faulted/uncheckpointed routes require existing recovery.
 """
 from copy import deepcopy
 from types import SimpleNamespace
@@ -11,7 +12,7 @@ from ..iteration_timing import decode_native
 from .native_current_attachment import current_connector_snapshot_command
 
 
-def qualify_completed_connectors(client, result, checkpoint_binding):
+def qualify_completed_connectors(client, result, checkpoint_binding, *, completed_craft=None):
     saved = deepcopy(validate_binding(checkpoint_binding, result['session_id']))
     routes = saved['routes']
     if (not routes or any(row['state'] != 'complete' or not row['owned']
@@ -19,17 +20,29 @@ def qualify_completed_connectors(client, result, checkpoint_binding):
                           or row['actor_unit'] != result['actor_unit']
                           for row in routes.values())):
         raise RuntimeError('Completed connector checkpoint requires reconciliation')
-    command = current_connector_snapshot_command(result, completed_routes=True)
+    command = current_connector_snapshot_command(result, completed_routes=True, completed_craft=completed_craft)
 
     def read():
         row = decode_native(client.send_command(command))
         if (not isinstance(row, dict)
-                or set(row) != {'schema', 'session_id', 'actor_unit', 'tick', 'connector_ownership'}
+                or set(row) != {'schema', 'session_id', 'actor_unit', 'tick',
+                                'connector_ownership', 'settled_factory', 'completed_craft'}
                 or type(row['schema']) is not int or row['schema'] != 1
                 or row['session_id'] != result['session_id']
                 or type(row['actor_unit']) is not int or row['actor_unit'] != result['actor_unit']
                 or type(row['tick']) is not int or row['tick'] < 1):
             raise RuntimeError('Completed connector snapshot identity changed')
+        from .native_completed_craft import verify_completed_craft
+        verify_completed_craft(row['completed_craft'], completed_craft, result, row['tick'])
+        settled = row['settled_factory']
+        if (not isinstance(settled, dict)
+                or set(settled) != {'sites', 'output_offers', 'outpost_offers'}):
+            raise RuntimeError('Settled factory qualification is missing')
+        for name, values in settled.items():
+            if values == []:
+                settled[name] = {}
+            if not isinstance(settled[name], dict) or len(settled[name]) > 2:
+                raise RuntimeError('Settled factory qualification exceeds its bound')
         owned = row['connector_ownership']
         if (not isinstance(owned, dict)
                 or set(owned) != {'protocol', 'session_id', 'tick', 'routes'}
@@ -49,7 +62,9 @@ def qualify_completed_connectors(client, result, checkpoint_binding):
             raise RuntimeError('Completed connector paid cells differ from checkpoint')
     after = read()
     if (after['tick'] < before['tick'] or after['connector_ownership']['routes']
-            != before['connector_ownership']['routes']):
+            != before['connector_ownership']['routes']
+            or after['settled_factory'] != before['settled_factory']
+            or after['completed_craft'] != before['completed_craft']):
         raise RuntimeError('Completed connector ledger changed during attachment')
     return {**result, 'connector_snapshot_qualified': True,
             'connector_snapshot_tick': after['tick'],
