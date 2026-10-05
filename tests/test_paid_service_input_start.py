@@ -128,3 +128,43 @@ def test_full_native_planner_propagates_fresh_service_admission_without_restored
     assert [step.costs for step in service.steps] == [{'copper-ore': 20}, {'coal': 4}]
     row = candidate_evidence(snapshot, catalog, plans)[service.id]
     assert _qualified_paid_service_input(service, facts, row)
+
+
+@pytest.mark.parametrize('coal', [1, 2, 3, 4])
+def test_current_paid_input_evidence_does_not_require_urgent_refuel(coal):
+    catalog, snapshot, plan, facts, _, capture = setup()
+    role = plan.steps[0].parameters['role']
+    snapshot.factory['entities'][role]['fuel']['coal'] = coal
+    facts['factory']['entities'][role]['fuel']['coal'] = coal
+    row = candidate_evidence(snapshot, catalog, [plan])[plan.id]
+    assert row['urgency'] == (3 if coal < 2 else 0)
+    assert row['reasons'] == ([f'observed_low_fuel:{role}'] if coal < 2 else [])
+    assert _qualified_paid_service_input(plan, facts, row)
+    state = deepcopy(capture['state'])
+    state['facts'] = facts
+    state['candidate_evidence'] = {plan.id: row}
+    _, questions, _ = question_batch(state, [plan], max_bytes=48000)
+    for suffix in ('useful_progress', 'benefit', 'needs_observation'):
+        assert 'paid_service_input_start_evidence' in questions[plan.id+'/'+suffix]['instructions']
+    # Native start proof cannot launder contradictory urgency or starvation claims.
+    row['urgency'] = 0 if coal < 2 else 3
+    assert not _qualified_paid_service_input(plan, facts, row)
+    row['urgency'] = 3 if coal < 2 else 0
+    row['reasons'] = [] if coal < 2 else [f'observed_low_fuel:{role}']
+    assert not _qualified_paid_service_input(plan, facts, row)
+
+
+def test_recorded_three_coal_hold_retains_independent_judgments_and_native_guards():
+    capture = json.loads((Path(__file__).parent / 'fixtures/native-v16-paid-input-nonurgent.json').read_text())
+    state = capture['state']
+    plan = Plan.from_dict(next(iter(state['candidate_plans'].values())))
+    row = state['candidate_evidence'][plan.id]
+    assert row['urgency'] == 0 and row['reasons'] == []
+    assert row['paid_service_input_start_evidence']['first_recipe_input']['burner_fuel_coal_now'] == 3
+    assert _qualified_paid_service_input(plan, state['facts'], row)
+    _, questions, _ = question_batch(state, [plan], max_bytes=48000)
+    for suffix in ('useful_progress', 'benefit', 'needs_observation'):
+        assert 'paid_service_input_start_evidence' not in capture['questions'][plan.id+'/'+suffix]['instructions']
+        assert 'paid_service_input_start_evidence' in questions[plan.id+'/'+suffix]['instructions']
+    assert 'contrary current evidence' in questions[plan.id+'/useful_progress']['instructions']
+    assert 'fresh native rechecks and receipts' in questions[plan.id+'/needs_observation']['instructions']
