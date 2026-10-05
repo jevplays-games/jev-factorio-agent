@@ -3115,6 +3115,7 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
         travel, actor, unknown, reasons = 0.0, 0.0, [], []
         harvest_thresholds = {}
         urgency, outputs, quantities, costs = 0, set(), 0.0, {}
+        craft_handling_forecasts = []
         for step in plan.steps:
             parameters = step.parameters or {}
             role = parameters.get('role', '')
@@ -3169,6 +3170,22 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
                 recipe = catalog.recipes.get(parameters.get('recipe', ''), {})
                 energy, batches = recipe.get('energy'), parameters.get('batches')
                 if _finite(energy) and energy > 0 and type(batches) is int and batches > 0:
+                    start = _craft_start_evidence(snapshot, catalog, step)
+                    if (start is not None
+                            and all(start.get(key) is True for key in (
+                                'inputs_in_inventory_now', 'recipe_unlocked_and_handcraftable',
+                                'player_connected_and_bound', 'crafting_queue_empty'))
+                            and (step.action != 'factory_craft_job'
+                                 or start.get('craft_job_protocol_ready') is True)):
+                        # Compare the forecast handling volume of ready crafts
+                        # with gathers/transfers. Output remains unverified and
+                        # is never added to the carried supply or async outputs.
+                        products = start['expected_products_after_native_verification']
+                        quantities += sum(products.values())
+                        craft_handling_forecasts.append({
+                            'native_recipe': parameters['recipe'], 'batches': batches,
+                            'expected_products_after_native_verification': products,
+                            'forecast_not_completed_output': True})
                     if step.action == 'factory_craft':
                         actor += energy * batches * 60
                     if step.action == 'factory_craft':
@@ -3655,6 +3672,8 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
             'travel_tiles_lower_bound': None if any(x.startswith('travel:') for x in unknown) else round(travel, 3),
             'actor_ticks_estimate': None if unknown else math.ceil(actor),
             'processed_units': quantities, 'material_costs': costs,
+            **({'craft_handling_forecasts': craft_handling_forecasts}
+               if craft_handling_forecasts else {}),
             'delivers_or_crafts': sorted(outputs), 'unknowns': sorted(set(unknown)),
             'raw_prerequisite': prerequisite_evidence,
             'input_route_kit_parent_purpose': kit_parent_purpose,

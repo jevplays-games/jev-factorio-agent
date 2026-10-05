@@ -143,6 +143,8 @@ For recurring blocked exits, maintenance receipt mismatches and reboot recovery,
 see the [October 4 reliability investigation](RUNTIME_RELIABILITY_20261004.md).
 For a live controller blocked after steam-engine placement despite a confident
 global choice, see the [October 5 outpost evidence stall](OUTPOST_FRONTIER_STALL_20261005.md).
+For the subsequent strict-choice hold between paid crafting and raw gathering,
+see the [craft handling estimate investigation](CRAFT_HANDLING_STALL_20261005.md).
 After a host/guest boot, verify the actual world save and its relationship to the
 controller checkpoint before starting gameplay. Check the server's configured
 write-data directory, autosave settings, retained save timestamps and receipts.
