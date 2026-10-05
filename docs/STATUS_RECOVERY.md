@@ -11,6 +11,9 @@ instead of returning only a stopped status. This does not authorize restarting
 an intentionally stopped/completed run, extending its original cutoff, changing
 an immutable treatment, or bypassing an unresolved native-action boundary.
 
+For a coal hold that hides ready furnace output, see the
+[output-buffer ordering and rotated craft proof note](OUTPUT_BUFFER_STALL_20261005.md).
+
 ## Recover through the existing owner
 
 1. Identify the active campaign, deployed source, supervisor, service owner and

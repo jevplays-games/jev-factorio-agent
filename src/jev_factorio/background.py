@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from .controller import HierarchicalLoop
 from .craft_jobs import CraftJob, InvalidCraftEvidence
-from .memory import CampaignMemory
+from .memory import CampaignMemory, retain_latest_craft
 from .planning.background_work import background_wait, independent_candidates
 from .planning.ready_work import ReadyWorkPlanner
 from .skills import Plan, Step
@@ -194,7 +194,7 @@ class BackgroundWorkLoop(HierarchicalLoop):
                             **deepcopy(attempt), "outcome": "verified", "finished_tick": snapshot.tick,
                             "finished_at_utc": utc_now(), "latency_seconds": None,
                         })
-                        self.memory.attempt_outcomes = self.memory.attempt_outcomes[-64:]
+                        self.memory.attempt_outcomes = retain_latest_craft(self.memory.attempt_outcomes)
                     self.memory.background_attempt = None
                     self.memory.background_step = None
                     self.memory.background_schema = 2

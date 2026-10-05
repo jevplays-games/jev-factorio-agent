@@ -83,11 +83,18 @@ def current_connector_snapshot_command(result, *, completed_routes=False, comple
     if completed_routes and profile != 'current_full':
         raise RuntimeError('Completed connector attachment requires the current full profile')
     craft_guard = 'j.job==nil'
+    craft_recipe = ''
     if completed_craft is not None:
         from .native_completed_craft import validate_completed_craft_binding
         bound = validate_completed_craft_binding(completed_craft)
         if not completed_routes:
             raise RuntimeError('Completed craft requires checkpoint-bound connector attachment')
+        if 'step_sha256' in bound:
+            craft_recipe = (
+                ',completed_craft_recipe=(function() '
+                'local r=assert(a.force.recipes[j.job.recipe]);'
+                'assert(#r.ingredients>0 and #r.ingredients<=32 and #r.products==1);'
+                'return {energy=r.energy,ingredients=r.ingredients,products=r.products} end)()')
         craft_guard = ('type(j.job)=="table" and j.job.id==' + json.dumps(bound['id'])
             + ' and j.job.status=="completed" and j.job.paid==true and j.job.error==nil'
               ' and j.job.session_id==rt.jev_session_id and j.job.unit_number==a.unit_number'
@@ -280,7 +287,7 @@ def current_connector_snapshot_command(result, *, completed_routes=False, comple
             'assert(game.tick==tick and ledger.active==nil);'
             'rcon.print(helpers.table_to_json({schema=1,session_id=rt.jev_session_id,'
             'actor_unit=a.unit_number,tick=tick,connector_ownership=ownership,settled_factory=settled,'
-            'completed_craft=j and j.job or false}))'
+            'completed_craft=j and j.job or false' + craft_recipe + '}))'
         )
     return '/sc ' + prefix + (
         'assert(not rt.solid_routes and not rt.coal_supply);'
