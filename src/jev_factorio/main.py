@@ -48,6 +48,52 @@ def make_backend(name: str, resume: bool = False, adopt_session: bool = False,
     raise SystemExit(f"unknown backend: {name}")
 
 
+def _preflight_selected_checkpoint(path: Path, memory_type, target: str) -> bytes:
+    """Validate one stable capture through the controller CLI actually selected."""
+    path = Path(path)
+    captured = path.read_bytes()
+    try:
+        data = json.loads(captured.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("Invalid resumed controller checkpoint") from error
+    if not isinstance(data, dict) or not isinstance(data.get("session_id"), str) or not data["session_id"]:
+        raise ValueError("Invalid resumed controller checkpoint identity")
+
+    from .memory import load_checkpoint_bytes
+
+    memory = load_checkpoint_bytes(
+        captured, data["session_id"], target,
+        checkpoint_path=path, memory_type=memory_type)
+    archive_index = getattr(memory, "_blocked_recovery_archive_index", None)
+    try:
+        if path.read_bytes() != captured:
+            raise ValueError("Checkpoint changed during composed resume preflight")
+    finally:
+        if archive_index is not None:
+            archive_index.close()
+    return captured
+
+
+def _checkpoint_capture_matches(path: Path, captured: bytes) -> bool:
+    """Recheck the preflighted bytes immediately before backend attachment."""
+    return Path(path).read_bytes() == captured
+
+
+def _validate_treatment_checkpoint(saved: object, treatment: dict) -> None:
+    """Keep the selected treatment bound to the exact checkpoint capture."""
+    if not isinstance(saved, dict):
+        raise ValueError("Treatment differs from checkpoint")
+    if (saved.get('solid_intents') != treatment['solid_intents']
+            or saved.get('solid_science_policy') is not treatment['solid_science_policy']
+            or (treatment['coal_targets'] and (
+                saved.get('coal_targets') != treatment['coal_targets']
+                or saved.get('coal_kit_policy') is not treatment['coal_kit_policy']
+                or saved.get('coal_economic_admission', False) is not treatment.get('coal_economic_admission', False)
+                or treatment.get('coal_economic_admission', False) and saved.get('coal_supply_schema') != 2))
+            or (not treatment['coal_targets'] and 'coal_targets' in saved)):
+        raise ValueError("Treatment differs from checkpoint")
+
+
 def cli() -> None:
     load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
     p = argparse.ArgumentParser(prog="jev-factorio")
@@ -354,15 +400,7 @@ def cli() -> None:
             try:
                 import json
                 saved = json.loads(Path(args.checkpoint).read_bytes())
-                if (saved.get('solid_intents') != treatment['solid_intents']
-                        or saved.get('solid_science_policy') is not treatment['solid_science_policy']
-                        or (treatment['coal_targets'] and (
-                            saved.get('coal_targets') != treatment['coal_targets']
-                            or saved.get('coal_kit_policy') is not treatment['coal_kit_policy']
-                            or saved.get('coal_economic_admission', False) is not treatment.get('coal_economic_admission', False)
-                            or treatment.get('coal_economic_admission', False) and saved.get('coal_supply_schema') != 2))
-                        or (not treatment['coal_targets'] and 'coal_targets' in saved)):
-                    raise ValueError('Treatment differs from checkpoint')
+                _validate_treatment_checkpoint(saved, treatment)
             except (OSError, ValueError, TypeError, AttributeError) as error:
                 p.error(f'Production treatment checkpoint preflight failed: {error}')
     elif args.resume_controller:
@@ -559,6 +597,7 @@ def cli() -> None:
                 loop_type = campaign_loop_type(loop_type)
                 options.update(lead_time_supply=args.lead_time_supply,
                                coverage_margin_lookahead=args.coverage_margin_lookahead)
+            selected_resume_checkpoint_capture = None
             if args.checkpoint and Path(args.checkpoint).is_file():
                 if compatible_authorization is not None:
                     try:
@@ -657,18 +696,44 @@ def cli() -> None:
             if (args.persist_recoverable_blocks and not args.initialize_persistent_campaign
                     and Path(args.checkpoint).read_bytes() != persistent_checkpoint_capture):
                 p.error("Persistent recovery checkpoint changed during pre-backend preflight")
+            if args.resume_controller:
+                try:
+                    selected_resume_checkpoint_capture = _preflight_selected_checkpoint(
+                        Path(args.checkpoint), loop_type.memory_type, args.target)
+                except Exception as error:
+                    p.error("Composed resume checkpoint preflight failed; backend not started "
+                            f"({type(error).__name__})")
+                if (persistent_checkpoint_capture is not None
+                        and selected_resume_checkpoint_capture != persistent_checkpoint_capture):
+                    p.error("Checkpoint changed after recovery source preflight; backend not started")
+                if (blocked_checkpoint_capture is not None
+                        and selected_resume_checkpoint_capture != blocked_checkpoint_capture):
+                    p.error("Checkpoint changed after blocked-decision preflight; backend not started")
+                if treatment is not None:
+                    try:
+                        saved = json.loads(selected_resume_checkpoint_capture.decode("utf-8"))
+                        _validate_treatment_checkpoint(saved, treatment)
+                    except (UnicodeError, ValueError, TypeError, AttributeError) as error:
+                        p.error("Production treatment no longer matches the preflighted checkpoint; "
+                                f"backend not started ({type(error).__name__})")
             if setup_timing:
                 setup_timing.mark('preflight_ready')
+            if selected_resume_checkpoint_capture is not None:
+                try:
+                    unchanged = _checkpoint_capture_matches(
+                        Path(args.checkpoint), selected_resume_checkpoint_capture)
+                except OSError:
+                    unchanged = False
+                if not unchanged:
+                    p.error("Checkpoint changed after composed preflight; backend not started")
+            connector_witness = (Path(args.checkpoint).with_name(
+                'native-connector-observer-v1.witness.jsonl') if args.checkpoint else None)
             if setup_timing:
-                connector_witness = (Path(args.checkpoint).with_name(
-                    'native-connector-observer-v1.witness.jsonl') if args.checkpoint else None)
                 backend = make_backend(args.backend, resume=args.resume,
                                        adopt_session=args.adopt_session,
                                        setup_timing=setup_timing,
                                        connector_witness_path=connector_witness)
             else:
-                connector_witness = (Path(args.checkpoint).with_name(
-                    'native-connector-observer-v1.witness.jsonl') if args.checkpoint else None)
                 backend = make_backend(args.backend, resume=args.resume,
                                        adopt_session=args.adopt_session,
                                        connector_witness_path=connector_witness)
