@@ -383,10 +383,15 @@ def test_authenticated_archive_and_active_source_budgets_aggregate(tmp_path, mon
     memory.blocked_recovery["attempts"] = rows
     memory.blocked_recovery["last_input_sha256"] = rows[-1]["decision_input_sha256"]
     memory.save(path)
-    with pytest.raises(ValueError, match="quiescent decision boundary"):
-        archive_full_tail(path, memory)
-    # Complete the tracked paid job through its ordinary receipt/postcondition
-    # verifier. Rotation must never obtain quiescence by erasing a pending pair.
+    retained = {key: deepcopy(getattr(memory, key)) for key in
+                ('background_job', 'background_attempt', 'background_step')}
+    archived = archive_full_tail(path, memory)
+    archived.close()
+    memory.save(path)
+    assert {key: getattr(memory, key) for key in retained} == retained
+    assert memory.blocked_recovery_archive['entry_count'] == 1024
+    # Rotation preserves the paid job. Its ordinary receipt/postcondition
+    # verifier must still complete it before compatible source migration.
     before_calls = deepcopy(backend.calls)
     backend.complete()
     restored = controller(backend, tmp_path, resume=True)
@@ -396,10 +401,7 @@ def test_authenticated_archive_and_active_source_budgets_aggregate(tmp_path, mon
     assert backend.calls == before_calls
     assert memory.background_job is None and memory.background_attempt is None
     memory.status, memory.reason = "blocked", "low choice confidence"
-    memory.save(path)
-    archived = archive_full_tail(path, memory)
-    archived.close()
-    # Rotation persists the pointer/tail transaction before migration.
+    # The existing archive pointer survives reconciliation unchanged.
     memory.save(path)
     pointer = deepcopy(memory.blocked_recovery_archive)
     authority["checkpoint_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
