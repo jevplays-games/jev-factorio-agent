@@ -343,6 +343,64 @@ def _record_feature_mismatch(record, configuration):
     return False
 
 
+class _CoalOwnershipMismatch(ValueError):
+    """A validly parsed coal stream lost paid state retained by a checkpoint."""
+
+
+def _checked_coal_observation(state, configuration, targets, *, expected_session,
+                              checkpoint=None, retained=None):
+    """Validate one complete-trial coal envelope against treatment and ownership.
+
+    This deliberately reuses the production coal parser. Economic admission is
+    one immutable protocol choice; it does not decide whether the source stream
+    is required or parsed.
+    """
+    if (not isinstance(state, dict) or not isinstance(state.get('factory'), dict)
+            or state.get('session_id') != expected_session
+            or type(state.get('tick')) is not int):
+        raise ValueError('Coal observation lacks its record identity')
+    snapshot = SimpleNamespace(tick=state['tick'], session_id=state['session_id'],
+                               factory=state['factory'])
+    rows = coal_supply.sources(snapshot)
+    native = snapshot.factory['coal_supply']
+    economic = configuration.get('coal_economic_admission', False)
+    expected_protocol = 2 if economic else 1
+    if (native.get('protocol') != expected_protocol
+            or native.get('targets') != targets):
+        raise ValueError('Coal observation differs from declared treatment')
+
+    if checkpoint is not None:
+        epoch = checkpoint.get('coal_epoch')
+        owned = checkpoint.get('coal_commitments')
+        if (snapshot.session_id != checkpoint.get('session_id')
+                or native['targets'] != checkpoint.get('coal_targets')
+                or not isinstance(epoch, dict)
+                or any(native[key] != epoch.get(key)
+                       for key in ('actor_index', 'surface_index', 'force_index'))
+                or not isinstance(owned, dict)):
+            raise _CoalOwnershipMismatch('Coal observation differs from checkpoint binding')
+        current = ({target: coal_supply.commitment(row)
+                    for target, row in rows.items()} if native['committed'] else {})
+        if (bool(owned) != bool(native['committed'])
+                or set(owned) != set(current)
+                or any(not coal_supply.reconciles(owned[target], rows[target])
+                       for target in owned)):
+            raise _CoalOwnershipMismatch('Coal checkpoint receipts differ from native observation')
+        # Boundary checkpoints are written from the same settled observation.
+        # Prefix-compatible but stale checkpoints are not a complete boundary.
+        if owned != current:
+            raise _CoalOwnershipMismatch('Coal checkpoint omits observed paid receipts')
+
+    prior = retained or {}
+    if prior and (not native['committed'] or set(rows) != set(prior)
+                  or any(not coal_supply.reconciles(prior[target], rows[target])
+                         for target in prior)):
+        raise _CoalOwnershipMismatch('Paid coal ownership regressed in gameplay')
+    if native['committed']:
+        return {target: coal_supply.commitment(row) for target, row in rows.items()}
+    return deepcopy(prior)
+
+
 def _receipt_stock_consumption(chain, rows, receipts):
     """Correlate one new paid insert with fresh stock and later recipe work.
 
@@ -804,6 +862,26 @@ def analyze_rows(rows: list[dict], trial: dict, initial: dict, final: dict) -> d
     # Opaque backend profiles are not presumed CPU or transport measurements.
     initial_lab_unit = None
     allowed_intents = {(v['source'], v['target'], v['item'], v['destination']) for v in trial['solid_intents']}
+    if trial['schema'] in {TRIAL_SCHEMA_V2, TRIAL_SCHEMA_V3}:
+        coal_retained = deepcopy(initial.get('coal_commitments', {}))
+        economic = trial['configuration'].get('coal_economic_admission', False)
+        for row_index, coal_record in enumerate(rows):
+            for label in ('state', 'after_state'):
+                checkpoint = (initial if row_index == 0 and label == 'state'
+                              else final if row_index == len(rows) - 1 and label == 'after_state'
+                              else None)
+                try:
+                    coal_retained = _checked_coal_observation(
+                        coal_record.get(label), trial['configuration'], trial['coal_targets'],
+                        expected_session=session, checkpoint=checkpoint, retained=coal_retained)
+                except _CoalOwnershipMismatch:
+                    issues.add('coal_ownership_regressed')
+                    if economic:
+                        issues.add('coal_economic_native_evidence_invalid')
+                except (ValueError, KeyError, TypeError, AttributeError, IndexError, OverflowError):
+                    issues.add('coal_native_evidence_invalid')
+                    if economic:
+                        issues.add('coal_economic_native_evidence_invalid')
     for index, record in enumerate(rows):
         if not isinstance(record, dict):
             raise ValueError('Invalid gameplay record')
@@ -833,16 +911,6 @@ def analyze_rows(rows: list[dict], trial: dict, initial: dict, final: dict) -> d
             reject(record.get('coal_economic_admission') is not True
                    or not isinstance(record.get('coal_admission_evidence'), dict),
                    'coal_economic_evidence_mismatch')
-            for label in ('state', 'after_state'):
-                state = record.get(label)
-                try:
-                    if (not isinstance(state, dict)
-                            or state['factory']['coal_supply']['protocol'] != 2):
-                        raise ValueError('Missing coal economic protocol')
-                    coal_supply.sources(SimpleNamespace(tick=state['tick'],
-                        session_id=state['session_id'], factory=state['factory']))
-                except (ValueError, KeyError, TypeError, AttributeError):
-                    issues.add('coal_economic_native_evidence_invalid')
         reject(record.get('requested_model') != trial['requested_model'], 'requested_model_mismatch')
         reject(type(record.get('model_call')) is not bool, 'invalid_model_call_flag')
         decision = record.get('decision')
