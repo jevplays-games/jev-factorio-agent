@@ -285,3 +285,26 @@ def test_inconsistent_background_hold_cannot_abandon_capital():
     capital_controller.frontier(loop, state)
     assert loop.memory.capital_investment == intent
     assert backend.calls == []
+
+
+
+def test_expired_capital_restores_ordinary_primary_beside_surviving_lookahead():
+    from test_capital_investments import wait
+    data, state = scenario()
+    backend = Backend(data, state)
+    loop = make_loop(backend)
+    plan = offer(data, state)
+    intent = deepcopy(seed_commit(loop, state, plan))
+    loop.persist_recoverable_blocks = True
+    loop.memory.status = 'blocked'
+    loop.memory.reason = 'low choice confidence'
+    lookahead = wait(data, state)
+    loop._compile_candidates = lambda snapshot: ([offer(data, snapshot), lookahead], '')
+    backend.advance(ticks=intent['deadline_tick'] - state.tick)
+    plans, _ = capital_controller.frontier(loop, state)
+    assert lookahead.id in {p.id for p in plans}
+    assert any(p.id != lookahead.id and capital.MARKER not in (p.materials or {}) for p in plans)
+    assert len({p.id for p in plans}) == len(plans)
+    assert loop.memory.failures[intent['spec']['key']] == 2
+    assert loop.memory.capital_investment is None
+    assert backend.calls == []

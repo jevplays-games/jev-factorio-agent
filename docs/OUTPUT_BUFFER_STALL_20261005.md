@@ -130,3 +130,10 @@ deadline then abandons the expired investment once, records its exhausted budget
 and offers ordinary work for a fresh JEV decision. It does not reset status,
 clear earlier decisions, dispatch an action, or release unresolved native work.
 Terminal stops and inconsistent background identity remain barriers.
+
+
+When an expired or exhausted capital proposal is removed, recompile the ordinary
+production primary even if an older lookahead candidate survives. Retain those
+independent alternatives, but do not let their presence suppress the current
+production need. A read-only projection exposed this second ordering problem;
+no live checkpoint was changed by that diagnostic.
