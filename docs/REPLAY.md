@@ -224,7 +224,7 @@ on a later controller polling iteration.
 | --- | --- |
 | `observation` | `observation_id`, exact `state` object. |
 | `candidate_set_created` | `candidate_set_id`, earlier `observation_id`, `candidates` list of objects with unique `id` fields. |
-| `model_request` | Correlated `model_call_id`; earlier `observation_id`, `candidate_set_id`; exact `state` and `questions` objects. |
+| `model_request` | Correlated `model_call_id`; earlier `observation_id`, `candidate_set_id`; exact detached `state` and `questions` objects plus the bounded `request_order` v1 binding described below. |
 | `model_response` | Same `model_call_id`; raw `answers`, with any captured model/usage metadata preserved. |
 | `provider_error` | Same `model_call_id`; recorded sanitized error data instead of a response. Each attempt has one terminal result. |
 | `decision` | Earlier `observation_id`, `candidate_set_id`, explicit `model_called` boolean, `model_call_id` or null, and selected `plan_id`/`action` or null. Each decision identity has one selection. |
@@ -234,6 +234,26 @@ on a later controller polling iteration.
 | `action_returned` / `dispatch_error` | Same `action_id`; recorded return/error. Retries require new action IDs. |
 | `verification` | Same `action_id`, later `observation_id`, boolean `verified`, and any captured evidence/predicate data. Predicate text is never executed. |
 | `decision_finished` | Optional explicit terminal `status` (`abstained`, `aborted`, `verified_without_dispatch`, `dispatched`) and recorded `reason`. Required to explain selected work with neither dispatch nor verification. |
+
+Research-v1 traced model requests include `request_order.schema:
+"jev-factorio.request-order.v1"`. Its ordered arrays preserve question IDs,
+map-valued question criteria IDs, score-criteria labels, and the IDs in present
+`candidate_plans`, `candidate_evidence`, and `shared_plan_materials` maps. A
+`null` candidate collection means that field was absent. These arrays bind the
+supported order-sensitive collections to the same detached JSON request passed
+to the synchronous or opt-in asynchronous client; the writer does not reorder
+the request to match canonical output. Score-criteria arrays bind the scale used
+to generate and validate score legends. The sorted canonical event encoding and
+hash-chain contract are unchanged.
+
+After source integrity checks, replay validates this binding against the saved
+request and exposes a reconstructed request under
+`decisions[*].model_calls[*].reconstructed_request`. This is an offline view;
+it does not call a model or authorize actions. Historical event-v1 requests
+without the binding remain readable, but replay reports
+`request_order_unavailable` and leaves reconstruction null. A present malformed
+or conflicting binding is an error. Order outside this versioned supported
+collection set is not inferred from sorted object keys.
 
 For work already satisfied without a dispatch, a verification can instead use
 `scope: "plan"`, `plan_id`, and `observation_id`, with no `action_id`. An
