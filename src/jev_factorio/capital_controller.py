@@ -55,6 +55,7 @@ def commit(loop, plan, snapshot):
 
 def observe(loop, snapshot):
     """Bind only our pending placement, then require native counter AND output."""
+    loop._capital_deadline_snapshot = snapshot
     state = loop.memory.capital_investment
     if state is None:
         return
@@ -116,8 +117,15 @@ def observe(loop, snapshot):
 def fail(loop, plan):
     """Bound an optional investment after two reconciled failures of the same step."""
     state = loop.memory.capital_investment
-    if (state and capital.matches(plan, state) and loop.memory.failures.get(plan.id, 0) >= 2
-            and loop.memory.pending is None and not getattr(loop.memory, 'background_job', None)):
+    if not state or not capital.matches(plan, state):
+        return
+    snapshot = getattr(loop, '_capital_deadline_snapshot', None)
+    if _unresolved_work(loop.memory, snapshot):
+        return
+    if snapshot is not None and snapshot.tick >= state['deadline_tick']:
+        abandon(loop, 'bounded_investment_deadline')
+        loop._capital_deadline_expired_tick = snapshot.tick
+    elif loop.memory.failures.get(plan.id, 0) >= 2:
         abandon(loop, 'step_failure_budget')
 
 
@@ -129,6 +137,15 @@ def abandon(loop, reason):
     loop._trace.emit('capital_abandoned', {'key': state['spec']['key'], 'reason': reason})
     # Paid entities stay in place and the ordinary planner can reuse them.
     loop.memory.capital_investment = None
+
+
+def _unresolved_work(memory, snapshot=None):
+    """Keep every durable action/receipt owner intact until reconciliation."""
+    if any(getattr(memory, name, None) is not None for name in (
+            'pending', 'attempt', 'background_job', 'background_attempt',
+            'background_step', 'transfer_recovery')):
+        return True
+    return bool(snapshot is not None and snapshot.factory.get('crafting_queue', 0))
 
 
 def _protected_work(snapshot):
@@ -147,10 +164,13 @@ def frontier(loop, snapshot):
     if not enabled(loop) or loop.memory.active_goal != 'rocket_launch':
         return original, blocker
     state = loop.memory.capital_investment
+    loop._capital_deadline_snapshot = snapshot
     if loop._execution_barrier(snapshot) or loop.memory.status != 'running':
         return original, blocker
-    if state and snapshot.tick >= state['deadline_tick'] and not loop.memory.pending and not getattr(loop.memory, 'background_job', None):
+    if (state and snapshot.tick >= state['deadline_tick']
+            and not _unresolved_work(loop.memory, snapshot)):
         abandon(loop, 'bounded_investment_deadline')
+        loop._capital_deadline_expired_tick = snapshot.tick
         state = None
     planner = None
     def current_planner():
@@ -221,6 +241,8 @@ def frontier(loop, snapshot):
             or _protected_work(snapshot) or not snapshot.factory.get('research')
             or any(p.steps[0].action not in {'factory_wait', 'factory_gather'}
                    and capital.MARKER not in (p.materials or {}) for p in safe)):
+        return safe, blocker
+    if getattr(loop, '_capital_deadline_expired_tick', None) == snapshot.tick:
         return safe, blocker
     for plan in capital.offers(current_planner()):
         if loop.memory.failures.get(plan.materials[capital.MARKER]['spec']['key'], 0) >= 2:

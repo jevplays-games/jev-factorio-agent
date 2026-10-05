@@ -392,6 +392,8 @@ def test_background_capital_identity_fault_retains_ambiguous_placement(
     assert len(backend.calls) == 1
     loop._observe()  # Bind the real placement through the capital observer.
     assert loop.memory.capital_investment['unit_number'] == 80
+    loop.memory.capital_investment['deadline_tick'] = state.tick + 1
+    loop._save()
 
     pending = deepcopy(loop.memory.pending)
     attempt = deepcopy(loop.memory.attempt)
@@ -404,6 +406,7 @@ def test_background_capital_identity_fault_retains_ambiguous_placement(
         del state.factory['entities'][ROLE]
     else:
         state.factory['entities'][ROLE]['unit_number'] = 81
+    backend.advance(ticks=1)  # Identity faults remain blocking at the exact expiry tick.
 
     result = loop.step()
 
