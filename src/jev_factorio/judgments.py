@@ -123,6 +123,39 @@ def _qualified_supplied_research(plan, facts, row):
 
 
 
+def _qualified_output_pickup_chain(plan, facts, row):
+    """Recompute ready-stock identity and current recipe demand independently."""
+    try:
+        from types import SimpleNamespace
+        from .planning.catalog import Catalog
+        from .planning.decision_support import _output_pickup_start_evidence
+        from .planning.bootstrap_chain import validate_dependency_chain
+        proof = row['output_pickup_start_evidence']
+        factory = facts['factory']; observed = factory['recipe_dependency_catalog']
+        local = plan.materials['local_objective']
+        if (facts['world_kind'] != 'fle' or type(facts['tick']) is not int
+                or type(factory.get('tick')) is not int or factory['tick'] != facts['tick']
+                or not isinstance(facts['session_id'], str) or not facts['session_id']
+                or proof['session_id'] != facts['session_id']
+                or proof['native_catalog_version'] != facts['game_version']
+                or row['local_target'] != local or local.get('ultimate_goal') != plan.goal
+                or row.get('work_scope') != 'immediate' or row.get('unknowns') != []):
+            return False
+        snapshot = SimpleNamespace(**{key: facts[key] for key in
+            ('tick', 'session_id', 'world_kind', 'inventory', 'factory')},
+            researched=facts.get('researched', []))
+        catalog = Catalog(observed['version'], observed['recipes'], {}, {},
+                          observed['hand_categories'], observed['stack_sizes'])
+        expected = _output_pickup_start_evidence(snapshot, catalog, plan)
+        return (json.dumps(expected, sort_keys=True, allow_nan=False)
+                == json.dumps(proof, sort_keys=True, allow_nan=False)
+            and validate_dependency_chain(facts, local, proof['planner_item_path'],
+                proof['recipe_dependency_chain'],
+                proof['current_input_demand']['required_carried_quantity']))
+    except (KeyError, TypeError, ValueError, AttributeError, ArithmeticError):
+        return False
+
+
 def _qualified_recipe_transfer_chain(plan, facts, row):
     """Recompile current input handling and downstream arithmetic from independent facts."""
     try:
@@ -368,7 +401,8 @@ def _qualified_paid_service_output(plan, facts, row):
         snapshot=SimpleNamespace(**{k:facts[k] for k in ('tick','session_id','world_kind','inventory','factory')},
                                  researched=facts.get('researched',[]))
         atomic=replace(plan,steps=(first,))
-        expected=_output_pickup_start_evidence(snapshot,catalog,atomic)
+        expected=_output_pickup_start_evidence(
+            snapshot,catalog,atomic,include_dependency_chain=False)
         path=plan.materials['output_pickup']['planner_item_path']
         return (expected is not None and expected == proof['first_output_pickup']
                 and _current_item_dependency_path(snapshot,catalog,path,
@@ -2956,6 +2990,22 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     'start evidence. Missing, stale, mismatched or contrary current ownership, inputs, '
                     'fuel or recipe dependencies means unsupported. Later output/full completion remain '
                     'unverified; this judgment waives no native checks.')
+            if _qualified_output_pickup_chain(plan, facts, row):
+                questions[plan.id + '/useful_progress']['instructions'] = (
+                    f'For {pointer}, read output_pickup_start_evidence, its '
+                    'recipe_dependency_chain and current_input_demand. The same-tick '
+                    'native recipes, enabled input/output quantities, bounded batches '
+                    'and carried inventory describe the selected dependency branch '
+                    'toward this row local_target, not the complete target bill. '
+                    'Would collecting the bounded ready stock advance that remaining '
+                    'input deficit IF the native receipt and fresh inventory delta verify? '
+                    'Allocation-ledger remaining is not carried inventory. A partial '
+                    'pickup need not complete the input bill or downstream target. '
+                    'Missing, stale, mismatched or contrary current ownership, output '
+                    'stock or recipe demand means unsupported. Later receipt/output '
+                    'absence alone is not contrary start evidence. Judge independently; '
+                    'travel cost can affect scheduling but does not change recipe '
+                    'quantities. Execution and completion still require native checks.')
             questions[plan.id + "/benefit"] = {
                 "type": "score",
                 "instructions": (
