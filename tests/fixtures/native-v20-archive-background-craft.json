@@ -1,0 +1,81 @@
+{
+  "background_attempt": {
+    "action": "factory_craft_job",
+    "dispatch_phases": {
+      "dispatch": {
+        "at_utc": "2026-10-05T16:30:45.552722+00:00",
+        "error_code": null,
+        "seconds": 0.24518693999561947,
+        "stage": "dispatch",
+        "status": "returned"
+      },
+      "transfer_rpc": {
+        "at_utc": "2026-10-05T16:30:45.675025+00:00",
+        "error_code": null,
+        "seconds": 0.03447579700150527,
+        "stage": "transfer_rpc",
+        "status": "returned"
+      }
+    },
+    "expected_unit_number": null,
+    "id": "758135e2b69b4401a9f5c7d7fd2f83a3",
+    "observation_error": null,
+    "origin": "new",
+    "plan_id": "factory:factory_craft:automation-science-pack",
+    "process_id": "3085eae9c2a34a628510dc674206e7ec",
+    "receipt": "fede48ea66f0423b9adad592c6abc2bf",
+    "started_at_utc": "2026-10-05T16:30:45.373364+00:00",
+    "started_tick": 10962565,
+    "step_index": 0,
+    "step_sha256": "80a62ac08732e56f657170ef3920ee1c8887a5d2103708b9c913cb1fe6fb25fa"
+  },
+  "background_job": {
+    "actor": {
+      "force_index": 1,
+      "player_index": 1,
+      "surface_index": 1,
+      "unit_number": 2543
+    },
+    "baseline": {
+      "automation-science-pack": 0
+    },
+    "deadline_tick": 10974648,
+    "failed": "",
+    "finished": 0,
+    "goal": "rocket_launch",
+    "inputs": {
+      "copper-plate": 20,
+      "iron-gear-wheel": 20
+    },
+    "last_progress_tick": 10962648,
+    "outputs": {
+      "automation-science-pack": 20
+    },
+    "parameters": {
+      "batches": 20,
+      "receipt": "fede48ea66f0423b9adad592c6abc2bf",
+      "recipe": "automation-science-pack"
+    },
+    "plan_id": "factory:factory_craft:automation-science-pack",
+    "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+    "started_tick": 10962648
+  },
+  "background_step": {
+    "action": "factory_craft_job",
+    "costs": {
+      "copper-plate": 20,
+      "iron-gear-wheel": 20
+    },
+    "effect": "craft_job_complete",
+    "item": "automation-science-pack",
+    "parameters": {
+      "batches": 20,
+      "receipt": "fede48ea66f0423b9adad592c6abc2bf",
+      "recipe": "automation-science-pack"
+    },
+    "threshold": 20,
+    "timeout_ticks": 12000,
+    "verification": null
+  },
+  "last_tick": 10962761
+}
