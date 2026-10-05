@@ -67,6 +67,41 @@ field. The request was 35,326 bytes. JEV selected crafting with 0.71 confidence,
 replay passed the unchanged selector. This is still diagnostic evidence, not a
 live action or multi-day reliability result. The focused suite passed 344 tests.
 
+## Native recovery and the following material-bill frontier
+
+PR #359 was deployed as `38082d1` through one consumed maintenance admission.
+At tick 7574005, the actual JEV request selected the gear craft with 0.53
+confidence. The native job paid 16 iron plates and its completion receipt
+verified eight gears at tick 7574399. A separate pickup of ten iron plates was
+verified at tick 7574351. The original choice hold was therefore cleared with
+native progress, not merely a passing diagnostic.
+
+The next frontier stopped again: two complete current-bill crafts and copper
+gathering received overall confidence 0.33. The remaining one-plate pickup was
+offered in a second bounded batch and rejected for missing start evidence and
+unsupported progress. Both rejected requests were retained. This is a new
+decision hold after useful progress; it does not qualify sustained operation.
+
+The original overlap comparison required exactly two options and an immediate
+recursive craft dependency. It consequently omitted the same scheduling
+relationship for the next frontier's complete current-bill crafts. The extension
+compares each supported craft with one independent gather, retaining all other
+options. A lookahead craft qualifies only with the existing same-tick current
+material-bill proof, matching product and target, observed carried inventory,
+positive unfilled demand and sufficient native expected output. Discretionary
+stockpiling does not qualify. Active-research horizons are excluded because their
+shared bill can contain science demand beyond the gather's local target.
+Each pair still independently requires all craft,
+gather and output-lock witnesses. Compiler scopes, ranking and all gates stay
+unchanged; the evidence neither forces crafting nor asserts simultaneous jobs.
+
+One diagnostic added only these comparisons to the exact three-candidate request
+at tick 7574399, retaining every question. JEV selected copper gathering with
+0.66 confidence and 0.75 choice probability; exact retained-answer replay passed
+the unchanged selector. Its 45,075 bytes fit the unchanged 48,000-byte budget.
+The focused suite passed 357 tests. Production deployment and subsequent native
+progress remain separate acceptance steps for this extension.
+
 ## Fast recurrence triage
 
 1. Read the existing owner, child PID, checkpoint reason, latest useful tick and
