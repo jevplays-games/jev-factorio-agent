@@ -119,3 +119,14 @@ recipe path and tick, then recompile the current capital continuation without
 dispatch. A fresh native diagnostic at tick 9689426 restored the one-plate pickup
 proof with the same action/receipt. Model approval and gameplay remain separate
 acceptance checks.
+
+
+The same monitoring interval exposed a second cause of a permanent hold: the
+capital frontier returned early whenever status was blocked, including the
+explicit persistent-observation mode. Its deadline passed at tick 9698670, but
+the commitment remained at tick 9700386. Allow only an existing recoverable,
+quiescent persistent hold through ordinary frontier maintenance. The unchanged
+deadline then abandons the expired investment once, records its exhausted budget,
+and offers ordinary work for a fresh JEV decision. It does not reset status,
+clear earlier decisions, dispatch an action, or release unresolved native work.
+Terminal stops and inconsistent background identity remain barriers.
