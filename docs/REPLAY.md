@@ -19,15 +19,33 @@ There are three explicitly selectable formats (`--format`, default `auto`):
   Missing manifest, seal, causal identity, postcondition verdict, or candidate-set
   reference remains an explicit gap. Known dangling action/model/observation
   references fail the audit. A sealed run does not imply complete causal evidence.
+  The producer manifest is canonical ASCII JSON with one trailing newline;
+  its digest covers the canonical JSON bytes without that newline. It requires
+  schema `jev-factorio.manifest.v1`, integer `schema_version: 1`, and a canonical
+  UUID `run_id`. The first event binds that digest as
+  `run_started.payload.manifest_hash`. Invalid manifest bytes or fields, and a
+  valid digest-bound manifest whose UUID differs from the source run, are input
+  errors (exit 2). Event-chain and integrity-seal mismatches are invalid evidence
+  (exit 1). A missing manifest file remains a gap. When the manifest is present,
+  an absent or incorrect `run_started.payload.manifest_hash` is invalid evidence
+  (exit 1).
+  The supported CLI's `controller_initialized` and `controller_stopped` records
+  are validated as run-level evidence and copied into `run_evidence`; they do
+  not receive invented decision or trace identities. Action returns,
+  verifications, and pending-expiry records must match the prepared trace,
+  decision, session, observation, and attempt bindings before they can affect
+  an action view. Cross-step verification remains attributable only when the
+  producer explicitly records `action_origin: "current_trace"` with the same
+  attempt and plan-step identity.
 * `proposed-v1` retains the synthetic fixture contract documented below. Its
   segment envelope and UTF-8 hash encoding are not the canonical producer format.
   Automatic selection distinguishes the producer's explicit `schema_version`;
   it never silently renames payload fields or synthesizes unavailable references.
 
-Integration remains draft until the final canonical writer and controller
-instrumentation are exercised together in the final merged candidate. The
-generated writer/trace tests verify offline consumption; they are not native
-gameplay or full controller integration acceptance.
+Offline replay tests exercise the canonical writer, actual flat and
+hierarchical mock CLI producers, and generated writer/trace evidence. They do
+not establish native gameplay, provider behavior, authenticity, or complete
+controller integration acceptance.
 
 No gameplay, supervisor, checkpoint, provider, or environment configuration is
 changed. The existing evaluation command remains untouched. The separate
@@ -65,8 +83,8 @@ Exit codes:
 | Code | Meaning |
 | --- | --- |
 | 0 | Reconstruction completed without findings, or gaps explicitly accepted with `--allow-incomplete`. |
-| 1 | Invalid evidence: malformed JSONL, integrity failure, or a causal inconsistency. |
-| 2 | Input/output usage failure, unreadable input, invalid manifest, invalid bounds, or an existing output file. |
+| 1 | Invalid evidence: source-chain or seal failure, or a causal inconsistency. |
+| 2 | Input/output usage failure, unreadable input, malformed/noncanonical or schema-invalid research manifest, invalid manifest fields/values/identity, invalid bounds, or an existing output file. |
 | 3 | Incomplete evidence, including legacy logs, missing references, or a captured crash prefix. |
 
 `--allow-incomplete` changes only the exit code for gaps. It never changes the
@@ -120,6 +138,12 @@ postcondition. A lost acknowledgment can coexist with later recorded positive
 verification; both facts remain visible. Neither authorizes retry. Repeated
 polls, reused domain plan names, and historical `step_verified` entries are not
 converted into additional unique attempts.
+
+When a captured plan step is available, its action and parameters must match the
+prepared action; an absent step, malformed step, or mismatch cannot support a
+verified action. If the plan commitment or step details are unavailable, the
+reader retains an incomplete gap and any observed return, but leaves the action
+unverified rather than treating missing plan evidence as a match.
 
 For legacy files each JSONL record has a line locator, not a fabricated
 `decision_id`. `decision_count` is null; `legacy_record_count` and
@@ -237,6 +261,7 @@ explicit, hash-verified blob contract is integrated with the writer.
 PYTHONPATH=src python -m pytest tests/test_replay.py -q
 PYTHONPATH=src python -m pytest tests/test_replay_controller_integration.py -q
 PYTHONPATH=src python -m pytest tests/test_replay_research.py -q
+PYTHONPATH=src:tests python -m pytest tests/test_replay418_regressions.py -q
 PYTHONPATH=src python -m pytest tests/ -q
 python -m compileall -q src
 ```
