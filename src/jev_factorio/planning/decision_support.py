@@ -836,6 +836,22 @@ def _utility_power_prerequisite_start_evidence(
         from .output_buffers import OutputBufferPlanner
         from .input_routes import InputRoutePlanner
         from .mining_outposts import MiningOutpostPlanner
+        from . import capital
+
+        capital_marker = materials.get(capital.MARKER)
+        if capital_marker is not None:
+            # A capital wrapper is not authority to accept an arbitrary power
+            # action. Validate its catalog-bound spec and reproduce the entire
+            # current continuation, including its stage, ID and paid step.
+            if (not isinstance(capital_marker, dict)
+                    or set(capital_marker) != {'spec', 'stage', 'observed_tick'}
+                    or capital_marker['stage'] != 'supply'
+                    or type(capital_marker['observed_tick']) is not int
+                    or capital_marker['observed_tick'] != tick):
+                return None
+            capital.validate_spec(capital_marker['spec'], catalog, snapshot.researched)
+            if capital_marker['spec']['role'] != role:
+                return None
 
         def same_current_plan(current):
             if current is None or current.id != plan.id:
@@ -900,7 +916,12 @@ def _utility_power_prerequisite_start_evidence(
                        for part, owner in row['parts'].items()):
                     return None
             current_planner = planner_type(catalog, snapshot, plan.goal)
-            current = current_planner._powered(role, tuple(path))
+            current = (capital.continuation(current_planner, capital_marker['spec'])
+                       if capital_marker is not None
+                       else current_planner._powered(role, tuple(path)))
+            if (capital_marker is not None
+                    and (current.materials or {}).get(capital.MARKER) != capital_marker):
+                continue
             if same_current_plan(current):
                 current_annotation = (current.materials or {}).get('utility_power_prerequisite')
                 if current_annotation == annotation:
