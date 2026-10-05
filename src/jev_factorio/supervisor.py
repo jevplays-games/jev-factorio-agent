@@ -366,9 +366,116 @@ class Supervisor:
                 or checkpoint.get("active_plan") is not None
                 or bool(checkpoint.get("reservations")))
 
+    def _launch_memory_type(self, treatment: dict | None):
+        """Select the same checkpoint reader that the gameplay command will launch."""
+        from .controller import HierarchicalLoop
+
+        loop_type = HierarchicalLoop
+        if self.config.background_work:
+            from .background import BackgroundWorkLoop
+            loop_type = BackgroundWorkLoop
+        if self.config.furnace_output_buffers:
+            from .buffer_controller import buffered_loop_type
+            loop_type = buffered_loop_type(loop_type)
+        if self.config.furnace_input_belts:
+            from .input_controller import input_loop_type
+            loop_type = input_loop_type(loop_type)
+        if self.config.ore_side_successors:
+            from .successor_controller import successor_loop_type
+            loop_type = successor_loop_type(loop_type)
+        if self.config.mining_outposts:
+            from .outpost_controller import outpost_loop_type
+            loop_type = outpost_loop_type(loop_type)
+        if treatment is not None:
+            from .solid_controller import solid_loop_type
+            loop_type = solid_loop_type(loop_type)
+            if treatment["coal_targets"]:
+                from .coal_controller import coal_loop_type
+                loop_type = coal_loop_type(loop_type)
+        if self.config.campaign_diagnostics:
+            from .campaign_controller import campaign_loop_type
+            loop_type = campaign_loop_type(loop_type)
+        return loop_type.memory_type
+
+    def _preflight_launch_checkpoint(self, treatment: dict | None, *,
+                                    allow_invalid_checkpoint: bool = False) -> None:
+        """Validate a sound checkpoint with the exact composition to be launched."""
+        path = self.config.checkpoint
+        if not path.exists():
+            return
+        if not path.is_file():
+            raise ValueError("Controller checkpoint is not a regular file")
+        captured = path.read_bytes()
+        from .memory import load_checkpoint_bytes
+
+        # First establish that the capture is valid under its own declared
+        # extension schemas. Existing bound supervisors retain their repair path
+        # for a corrupt checkpoint; no reader can safely infer its composition.
+        declared_memory = None
+        try:
+            declared_memory = load_checkpoint_bytes(
+                captured, self.config.session_id, "rocket_launch", checkpoint_path=path)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
+            if not allow_invalid_checkpoint:
+                raise ValueError(
+                    f"Checkpoint is invalid before launch composition can be verified: {error}") from error
+            if path.read_bytes() != captured:
+                raise ValueError("Checkpoint changed during launch composition preflight")
+            return
+        finally:
+            archive_index = getattr(declared_memory, "_blocked_recovery_archive_index", None)
+            if archive_index is not None:
+                archive_index.close()
+
+        selected_memory = None
+        try:
+            selected_memory = load_checkpoint_bytes(
+                captured, self.config.session_id, "rocket_launch",
+                checkpoint_path=path,
+                memory_type=self._launch_memory_type(treatment))
+            self._validate_launch_treatment(captured, selected_memory, treatment)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
+            raise ValueError(
+                f"Checkpoint failed configured launch composition preflight: {error}") from error
+        finally:
+            archive_index = getattr(selected_memory, "_blocked_recovery_archive_index", None)
+            if archive_index is not None:
+                archive_index.close()
+        if path.read_bytes() != captured:
+            raise ValueError("Checkpoint changed during launch composition preflight")
+
+    @staticmethod
+    def _validate_launch_treatment(captured: bytes, memory, treatment: dict | None) -> None:
+        """Match selected memory ownership to the treatment main.cli will pass."""
+        saved = json.loads(captured)
+        if not isinstance(saved, dict):
+            raise ValueError("Checkpoint treatment requires a valid object")
+        if treatment is None:
+            if {"solid_intents", "coal_targets"} & saved.keys():
+                raise ValueError("Checkpoint production treatment is required for retained ownership")
+            return
+        if (getattr(memory, "solid_intents", None) != treatment["solid_intents"]
+                or getattr(memory, "solid_science_policy", None) is not treatment["solid_science_policy"]):
+            raise ValueError("Checkpoint production treatment differs from retained solid ownership")
+        coal_targets = treatment["coal_targets"]
+        if not coal_targets:
+            if "coal_targets" in saved:
+                raise ValueError("Checkpoint coal ownership requires its immutable treatment")
+            return
+        economic_admission = treatment.get("coal_economic_admission", False)
+        expected_schema = 2 if economic_admission else 1
+        if (getattr(memory, "coal_targets", None) != coal_targets
+                or getattr(memory, "coal_kit_policy", None) is not treatment["coal_kit_policy"]
+                or getattr(memory, "coal_economic_admission", None) is not economic_admission
+                or getattr(memory, "coal_supply_schema", None) != expected_schema):
+            raise ValueError("Checkpoint production treatment differs from retained coal ownership")
+
     def initialize(self, *, record_only: bool = False) -> None:
         self.config.validate()
-        current_selection = self.model_selection()
+        treatment = treatment_digest = None
+        if self.config.production_treatment is not None:
+            from .treatment import load
+            treatment, treatment_digest = load(self.config.production_treatment)
         cutoff = self.config.started_at + self.config.duration_hours * 3600
         identity = {"session_id": self.config.session_id,
                     "checkpoint": str(self.config.checkpoint.resolve()),
@@ -381,6 +488,18 @@ class Supervisor:
                 raise ValueError("Existing supervision identity/cutoff cannot be changed")
         else:
             self.state = {**identity, "attempt": 0, "phase": "ready", "process": None}
+        bound_configuration_exists = (
+            existing and isinstance(self.state.get("gameplay_configuration"), dict)
+            and self.state.get("gameplay_configuration_sha256") is not None)
+        # A valid capture must load through exactly the reader implied by the
+        # effective launch flags before those flags can be durably pinned. A
+        # mismatched first invocation therefore leaves no binding to block a
+        # corrected retry. Corrupt captures in an already-bound run still reach
+        # the established repair path without being rewritten here.
+        self._preflight_launch_checkpoint(
+            treatment, allow_invalid_checkpoint=bound_configuration_exists)
+        current_selection = self.model_selection()
+        if not existing:
             self.save()
         configuration = {
             name: getattr(self.config, name) for name in (
@@ -395,9 +514,8 @@ class Supervisor:
             configuration['mining_outposts'] = True
         if self.config.ore_side_successors:
             configuration['ore_side_successors'] = True
-        if self.config.production_treatment is not None:
-            from .treatment import load
-            _, configuration['production_treatment_sha256'] = load(self.config.production_treatment)
+        if treatment_digest is not None:
+            configuration['production_treatment_sha256'] = treatment_digest
         for name in ("campaign_diagnostics", "profile_observations", "consolidated_observations",
                      "lead_time_supply", "coverage_margin_lookahead"):
             if getattr(self.config, name):
