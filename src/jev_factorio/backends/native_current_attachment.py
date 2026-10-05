@@ -67,7 +67,7 @@ def is_supported_direct_installation(result):
     return source_bound_direct_profile(result) is not None
 
 
-def current_connector_snapshot_command(result):
+def current_connector_snapshot_command(result, *, completed_routes=False):
     """Qualify an exact bundled direct profile without changing ownership.
 
     Called only AFTER metadata/callback and every installed asset hash have
@@ -80,6 +80,8 @@ def current_connector_snapshot_command(result):
     profile = source_bound_direct_profile(result)
     if profile is None:
         raise RuntimeError('Native direct attachment requires an exact supported module profile')
+    if completed_routes and profile != 'current_full':
+        raise RuntimeError('Completed connector attachment requires the current full profile')
     session = json.dumps(result['session_id'])
     actor = str(result['actor_unit'])
     assets = json.dumps(json.dumps(result['native_installation']['assets'], sort_keys=True))
@@ -249,6 +251,22 @@ def current_connector_snapshot_command(result):
             'rcon.print(helpers.table_to_json({schema=1,session_id=rt.jev_session_id,'
             'actor_unit=a.unit_number,tick=tick,connector_ownership=ownership}))'
         )
+    if completed_routes:
+        return '/sc ' + prefix + (
+            'assert(not rt.solid_routes and not rt.coal_supply);'
+            'local ledger=assert(c.connector_ledger);'
+            'assert(ledger.protocol==1 and ledger.active==nil);'
+            'local count=0;for id,row in pairs(ledger.routes) do '
+            'count=count+1;assert(count<=128 and row.state=="complete" '
+            'and row.pending==nil);end;'
+            'local tick=game.tick;local ownership=c.observe_connector_ownership();'
+            'assert(type(ownership)=="table" and ownership.protocol==1 '
+            'and ownership.session_id==rt.jev_session_id and ownership.tick==tick '
+            'and ownership.active==nil and type(ownership.routes)=="table");'
+            'assert(game.tick==tick and ledger.active==nil);'
+            'rcon.print(helpers.table_to_json({schema=1,session_id=rt.jev_session_id,'
+            'actor_unit=a.unit_number,tick=tick,connector_ownership=ownership}))'
+        )
     return '/sc ' + prefix + (
         'assert(not rt.solid_routes and not rt.coal_supply);'
         'local ledger=assert(c.connector_ledger);'
@@ -264,7 +282,10 @@ def current_connector_snapshot_command(result):
     )
 
 
-def qualify_current_connector_snapshot(client, result):
+def qualify_current_connector_snapshot(client, result, *, checkpoint_binding=None):
+    if checkpoint_binding is not None and checkpoint_binding.get('routes'):
+        from .native_completed_attachment import qualify_completed_connectors
+        return qualify_completed_connectors(client, result, checkpoint_binding)
     row = decode_native(client.send_command(current_connector_snapshot_command(result)))
     if not isinstance(row, dict):
         raise RuntimeError('Current connector snapshot requires reconciliation')

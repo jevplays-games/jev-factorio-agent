@@ -142,6 +142,19 @@ def test_mock_planner_retains_legacy_boiler_fuel_behavior():
     assert 'fuel_service' not in plan.materials
 
 
+@pytest.mark.parametrize('fuel', [{}, {'wood': 2}, {'coal': 0}])
+def test_native_sparse_inventory_means_zero_coal_and_requires_paid_refill(fuel):
+    state, data = boiler_state()
+    state.factory['entities']['utility:boiler']['fuel'] = fuel
+    state.inventory.pop('coal', None)
+    plan = ReadyWorkPlanner(data, state, 'rocket_launch')._fuel('utility:boiler', ())
+    assert plan.steps[0].action == 'factory_gather'
+    service = plan.materials['fuel_service']
+    assert service['consumers'][0]['fuel'] == 0
+    assert service['consumers'][0]['role'] == 'utility:boiler'
+    assert service['combined_deficit'] == 5
+
+
 def test_science_pack_acquisition_precedes_low_boiler_service_but_start_stays_powered():
     from jev_factorio.planning.factory import FactoryPlanner
 

@@ -169,8 +169,9 @@ def _make_loop(tmp_path, monkeypatch, *, selection, max_stalled_decisions=4,
     if prior_ledger_source is not None:
         from jev_factorio import blocked_persistence as persistence
         memory = CampaignMemory.load(checkpoint, backend.session_id, "bootstrap_mining")
-        persistence.record_attempt(memory, prior_ledger_source, "e" * 64, memory.reason, 0)
-        persistence.finish_attempt(memory, prior_ledger_source, "e" * 64, "rejected", memory.reason)
+        reason = memory.reason if persistence.is_recoverable_reason(memory.reason) else None
+        persistence.record_attempt(memory, prior_ledger_source, "e" * 64, reason, 0)
+        persistence.finish_attempt(memory, prior_ledger_source, "e" * 64, "rejected", reason)
         memory.save(checkpoint)
         checkpoint_sha = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     loop = HierarchicalLoop(
@@ -206,8 +207,23 @@ def _bootstrap_plan(snapshot):
     return Plan(plan_id, "bootstrap_mining", plan_id, (step,))
 
 
+def test_boiler_planner_error_is_not_an_automatic_retry_reason(tmp_path, monkeypatch):
+    from jev_factorio.blocked_persistence import is_recoverable_reason, validate_memory_state
+    reason = 'Current native boiler identity and coal stock are required'
+    prior = {'commit': '1' * 40, 'source_sha256': 'b' * 64}
+    backend, checkpoint, _, _, loop = _make_loop(
+        tmp_path, monkeypatch, selection=lambda snapshot: [_bootstrap_plan(snapshot)],
+        blocked_reason=reason, persistent=True, stalled=0, prior_ledger_source=prior)
+    assert not is_recoverable_reason(reason)
+    memory = CampaignMemory.load(checkpoint, backend.session_id, 'bootstrap_mining')
+    with pytest.raises(ValueError, match='does not admit'):
+        validate_memory_state(memory, prior)
+    validate_memory_state(memory, loop.provenance['code_revision'], allow_source_change=True)
+
+
 @pytest.mark.parametrize("blocked_reason", [
     "Candidate evidence insufficient", "low choice confidence",
+    "Current native boiler identity and coal stock are required",
 ])
 def test_selected_recheck_keeps_counter_until_receipt_and_continues_unbounded_run(
         tmp_path, monkeypatch, blocked_reason):
@@ -523,8 +539,10 @@ def test_authorized_reevaluation_is_consumed_by_a_model_free_passive_wait(
 
 
 @pytest.mark.parametrize('stalled', [0, 1])
+@pytest.mark.parametrize('blocked_reason', [
+    'Candidate evidence insufficient', 'Current native boiler identity and coal stock are required'])
 def test_persistent_block_below_threshold_is_reevaluated_and_commits_a_passive_wait(
-        tmp_path, monkeypatch, stalled):
+        tmp_path, monkeypatch, stalled, blocked_reason):
     """Persisted blocks remain valid after a verified craft resets the streak."""
     from jev_factorio import controller, judgments
 
@@ -534,7 +552,7 @@ def test_persistent_block_below_threshold_is_reevaluated_and_commits_a_passive_w
     prior = {"commit": "1" * 40, "source_sha256": "b" * 64}
     backend, checkpoint, _sha, _original, loop = _make_loop(
         tmp_path, monkeypatch, selection=lambda _snapshot: [wait], persistent=True,
-        stalled=stalled, prior_ledger_source=prior)
+        stalled=stalled, prior_ledger_source=prior, blocked_reason=blocked_reason)
     monkeypatch.setattr(controller, "select_plan", judgments.select_plan)
 
     loop.step()

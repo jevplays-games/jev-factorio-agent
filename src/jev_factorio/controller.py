@@ -835,7 +835,8 @@ class HierarchicalLoop(AgentLoop):
         if len(self.memory.blocked_reevaluations) >= 1024:
             raise ValueError("Blocked decision re-evaluation ledger is full")
         ledger_reason = authorization_reason or self.memory.reason
-        if ledger_reason not in {"Candidate evidence insufficient", "low choice confidence"}:
+        from .memory import _BLOCKED_REEVALUATION_REASONS
+        if ledger_reason not in _BLOCKED_REEVALUATION_REASONS:
             raise ValueError("Blocked decision re-evaluation reason is not eligible")
         if persistent_input is not None:
             self._archive_full_recovery_tail()
@@ -861,14 +862,16 @@ class HierarchicalLoop(AgentLoop):
                               source_head=source["source_head"], tick=snapshot.tick,
                               stalled_decisions=self.memory.stalled_decisions)
             if persistent_input is not None:
-                from .blocked_persistence import finish_attempt, record_attempt
+                from .blocked_persistence import finish_attempt, record_attempt, is_recoverable_reason
+                attempt_reason = (self.memory.reason
+                                  if is_recoverable_reason(self.memory.reason) else None)
                 record_attempt(self.memory, self.provenance["code_revision"], persistent_input,
-                               self.memory.reason, snapshot.tick, allow_source_change=True,
+                               attempt_reason, snapshot.tick, allow_source_change=True,
                                archive_index=self._blocked_recovery_archive_index,
                                selection_batch=selection_batch)
                 if persistent_outcome != "pending":
                     finish_attempt(self.memory, self.provenance["code_revision"], persistent_input,
-                                   persistent_outcome, self.memory.reason,
+                                   persistent_outcome, attempt_reason,
                                    archive_index=self._blocked_recovery_archive_index)
                 self.memory.event("blocked_recovery_attempt", decision_input_sha256=persistent_input,
                                   tick=snapshot.tick,
