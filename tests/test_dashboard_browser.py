@@ -35,6 +35,33 @@ def live(tmp_path):
     follow.join(timeout=3); web.join(timeout=3)
 
 
+@pytest.fixture
+def live_legacy(tmp_path):
+    path = tmp_path / "legacy.jsonl"
+    path.write_text(json.dumps({
+        "state": {"session_id": "usage-legacy-test", "world_kind": "mock", "tick": 1},
+        "action": "observe", "outcome": "completed",
+        "usage": {"input_tokens": 111, "output_tokens": 22},
+    }) + "\n", encoding="utf-8")
+    monitor = Monitor(path, legacy=True, supervisor=tmp_path / "supervisor.json",
+                      research=tmp_path / "research-catalog.json")
+    server = DashboardServer(0, monitor)
+    follow = threading.Thread(target=monitor.follow, daemon=True)
+    web = threading.Thread(target=server.serve_forever, daemon=True)
+    follow.start(); web.start()
+    with playwright.sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, executable_path=os.environ.get("CHROMIUM_PATH"),
+                                    args=["--no-sandbox"])
+        context = browser.new_context(viewport={"width": 1672, "height": 1150}, reduced_motion="reduce")
+        page = context.new_page()
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        yield page, f"http://127.0.0.1:{server.server_port}", errors
+        context.close(); browser.close()
+    monitor.stop.set(); server.shutdown(); server.server_close()
+    follow.join(timeout=3); web.join(timeout=3)
+
+
 def seed(writer):
     writer.emit("observation", 2, state={"session_id": "mock:browser-test", "world_kind": "mock", "tick": 314,
                 "inventory": {"iron-ore": 148, "copper-ore": 82, "coal": 45, "iron-plate": 64},
@@ -552,6 +579,70 @@ def test_decision_metrics_observations_and_inventory(live):
     playwright.expect(page.locator("#inventory")).to_contain_text("148")
     playwright.expect(page.locator(".goal-node.done")).to_contain_text("stockpile_fuel")
     playwright.expect(page.locator(".goal-node.current")).to_contain_text("bootstrap_mining")
+    assert not errors
+
+
+def test_current_response_usage_replaces_previous_completed_usage(live):
+    page, writer, url, errors = live
+    page.goto(url)
+    writer.emit("decision_recorded", 7, record={
+        "usage": {"input_tokens": 111, "output_tokens": 22},
+        "state": {"session_id": "usage-browser-test", "world_kind": "mock", "tick": 1},
+        "action": "observe", "outcome": "completed",
+    })
+    playwright.expect(page.locator("#tokens")).to_have_text("133")
+
+    writer.emit("cycle_started", 2)
+    writer.emit("model_request", 5, questions={})
+    writer.emit("model_started", 5)
+    # Until a response exists, the completed decision remains a useful fallback.
+    playwright.expect(page.locator("#tokens")).to_have_text("133")
+    writer.emit("model_response", 5, answers={}, usage={"input_tokens": 333, "output_tokens": 44})
+    # Current response usage must win before the current decision is recorded.
+    playwright.expect(page.locator("#tokens")).to_have_text("377")
+
+    writer.emit("model_returned", 5, duration_ms=81)
+    writer.emit("decision_recorded", 7, record={
+        "usage": {"input_tokens": 333, "output_tokens": 44},
+        "state": {"session_id": "usage-browser-test", "world_kind": "mock", "tick": 2},
+        "action": "observe", "outcome": "completed",
+    })
+    playwright.expect(page.locator("#tokens")).to_have_text("377")
+
+    writer.emit("cycle_started", 2)
+    playwright.expect(page.locator("#tokens")).to_have_text("377")
+    writer.emit("model_response", 5, answers={}, usage=None)
+    playwright.expect(page.locator("#tokens")).to_have_text("—")
+
+    writer.emit("model_returned", 5, duration_ms=82)
+    writer.emit("decision_recorded", 7, record={
+        "state": {"session_id": "usage-browser-test", "world_kind": "mock", "tick": 3},
+        "action": "observe", "outcome": "completed",
+    })
+    playwright.expect(page.locator("#tokens")).to_have_text("—")
+
+    writer.emit("cycle_started", 2)
+    writer.emit("model_response", 5, answers={})
+    playwright.expect(page.locator("#tokens")).to_have_text("—")
+
+    writer.emit("cycle_started", 2)
+    writer.emit("model_response", 5, answers={}, usage={"input_tokens": 0, "output_tokens": 0})
+    playwright.expect(page.locator("#tokens")).to_have_text("0")
+    writer.emit("model_returned", 5, duration_ms=83)
+    writer.emit("decision_recorded", 7, record={
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+        "state": {"session_id": "usage-browser-test", "world_kind": "mock", "tick": 4},
+        "action": "observe", "outcome": "completed",
+    })
+    playwright.expect(page.locator("#tokens")).to_have_text("0")
+    assert not errors
+
+
+def test_legacy_record_usage_remains_available(live_legacy):
+    page, url, errors = live_legacy
+    page.goto(url)
+    playwright.expect(page.locator("#tokens")).to_have_text("133")
+    playwright.expect(page.locator("#source-mode")).to_have_text("LEGACY / COMPLETED DECISIONS")
     assert not errors
 
 
