@@ -94,3 +94,38 @@ signed-head CI/independent review/protected merge, one-use reviewed deployment
 under the original lock, fresh useful native progress and truthful OBS Program
 verification. The current bootstrap deployment and its source/attachment pins
 must not be changed to exercise this separate work.
+
+## Recovery after consumed events leave rolling history
+
+Long campaigns retain consumed source-reevaluation rows after the corresponding
+events leave the 64-event gameplay-history cache. A v1 epoch witness still requires
+those events in current history when authorizing a new migration. Do not insert
+old events into that cache, discard consumed rows, or alter source hashes to make
+a deployment pass.
+
+The opt-in `jev.compatible-epoch-boundary.v2` witness instead includes each exact
+original gameplay-journal record and its original prepared/result receipt bytes.
+The supervisor must first authenticate the retained signed source and launch
+chain, then sign the complete witness with the existing enrolled key. Each edge
+binds the original run, execution, session, target, source, consumed event,
+checkpoint admitted for reevaluation, launcher digest and prepared/result hashes.
+The current durable consumed row remains required. A conflicting current-history
+event rejects even when retained evidence exists. The witness binds the terminal
+checkpoint, prior compatibility lineage and exact new authorization; it cannot
+authorize another campaign or another checkpoint.
+
+Capture the original journal bytes and receipts before signing. Store the journal
+record as canonical base64 of zlib-compressed bytes, with its uncompressed SHA-256;
+store prepared/result bytes as canonical base64. Verification limits compressed
+records to 128 KiB, decoded records to 512 KiB, each launcher receipt to 16 KiB,
+aggregate decoded records to 8 MiB and the signed body to 1 MiB. Duplicate JSON
+keys, nonfinite values, truncated streams and trailing compressed data reject.
+Missing or oversized evidence requires investigation, not a weaker witness.
+
+This changes evidence retention only. The same enrolled signature, inherited
+writer lock, clean source proof, equal current decision contract, exact checkpoint,
+provider-state checks, atomic save and aggregate paid-attempt budget still apply.
+Historical changed-contract epochs do not become aliases of the new epoch. The
+validator reads retained evidence without rewriting gameplay history or issuing
+any model request or native action. Retain the signed witness with the deployment
+receipts and verify fresh native progress separately after installation.
