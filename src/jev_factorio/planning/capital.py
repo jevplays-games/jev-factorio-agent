@@ -164,9 +164,10 @@ def proposal(planner, recipe, name, cost, work, amount):
 def continuation(planner, spec):
     """Recompile one stage from current facts, with no optional nested investment.
 
-    Start with a fresh dependency path: the producer's eventual output must not
-    appear as an ancestor of the paid ingredients needed to bootstrap its kit.
-    Capability-aware buffer/route/outpost acquisition paths remain in use.
+    Kit and power acquisition start with a fresh path to avoid a bootstrap
+    cycle through the eventual product (cable can itself be needed for poles).
+    Once the producer exists, bind its product to the power-consumer annotation
+    separately from that physical recipe expansion.
     """
     validate_spec(spec, planner.catalog, planner.researched)
     old = getattr(planner, '_economic_acquiring', False)
@@ -187,6 +188,12 @@ def continuation(planner, spec):
             if machine['name'] != spec['machine']:
                 raise ValueError('Capital investment producer was replaced')
             plan = planner._production(recipe, spec['role'], spec['batches'], ())
+            if plan and 'utility_power_prerequisite' in (plan.materials or {}):
+                power = plan.materials['utility_power_prerequisite']
+                if power['consumer_role'] == spec['role']:
+                    plan = replace(plan, materials={**plan.materials,
+                        'utility_power_prerequisite': {
+                            **power, 'planner_path': ['item:' + spec['item']]}})
             if plan:
                 stage = 'configure' if plan.steps[0].action == 'factory_configure' and (
                     plan.steps[0].parameters['role'] == spec['role']) else 'supply'

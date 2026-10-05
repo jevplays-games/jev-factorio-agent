@@ -396,9 +396,20 @@ class FactoryPlanner:
         # Pay for the complete physical chain before consuming its fuel. An
         # empty, unconnected boiler cannot justify preempting engine or pipe
         # construction, or electricity delivery to the actual consumer.
-        prerequisite = (self._power(path) or self._connect(
-            "utility:engine", role, "small-electric-pole", "electricity", path
-        ) or self._fuel("utility:boiler", path))
+        # A producer's output can be needed to bootstrap its own electricity
+        # (cable for poles). Consumer purpose is not recipe ancestry for that
+        # physical supply chain. Retain infrastructure/technology cycle guards
+        # while expanding its paid ingredients without optional investment.
+        construction_path = (tuple(entry for entry in path if not entry.startswith('item:'))
+                             if role.startswith('recipe:') else path)
+        previous = getattr(self, '_economic_acquiring', False)
+        self._economic_acquiring = True
+        try:
+            prerequisite = (self._power(construction_path) or self._connect(
+                "utility:engine", role, "small-electric-pole", "electricity", construction_path
+            ) or self._fuel("utility:boiler", construction_path))
+        finally:
+            self._economic_acquiring = previous
         if prerequisite is None:
             return None
         research = next((entry.removeprefix("technology:")

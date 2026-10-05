@@ -120,7 +120,9 @@ def observe_atomic(native: Any, snapshot: GameSnapshot) -> GameSnapshot:
 
     from .native_bootstrap_output import observation_command as bootstrap_command
     from .native_bootstrap_output import decode as decode_bootstrap
-    raw = native.command(bootstrap_command(observation_command(native)))
+    from .native_actor_capacity import observation_command as actor_capacity_command
+    from .native_actor_capacity import decode as decode_actor_capacity
+    raw = native.command(actor_capacity_command(bootstrap_command(observation_command(native))))
     result = parse_snapshot(raw, backend._observation_profile, schemas=(2,))
     session = result.get('session_id')
     if not isinstance(session, str) or not session or len(session) > 128:
@@ -137,6 +139,14 @@ def observe_atomic(native: Any, snapshot: GameSnapshot) -> GameSnapshot:
     position = _position(result.get('position'))
     inventory = _inventory(result.get('inventory'))
     capacity = _actor_capacity(result.get('inventory_capacity', False), tick)
+    try:
+        expanded_capacity = decode_actor_capacity(raw, result, capacity)
+    except (KeyError, TypeError, ValueError):
+        # Optional raw-item headroom must not make an otherwise valid snapshot
+        # unavailable. Retain only the independently validated primary reading.
+        expanded_capacity = None
+    if expanded_capacity is not None:
+        capacity = expanded_capacity
     controls = result.get('controls')
     if (not isinstance(controls, dict) or type(controls.get('tick')) is not int
             or controls['tick'] != tick or _position(controls.get('position')) != position
