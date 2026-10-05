@@ -242,3 +242,56 @@ quantity, lab inventory and research progress before interpreting the hold as a
 crash. Distinguish a hold that clears on changed facts from a permanent repeated
 frontier. Preserve both in the monitoring record. Do not interrupt a progressing
 campaign merely to replace its source; use a qualified idle recovery boundary.
+
+
+## 16:30 UTC: full decision ledger during a tracked craft
+
+V20 exited with `Blocked-recovery archive rotation requires a quiescent decision
+boundary` when the active decision-attempt tail reached 1,024 rows. A paid
+20-pack automation-science craft was already tracked, with no foreground action
+pending. The archive guard rejected any background job. This is a storage
+boundary bug triggered by sustained controller activity, separate from JEV
+abstentions and VM uptime.
+
+Rotation now validates the full composed background checkpoint and carries its
+job, attempt and saved step unchanged through the existing immutable-segment and
+checkpoint-pointer commits. Foreground pending actions, active plans, transfer
+recovery and failed or unbound crafts remain ineligible. Rotation retains all
+paid-request fingerprints and does not authorize a retry, change decision
+budgets, unlock outputs or finish the native craft.
+
+For efficient diagnosis, read the owner terminal result and console traceback
+before considering a restart. Preserve the exact checkpoint and original craft
+receipt. Reconcile an already-finished native job with the existing
+`--reconcile-only` path under the original writer lock; it observes and persists
+the result without model calls or gameplay dispatch. Deploy reviewed source
+through the existing source/contract admission gates. Verify both archive
+lookup coverage and fresh useful actions after resumption. The retained native
+fixture tests pointer rotation, reload, duplicate rejection and failures on both
+sides of the pointer commit while preserving the background job.
+
+
+### Reattachment of the retained completed background craft
+
+The first observation-only reconciliation exited before checkpoint mutation:
+the direct connector attachment path required either no native craft or an
+already-verified completed-craft binding. A checkpoint-tracked, unresolved craft
+supplied neither, so its Lua guard failed even after native completion.
+
+The new optional background binding validates the complete composed checkpoint
+and its exact job/attempt/saved-step identity. It qualifies only the current
+source-bound direct profile, completed owned connector routes and a native
+completed craft with unchanged identity, paid inputs, quantities, actor, queue,
+deadline and retained output inventory. Two read-only snapshots must agree.
+Attachment does not clear the job or credit output; normal receipt reconciliation
+still owns that checkpoint transition. Running, cancelled, late, unbound or
+externally consumed crafts stay blocked.
+
+On the production readback, receipt `fede48ea66f0423b9adad592c6abc2bf`
+completed 20 automation science packs at tick 10968667, before its 10974648
+deadline. The stopped checkpoint still recorded zero finished at tick 10962761.
+The retained fixture validates this exact mismatch without mutating either
+record. For reconciliation, remove normal continuous-run and source-reevaluation
+flags, including `--persist-recoverable-blocks` and its idle option; retain the
+existing checkpoint, resume flags, scheduling/composition and source provenance.
+Run only after the repaired attachment source has been reviewed and deployed.

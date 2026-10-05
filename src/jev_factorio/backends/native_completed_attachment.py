@@ -12,7 +12,8 @@ from ..iteration_timing import decode_native
 from .native_current_attachment import current_connector_snapshot_command
 
 
-def qualify_completed_connectors(client, result, checkpoint_binding, *, completed_craft=None):
+def qualify_completed_connectors(client, result, checkpoint_binding, *, completed_craft=None,
+                                 background_craft=None):
     saved = deepcopy(validate_binding(checkpoint_binding, result['session_id']))
     routes = saved['routes']
     if (not routes or any(row['state'] != 'complete' or not row['owned']
@@ -20,12 +21,16 @@ def qualify_completed_connectors(client, result, checkpoint_binding, *, complete
                           or row['actor_unit'] != result['actor_unit']
                           for row in routes.values())):
         raise RuntimeError('Completed connector checkpoint requires reconciliation')
-    command = current_connector_snapshot_command(result, completed_routes=True, completed_craft=completed_craft)
+    command = current_connector_snapshot_command(result, completed_routes=True,
+                                                 completed_craft=completed_craft, background_craft=background_craft)
 
     fields = {'schema', 'session_id', 'actor_unit', 'tick', 'connector_ownership',
               'settled_factory', 'completed_craft'}
     if completed_craft and 'step_sha256' in completed_craft:
         fields.add('completed_craft_recipe')
+
+    if background_craft is not None:
+        fields.add('background_inventory')
 
     def read():
         row = decode_native(client.send_command(command))
@@ -36,9 +41,13 @@ def qualify_completed_connectors(client, result, checkpoint_binding, *, complete
                 or type(row['actor_unit']) is not int or row['actor_unit'] != result['actor_unit']
                 or type(row['tick']) is not int or row['tick'] < 1):
             raise RuntimeError('Completed connector snapshot identity changed')
-        from .native_completed_craft import verify_completed_craft
-        verify_completed_craft(row['completed_craft'], completed_craft, result, row['tick'],
-                               recipe=row.get('completed_craft_recipe'))
+        from .native_completed_craft import verify_completed_craft, verify_background_craft
+        if background_craft is not None:
+            verify_background_craft(row['completed_craft'], row['background_inventory'],
+                                    background_craft, result, row['tick'])
+        else:
+            verify_completed_craft(row['completed_craft'], completed_craft, result, row['tick'],
+                                   recipe=row.get('completed_craft_recipe'))
         settled = row['settled_factory']
         if (not isinstance(settled, dict)
                 or set(settled) != {'sites', 'output_offers', 'outpost_offers'}):
@@ -70,7 +79,8 @@ def qualify_completed_connectors(client, result, checkpoint_binding, *, complete
             != before['connector_ownership']['routes']
             or after['settled_factory'] != before['settled_factory']
             or after['completed_craft'] != before['completed_craft']
-            or after.get('completed_craft_recipe') != before.get('completed_craft_recipe')):
+            or after.get('completed_craft_recipe') != before.get('completed_craft_recipe')
+            or after.get('background_inventory') != before.get('background_inventory')):
         raise RuntimeError('Completed connector ledger changed during attachment')
     return {**result, 'connector_snapshot_qualified': True,
             'connector_snapshot_tick': after['tick'],

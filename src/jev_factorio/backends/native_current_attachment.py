@@ -67,7 +67,8 @@ def is_supported_direct_installation(result):
     return source_bound_direct_profile(result) is not None
 
 
-def current_connector_snapshot_command(result, *, completed_routes=False, completed_craft=None):
+def current_connector_snapshot_command(result, *, completed_routes=False, completed_craft=None,
+                                       background_craft=None):
     """Qualify an exact bundled direct profile without changing ownership.
 
     Called only AFTER metadata/callback and every installed asset hash have
@@ -84,6 +85,24 @@ def current_connector_snapshot_command(result, *, completed_routes=False, comple
         raise RuntimeError('Completed connector attachment requires the current full profile')
     craft_guard = 'j.job==nil'
     craft_recipe = ''
+    background_inventory = ''
+    if completed_craft is not None and background_craft is not None:
+        raise ValueError('Completed and unresolved craft bindings are mutually exclusive')
+    if background_craft is not None:
+        from .native_completed_craft import validate_background_craft_binding
+        job = validate_background_craft_binding(background_craft)
+        if not completed_routes or job.session_id != result['session_id']:
+            raise RuntimeError('Background craft requires checkpoint-bound connector attachment')
+        item = json.dumps(next(iter(job.outputs)))
+        background_inventory = (
+            ',background_inventory=(function() local n=0;for _,stack in pairs('
+            'p.get_main_inventory().get_contents()) do if stack.name==' + item
+            + ' then n=n+stack.count end end;return {[' + item + ']=n} end)()')
+        craft_guard = ('type(j.job)=="table" and j.job.id==' + json.dumps(job.parameters['receipt'])
+            + ' and j.job.status=="completed" and j.job.paid==true and j.job.error==nil'
+              ' and j.job.session_id==rt.jev_session_id and j.job.unit_number==a.unit_number'
+              ' and j.job.player_index==p.index and j.job.surface_index==a.surface.index'
+              ' and j.job.force_index==a.force.index')
     if completed_craft is not None:
         from .native_completed_craft import validate_completed_craft_binding
         bound = validate_completed_craft_binding(completed_craft)
@@ -287,7 +306,7 @@ def current_connector_snapshot_command(result, *, completed_routes=False, comple
             'assert(game.tick==tick and ledger.active==nil);'
             'rcon.print(helpers.table_to_json({schema=1,session_id=rt.jev_session_id,'
             'actor_unit=a.unit_number,tick=tick,connector_ownership=ownership,settled_factory=settled,'
-            'completed_craft=j and j.job or false' + craft_recipe + '}))'
+            'completed_craft=j and j.job or false' + craft_recipe + background_inventory + '}))'
         )
     return '/sc ' + prefix + (
         'assert(not rt.solid_routes and not rt.coal_supply);'
@@ -304,10 +323,12 @@ def current_connector_snapshot_command(result, *, completed_routes=False, comple
     )
 
 
-def qualify_current_connector_snapshot(client, result, *, checkpoint_binding=None, completed_craft=None):
+def qualify_current_connector_snapshot(client, result, *, checkpoint_binding=None, completed_craft=None,
+                                       background_craft=None):
     if checkpoint_binding is not None and checkpoint_binding.get('routes'):
         from .native_completed_attachment import qualify_completed_connectors
-        return qualify_completed_connectors(client, result, checkpoint_binding, completed_craft=completed_craft)
+        return qualify_completed_connectors(client, result, checkpoint_binding,
+                                            completed_craft=completed_craft, background_craft=background_craft)
     row = decode_native(client.send_command(current_connector_snapshot_command(result)))
     if not isinstance(row, dict):
         raise RuntimeError('Current connector snapshot requires reconciliation')

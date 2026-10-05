@@ -454,17 +454,18 @@ def test_live_controller_rechecks_archive_before_model_selection(tmp_path, monke
         loop._blocked_recovery_archive_index.close()
 
 
+@pytest.mark.parametrize("background", [False, True])
 @pytest.mark.parametrize("replace_before_error", [False, True])
 def test_archive_rotation_save_failure_reconciles_exact_checkpoint_and_stops_observation(
-        tmp_path, monkeypatch, replace_before_error):
+        tmp_path, monkeypatch, replace_before_error, background):
     _allow_storage(monkeypatch)
     checkpoint = tmp_path / "campaign.json"
-    memory = _full_memory()
+    memory = _full_native_background_memory() if background else _full_memory()
     prior_bytes = _encode(memory)
     checkpoint.write_bytes(prior_bytes)
     loop = HierarchicalLoop.__new__(HierarchicalLoop)
     loop.memory = memory
-    loop.memory_type = CampaignMemory
+    loop.memory_type = type(memory)
     loop.checkpoint = checkpoint
     loop.target = TARGET
     loop._blocked_recovery_archive_index = None
@@ -498,7 +499,95 @@ def test_archive_rotation_save_failure_reconciles_exact_checkpoint_and_stops_obs
         assert checkpoint.read_bytes() == prior_bytes
         assert loop.memory.blocked_recovery_archive is None
         assert len(loop.memory.blocked_recovery["attempts"]) == 1024
+    if background:
+        for key in ('background_job', 'background_attempt', 'background_step'):
+            assert getattr(loop.memory, key) == json.loads(prior_bytes)[key]
     assert loop._persistence_failed is True
     with pytest.raises(RuntimeError, match="reconstruct before continuing"):
         loop._observe()
     assert observations == []
+
+
+
+def _full_native_background_memory():
+    from pathlib import Path
+    from jev_factorio.background import BackgroundMemory
+    raw = json.loads((Path(__file__).parent / 'fixtures' /
+                      'native-v20-archive-background-craft.json').read_text())
+    memory = BackgroundMemory.from_bytes(_encode(_full_memory()), SESSION, TARGET)
+    memory.active_goal = TARGET
+    memory.background_schema = 3
+    for key, value in raw.items():
+        setattr(memory, key, value)
+    memory.background_job['session_id'] = SESSION
+    # Prove that the retained production job/attempt/step form a valid checkpoint.
+    return BackgroundMemory.from_bytes(_encode(memory), SESSION, TARGET)
+
+
+def test_native_background_craft_survives_full_tail_rotation_and_reload(tmp_path, monkeypatch):
+    from copy import deepcopy
+    from jev_factorio.background import BackgroundMemory
+    _allow_storage(monkeypatch)
+    checkpoint = tmp_path / 'campaign.json'
+    memory = _full_native_background_memory()
+    keys = ('background_job', 'background_attempt', 'background_step')
+    retained = {key: deepcopy(getattr(memory, key)) for key in keys}
+    checkpoint.write_bytes(_encode(memory))
+    loop = HierarchicalLoop.__new__(HierarchicalLoop)
+    loop.memory = memory
+    loop.memory_type = BackgroundMemory
+    loop.checkpoint = checkpoint
+    loop.target = TARGET
+    loop.provenance = {'code_revision': SOURCE}
+    loop._blocked_recovery_archive_index = None
+    loop._persistence_failed = False
+    saves = []
+    def save():
+        data = _encode(loop.memory)
+        checkpoint.write_bytes(data)
+        saves.append(json.loads(data))
+    loop._save = save
+    digest = hashlib.sha256(b'new-decision-during-native-craft').hexdigest()
+    snapshot = replace(MockBackend().observe(), session_id=SESSION, tick=memory.last_tick)
+    try:
+        loop._record_persistent_attempt(snapshot, digest)
+        assert len(saves) == 3
+        assert len(saves[0]['blocked_recovery']['attempts']) == 1024
+        assert saves[1]['blocked_recovery_archive']['entry_count'] == 1024
+        assert saves[1]['blocked_recovery']['attempts'] == []
+        assert saves[2]['blocked_recovery']['attempts'][0]['decision_input_sha256'] == digest
+        assert saves[2]['blocked_recovery']['attempts'][0]['outcome'] == 'pending'
+        for saved in saves:
+            assert {key: saved[key] for key in keys} == retained
+    finally:
+        if loop._blocked_recovery_archive_index:
+            loop._blocked_recovery_archive_index.close()
+    restored = BackgroundMemory.load(checkpoint, SESSION, TARGET)
+    try:
+        assert {key: getattr(restored, key) for key in keys} == retained
+        index = restored._blocked_recovery_archive_index
+        for n in (0, 511, 1023):
+            assert blocked_persistence.was_attempted(restored, SOURCE,
+                hashlib.sha256(f'decision-{n}'.encode()).hexdigest(), archive_index=index)
+        assert blocked_persistence.was_attempted(restored, SOURCE, digest, archive_index=index)
+    finally:
+        restored._blocked_recovery_archive_index.close()
+
+
+@pytest.mark.parametrize('change', ['receipt', 'step', 'missing_attempt', 'failed', 'pending'])
+def test_archive_rotation_rejects_unbound_or_ambiguous_background_work(tmp_path, monkeypatch, change):
+    _allow_storage(monkeypatch)
+    memory = _full_native_background_memory()
+    if change == 'receipt': memory.background_attempt['receipt'] = 'different'
+    elif change == 'step': memory.background_step['threshold'] += 1
+    elif change == 'missing_attempt': memory.background_attempt = None
+    elif change == 'failed': memory.background_job['failed'] = 'native receipt mismatch'
+    else: memory.pending = {'action': 'factory_insert'}
+    checkpoint = tmp_path / 'campaign.json'
+    before = _encode(memory);checkpoint.write_bytes(before)
+    with pytest.raises(ValueError):
+        archive_full_tail(checkpoint, memory)
+    assert checkpoint.read_bytes() == before
+    assert memory.blocked_recovery_archive is None
+    assert len(memory.blocked_recovery['attempts']) == 1024
+    assert not checkpoint.with_name(checkpoint.name + '.blocked-recovery-archive').exists()
