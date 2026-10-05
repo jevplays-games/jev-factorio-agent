@@ -13,10 +13,15 @@ from uuid import uuid4
 from .controller import HierarchicalLoop
 from .craft_jobs import CraftJob, InvalidCraftEvidence
 from .memory import CampaignMemory, retain_latest_craft
-from .planning.background_work import background_wait, independent_candidates
+from .planning.background_work import (
+    RESEARCH_PREFETCH_BINDING, background_wait, independent_candidates,
+)
 from .planning.ready_work import ReadyWorkPlanner
+from .planning.scheduling import research_schedule
 from .skills import Plan, Step
 from .telemetry import fingerprint, phase, utc_now, validate_attempt
+
+_BACKGROUND_WAIT_ROLLOVER = "background_wait_rollover"
 
 
 def _craft_job_step_fingerprint(job: CraftJob) -> str:
@@ -55,6 +60,52 @@ def _validate_background_step(job: CraftJob, attempt: dict, data: dict) -> Step:
             or step.timeout_ticks != job.deadline_tick - job.started_tick):
         raise ValueError("Background attempt step fingerprint or job binding mismatch")
     return step
+
+
+def _validate_background_wait_rollover(memory: BackgroundMemory) -> None:
+    """Validate the optional progress witness inside an active wait plan."""
+    if memory.active_plan is None:
+        return
+    plan = Plan.from_dict(memory.active_plan)
+    materials = plan.materials or {}
+    if not isinstance(materials, dict) or _BACKGROUND_WAIT_ROLLOVER not in materials:
+        return
+    marker = materials[_BACKGROUND_WAIT_ROLLOVER]
+    pending, attempt = memory.pending, memory.attempt
+    try:
+        job = CraftJob.from_dict(memory.background_job)
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
+        raise ValueError("Background wait rollover has no valid craft job") from error
+    if not isinstance(pending, dict) or not isinstance(attempt, dict):
+        raise ValueError("Background wait rollover has no active wait attempt")
+    step = plan.steps[memory.step_index]
+    phases = attempt.get("dispatch_phases")
+    dispatch = phases.get("dispatch") if isinstance(phases, dict) else None
+    if (not isinstance(marker, dict)
+            or set(marker) != {"schema", "receipt", "plan_id", "attempt_id", "tick"}
+            or type(marker.get("schema")) is not int or marker["schema"] != 1
+            or marker.get("receipt") != job.parameters["receipt"]
+            or marker.get("plan_id") != plan.id
+            or marker.get("attempt_id") != attempt.get("id")
+            or type(marker.get("tick")) is not int
+            or type(pending.get("started_tick")) is not int
+            or marker["tick"] <= pending["started_tick"]
+            or marker["tick"] > memory.last_tick
+            or marker["tick"] >= job.deadline_tick
+            or type(step.timeout_ticks) is not int
+            or marker["tick"] >= pending["started_tick"] + step.timeout_ticks
+            or plan.id != "background-wait:" + job.parameters["receipt"]
+            or plan.goal != job.goal or len(plan.steps) != 1 or memory.step_index != 0
+            or step.action != "factory_wait" or step.effect != "crafting_idle"
+            or step.parameters is not None
+            or pending.get("action") != "factory_wait"
+            or pending.get("dispatch") != "returned"
+            or attempt.get("action") != "factory_wait"
+            or attempt.get("plan_id") != plan.id or attempt.get("step_index") != 0
+            or attempt.get("started_tick") != pending["started_tick"]
+            or attempt.get("step_sha256") != fingerprint(asdict(step))
+            or not isinstance(dispatch, dict) or dispatch.get("status") != "returned"):
+        raise ValueError("Background wait rollover witness is not bound to the active job and attempt")
 
 
 @dataclass
@@ -116,6 +167,7 @@ class BackgroundMemory(CampaignMemory):
                 for step in memory.active_plan["steps"]
             ):
                 raise ValueError("Craft cannot be both foreground and background")
+        _validate_background_wait_rollover(memory)
         return memory
 
 
@@ -257,6 +309,70 @@ class BackgroundWorkLoop(HierarchicalLoop):
         return (not self._execution_barrier(snapshot)
                 and (job is None or job.permits(step)) and super()._step_allowed(step, snapshot))
 
+    def _investment_step_allowed(self, plan, step, snapshot) -> bool:
+        if not super()._investment_step_allowed(plan, step, snapshot):
+            return False
+        materials = plan.materials or {}
+        has_binding = RESEARCH_PREFETCH_BINDING in materials
+        parameters = step.parameters or {}
+        direct_lab_transfer = (
+            step.action == "factory_insert" and step.effect == "transfer"
+            and parameters.get("role") == "utility:lab"
+        )
+        named_prefetch = plan.description.startswith("Prefetch research supply:")
+        if not has_binding:
+            # Old checkpoints may contain the original descriptive prefetch
+            # plan without this binding. Replan it before dispatch; generic
+            # transfers and non-transfer preparation keep their old contract.
+            return not (named_prefetch and direct_lab_transfer)
+
+        binding = materials.get(RESEARCH_PREFETCH_BINDING)
+        required = {"schema", "observed_tick", "research", "item", "quantity",
+                    "demand", "remaining", "receipt"}
+        if (not isinstance(binding, dict) or set(binding) != required
+                or type(binding.get("schema")) is not int or binding["schema"] != 1
+                or type(binding.get("observed_tick")) is not int or binding["observed_tick"] < 0
+                or not isinstance(binding.get("research"), str) or not binding["research"]
+                or not isinstance(binding.get("item"), str) or not binding["item"]
+                or any(type(binding.get(key)) is not int or binding[key] <= 0
+                       for key in ("quantity", "demand", "remaining"))
+                or not isinstance(binding.get("receipt"), str) or not binding["receipt"]
+                or not named_prefetch or not direct_lab_transfer
+                or plan.goal != "rocket_launch"):
+            return False
+        item, quantity = binding["item"], binding["quantity"]
+        if (binding["demand"] != quantity or binding["remaining"] < quantity
+                or parameters.get("item") != item
+                or parameters.get("quantity") != quantity
+                or parameters.get("receipt") != binding["receipt"]
+                or step.costs != {item: quantity}):
+            return False
+
+        current_research = snapshot.factory.get("research")
+        if not isinstance(current_research, str) or not current_research:
+            return False
+        try:
+            fresh_rows = research_schedule(
+                snapshot, self.catalog, early=self._job() is not None)
+        except (KeyError, TypeError, ValueError):
+            return False
+        row = next((candidate for candidate in fresh_rows
+                    if candidate.get("item") == item and candidate.get("due") is True), None)
+        if (row is None or type(row.get("amount")) is not int
+                or type(row.get("remaining")) is not int
+                or row["amount"] < quantity or row["remaining"] < quantity):
+            return False
+
+        # A different technology may still legitimately use the same pack.
+        # The fresh current technology and its exact remaining due quantity
+        # must independently support this whole prepared transfer.
+        held_elsewhere = sum(
+            costs.get(item, 0) for owner, costs in self.memory.reservations.items()
+            if owner != plan.id
+        )
+        available = snapshot.inventory.get(item, 0) - held_elsewhere
+        return type(available) in {int, float} and available >= quantity
+
     def _refresh_goals(self, snapshot) -> None:
         if self._job() is None:
             super()._refresh_goals(snapshot)
@@ -355,7 +471,76 @@ class BackgroundWorkLoop(HierarchicalLoop):
                 self._finish_attempt(snapshot, "wait_replanned")
                 self._clear_plan()
                 return self._record(snapshot, "observe", "Yield passive wait to independent work")
+        if self._roll_background_wait_poll_window(snapshot, plan, step, pending):
+            receipt = self._job().parameters["receipt"]
+            materials = deepcopy(plan.materials or {})
+            materials[_BACKGROUND_WAIT_ROLLOVER] = {
+                "schema": 1, "receipt": receipt, "plan_id": plan.id,
+                "attempt_id": self.memory.attempt["id"], "tick": snapshot.tick,
+            }
+            self.memory.active_plan["materials"] = materials
+            self.memory.event(
+                "background_wait_poll_window_rolled", plan=plan.id,
+                receipt=receipt,
+                previous_polls=pending["polls"], tick=snapshot.tick,
+            )
+            pending["polls"] = 0
+            # Persist the same owned job/attempt/deadline before the common
+            # verifier starts the next bounded local observation window.
+            self._save()
         return super()._verify_pending(snapshot)
+
+    def _roll_background_wait_poll_window(self, snapshot, plan, step, pending) -> bool:
+        job = self._job()
+        attempt = self.memory.attempt
+        if (job is None or job.failed or self.memory.status != "running"
+                or pending.get("dispatch") != "returned"
+                or pending.get("action") != "factory_wait"
+                or plan.id != "background-wait:" + job.parameters["receipt"]
+                or plan.goal != job.goal or step.action != "factory_wait"
+                or step.effect != "crafting_idle" or step.parameters is not None
+                or type(pending.get("started_tick")) is not int
+                or type(pending.get("polls")) is not int
+                or pending["polls"] + 1 < self.max_pending_polls
+                or snapshot.tick >= job.deadline_tick
+                or snapshot.tick - pending["started_tick"] >= step.timeout_ticks
+                or step.satisfied(snapshot)
+                or not isinstance(attempt, dict)
+                or attempt.get("action") != "factory_wait"
+                or attempt.get("plan_id") != plan.id
+                or attempt.get("step_index") != self.memory.step_index
+                or attempt.get("started_tick") != pending["started_tick"]
+                or attempt.get("step_sha256") != fingerprint(asdict(step))):
+            return False
+        materials = plan.materials or {}
+        if not isinstance(materials, dict):
+            return False
+        if _BACKGROUND_WAIT_ROLLOVER not in materials:
+            last_rollover_tick = pending["started_tick"]
+        else:
+            rollover = materials[_BACKGROUND_WAIT_ROLLOVER]
+            if (not isinstance(rollover, dict)
+                    or set(rollover) != {"schema", "receipt", "plan_id", "attempt_id", "tick"}
+                    or type(rollover.get("schema")) is not int or rollover["schema"] != 1
+                    or rollover.get("receipt") != job.parameters["receipt"]
+                    or rollover.get("plan_id") != plan.id
+                    or rollover.get("attempt_id") != attempt.get("id")
+                    or type(rollover.get("tick")) is not int
+                    or rollover["tick"] < pending["started_tick"]
+                    or rollover["tick"] > snapshot.tick):
+                return False
+            last_rollover_tick = rollover["tick"]
+        if type(last_rollover_tick) is not int or snapshot.tick <= last_rollover_tick:
+            return False
+        dispatch = attempt.get("dispatch_phases", {}).get("dispatch")
+        if not isinstance(dispatch, dict) or dispatch.get("status") != "returned":
+            return False
+        craft_attempt = self.memory.background_attempt
+        if craft_attempt is not None and (
+                craft_attempt.get("action") != "factory_craft_job"
+                or craft_attempt.get("receipt") != job.parameters["receipt"]):
+            return False
+        return True
 
     def _tracked_plan(self, plan: Plan, snapshot) -> Plan:
         if len(plan.steps) != 1 or plan.steps[0].action != "factory_craft":

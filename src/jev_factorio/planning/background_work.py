@@ -12,6 +12,8 @@ from .ready_work import ReadyWorkPlanner
 from .demand import SupplyLedger
 from .scheduling import research_schedule, future_research_demands, future_research_plan
 
+RESEARCH_PREFETCH_BINDING = "background_research_prefetch"
+
 
 def research_demands(snapshot, catalog, *, early: bool = False) -> list[tuple[str, int]]:
     """Refill before forecast starvation, with the existing bounded quantities."""
@@ -58,6 +60,9 @@ def independent_candidates(goal, snapshot, catalog, job: CraftJob | None = None,
             pass
     probes = 0
     if goal == "rocket_launch":
+        due_rows = {row["item"]: row for row in
+                    research_schedule(snapshot, catalog, early=job is not None)
+                    if row["due"]}
         for item, amount in research_demands(snapshot, catalog, early=job is not None):
             if job and item in job.outputs:
                 continue
@@ -68,7 +73,27 @@ def independent_candidates(goal, snapshot, catalog, job: CraftJob | None = None,
                 else:
                     plan = worker._need(item, amount)
                 if plan:
-                    candidates.append(replace(plan, description=f"Prefetch research supply: {amount} {item}. " + plan.description))
+                    step = plan.steps[0]
+                    parameters = step.parameters or {}
+                    row = due_rows.get(item)
+                    materials = dict(plan.materials or {})
+                    if (row is not None and step.action == "factory_insert"
+                            and step.effect == "transfer"
+                            and parameters.get("role") == "utility:lab"
+                            and parameters.get("item") == item
+                            and parameters.get("quantity") == amount
+                            and isinstance(parameters.get("receipt"), str)):
+                        materials[RESEARCH_PREFETCH_BINDING] = {
+                            "schema": 1, "observed_tick": snapshot.tick,
+                            "research": snapshot.factory.get("research"),
+                            "item": item, "quantity": amount,
+                            "demand": row["amount"], "remaining": row["remaining"],
+                            "receipt": parameters["receipt"],
+                        }
+                    candidates.append(replace(
+                        plan, materials=materials or None,
+                        description=f"Prefetch research supply: {amount} {item}. "
+                                    + plan.description))
                 # A locked intermediate or busy handcraft must not hide an
                 # independent raw ingredient of this same science batch.
                 for material, target in sorted(worker.targets.items()):
