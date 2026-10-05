@@ -642,7 +642,9 @@ def analyze_rows(rows: list[dict], trial: dict, initial: dict, final: dict) -> d
            'final_step_index_not_cleared')
     reject(initial.get('status') != 'running', 'initial_checkpoint_not_running')
     reject(final.get('status') not in {'running', 'completed'}, 'terminal_failure')
-    extensions = {'background_work': 'background_schema', 'furnace_input_belts': 'input_routes_schema',
+    extensions = {'background_work': 'background_schema',
+                  'furnace_output_buffers': 'output_buffers_schema',
+                  'furnace_input_belts': 'input_routes_schema',
                   'mining_outposts': 'outposts_schema', 'ore_side_successors': 'successor_schema'}
     for cp in (initial, final):
         reject(cp.get('solid_intents') != trial['solid_intents']
