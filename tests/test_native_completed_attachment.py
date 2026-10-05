@@ -40,7 +40,9 @@ class Client:
         if self.reads == 2 and self.after:
             self.after(ownership)
         return json.dumps({'schema': 1, 'session_id': 'test-session', 'actor_unit': 13,
-                           'tick': ownership['tick'], 'connector_ownership': ownership})
+                           'tick': ownership['tick'], 'connector_ownership': ownership,
+                           'completed_craft': False,
+                           'settled_factory': {'sites': {}, 'output_offers': {}, 'outpost_offers': {}}})
 
 
 def test_completed_routes_attach_read_only_after_both_summary_and_paid_cells_match():
@@ -168,3 +170,71 @@ def test_make_backend_forwards_checkpoint_binding_before_start(monkeypatch):
     make_backend('fle', resume=True, connector_binding=binding)
     assert calls == [{'resume': True, 'adopt_session': False,
                       'connector_witness_path': None, 'connector_binding': binding}]
+
+
+def settled_case():
+    lua, client, binding = installed_case()
+    lua.execute('''
+      local rt=jev_fle_runtime;local p=game.get_player(1)
+      local e={valid=true,name='stone-furnace',unit_number=200,position={x=8,y=9},
+               surface=p.surface,force=p.force}
+      rt.campaign.entities['recipe:iron-plate']=e
+      site={role='recipe:iron-plate',item='iron-plate',ore='iron-ore',
+            anchor='cell-site:iron-ore:8:9:0:1',source_unit=200,entity=e,
+            position={x=8,y=9},surface=p.surface,force=p.force,belt_count=8}
+      output_offer={source='recipe:iron-plate',item='iron-plate',source_unit=200,
+        source_position={x=8,y=9},entity=e,layout='output:200:joint',
+        chest_position={x=10.5,y=9.5},inserter_position={x=9.5,y=9.5},direction=4,
+        chest_role='output-chest:200',inserter_role='output-arm:200',parts={}}
+      outpost_offer={resource='iron-ore',layout='outpost:iron-ore:1',
+        surface=p.surface,force=p.force,parts={},patch={},steps={
+         {part='chest',name='wooden-chest',direction=0,position={x=12.5,y=3.5}},
+         {part='drill',name='burner-mining-drill',direction=4,position={x=12,y=4}}}}
+      rt.production_sites.owned['recipe:iron-plate']=site
+      rt.output_buffers.offers['recipe:iron-plate']=output_offer
+      rt.mining_outposts.offers['iron-ore']=outpost_offer
+      -- Observer execution would clear or regenerate proposals. It must never run.
+      rt.campaign.observe_production_sites=function() error('stateful observer called') end
+    ''')
+    return lua, client, binding
+
+
+def test_settled_manual_furnace_and_unspent_offers_attach_without_observer_or_mutation():
+    lua, client, binding = settled_case()
+    result = readback(client, checkpoint_binding=binding)
+    assert result['connector_snapshot_qualified'] is True
+    assert lua.eval("jev_fle_runtime.production_sites.owned['recipe:iron-plate']==site")
+    assert lua.eval("jev_fle_runtime.output_buffers.offers['recipe:iron-plate']==output_offer")
+    assert lua.eval("jev_fle_runtime.mining_outposts.offers['iron-ore']==outpost_offer")
+    assert lua.eval('next(output_offer.parts)==nil and next(outpost_offer.parts)==nil')
+
+
+@pytest.mark.parametrize('tamper', [
+    'site.source_unit=999', 'site.position.x=99', 'site.force={}',
+    "site.role='growth:iron-plate'", "site.pending={}", 'site.belt_count=65',
+    'output_offer.parts.chest={unit_number=888}', "output_offer.fault='lost'",
+    'output_offer.source_unit=999', 'output_offer.source_position.y=99',
+    'outpost_offer.parts.drill={unit_number=888}', 'outpost_offer.pending={}',
+    'outpost_offer.steps[1].unit_number=888', 'outpost_offer.force={}',
+    "jev_fle_runtime.campaign.entities['output-chest:200']={valid=true,unit_number=888}",
+    "jev_fle_runtime.production_sites.offers['recipe:copper-plate']={}",
+])
+def test_settled_qualification_refuses_paid_pending_faulted_or_mismatched_owners(tamper):
+    from lupa.lua52 import LuaError
+    lua, client, binding = settled_case()
+    lua.execute(tamper)
+    with pytest.raises((LuaError, ValueError, RuntimeError)):
+        readback(client, checkpoint_binding=binding)
+
+
+def test_settled_owner_change_between_detail_pages_is_rejected():
+    lua, client, binding = settled_case()
+    send = client.send_command
+    def changing(command):
+        result = send(command)
+        if 'connector_page(' in command:
+            lua.execute("output_offer.layout='output:200:changed'")
+        return result
+    client.send_command = changing
+    with pytest.raises(RuntimeError, match='ledger changed'):
+        readback(client, checkpoint_binding=binding)

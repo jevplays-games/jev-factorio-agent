@@ -67,7 +67,7 @@ def is_supported_direct_installation(result):
     return source_bound_direct_profile(result) is not None
 
 
-def current_connector_snapshot_command(result, *, completed_routes=False):
+def current_connector_snapshot_command(result, *, completed_routes=False, completed_craft=None):
     """Qualify an exact bundled direct profile without changing ownership.
 
     Called only AFTER metadata/callback and every installed asset hash have
@@ -82,6 +82,17 @@ def current_connector_snapshot_command(result, *, completed_routes=False):
         raise RuntimeError('Native direct attachment requires an exact supported module profile')
     if completed_routes and profile != 'current_full':
         raise RuntimeError('Completed connector attachment requires the current full profile')
+    craft_guard = 'j.job==nil'
+    if completed_craft is not None:
+        from .native_completed_craft import validate_completed_craft_binding
+        bound = validate_completed_craft_binding(completed_craft)
+        if not completed_routes:
+            raise RuntimeError('Completed craft requires checkpoint-bound connector attachment')
+        craft_guard = ('type(j.job)=="table" and j.job.id==' + json.dumps(bound['id'])
+            + ' and j.job.status=="completed" and j.job.paid==true and j.job.error==nil'
+              ' and j.job.session_id==rt.jev_session_id and j.job.unit_number==a.unit_number'
+              ' and j.job.player_index==p.index and j.job.surface_index==a.surface.index'
+              ' and j.job.force_index==a.force.index')
     session = json.dumps(result['session_id'])
     actor = str(result['actor_unit'])
     assets = json.dumps(json.dumps(result['native_installation']['assets'], sort_keys=True))
@@ -132,7 +143,7 @@ def current_connector_snapshot_command(result, *, completed_routes=False):
         'local s=rt.solid_routes;local q=rt.coal_supply;'
         'local o=rt.mining_outposts;local sites=rt.production_sites;'
         'if j then assert(good(j.observe_wrapper) and good(j.previous_observe) '
-        'and j.previous_observe==l.observer and j.job==nil and not j.submitting '
+        'and j.previous_observe==l.observer and ' + craft_guard + ' and not j.submitting '
         'and type(p.crafting_queue_size)=="number" and p.crafting_queue_size==0 '
         'and good(j.pre_handler) and good(j.cancel_handler) and good(j.crafted_handler) '
         'and script.get_event_handler(defines.events.on_pre_player_crafted_item)==j.pre_handler '
@@ -172,21 +183,24 @@ def current_connector_snapshot_command(result, *, completed_routes=False):
         'or string.match(role,"^output%-arm:") or string.match(role,"^input:") '
         'or string.match(role,"^outpost:")));end end;'
     ]
+    if completed_routes:
+        from .native_settled_factory import SETTLED_FACTORY_GUARDS
+        owner_guards.append(SETTLED_FACTORY_GUARDS)
     installed = result['modules']
-    if installed.get('output_buffers'):
+    if installed.get('output_buffers') and not completed_routes:
         owner_guards.append(
             'assert(b and b.protocol==1 and empty(b.cells) and empty(b.offers));'
         )
-    if installed.get('input_routes'):
+    if installed.get('input_routes') and not completed_routes:
         owner_guards.append(
             'assert(i and i.protocol==1 and empty(i.cells) and empty(i.offers));'
         )
-    if installed.get('production_sites'):
+    if installed.get('production_sites') and not completed_routes:
         owner_guards.append(
             'assert(sites and sites.protocol==1 and empty(sites.owned) '
             'and empty(sites.offers));'
         )
-    if installed.get('mining_outposts'):
+    if installed.get('mining_outposts') and not completed_routes:
         owner_guards.append(
             'assert(o and o.protocol==1 and empty(o.cells) and empty(o.offers) '
             'and empty(o.receipts));'
@@ -265,7 +279,8 @@ def current_connector_snapshot_command(result, *, completed_routes=False):
             'and ownership.active==nil and type(ownership.routes)=="table");'
             'assert(game.tick==tick and ledger.active==nil);'
             'rcon.print(helpers.table_to_json({schema=1,session_id=rt.jev_session_id,'
-            'actor_unit=a.unit_number,tick=tick,connector_ownership=ownership}))'
+            'actor_unit=a.unit_number,tick=tick,connector_ownership=ownership,settled_factory=settled,'
+            'completed_craft=j and j.job or false}))'
         )
     return '/sc ' + prefix + (
         'assert(not rt.solid_routes and not rt.coal_supply);'
@@ -282,10 +297,10 @@ def current_connector_snapshot_command(result, *, completed_routes=False):
     )
 
 
-def qualify_current_connector_snapshot(client, result, *, checkpoint_binding=None):
+def qualify_current_connector_snapshot(client, result, *, checkpoint_binding=None, completed_craft=None):
     if checkpoint_binding is not None and checkpoint_binding.get('routes'):
         from .native_completed_attachment import qualify_completed_connectors
-        return qualify_completed_connectors(client, result, checkpoint_binding)
+        return qualify_completed_connectors(client, result, checkpoint_binding, completed_craft=completed_craft)
     row = decode_native(client.send_command(current_connector_snapshot_command(result)))
     if not isinstance(row, dict):
         raise RuntimeError('Current connector snapshot requires reconciliation')

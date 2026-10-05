@@ -25,12 +25,31 @@ not an RCON connectivity failure and clearing the ledger would destroy proof.
 
 Resume now passes the connector binding from the already validated checkpoint
 capture. For the exact current full installed profile, attachment checks the
-source hashes, actor, session, callback chain, and empty optional-owner registries;
+source hashes, actor, session, callback chain, and qualified settled factory state;
 reads the completed connector summaries; verifies every paid cell and endpoint
 against the checkpoint; and checks the summary again after detail paging.
+Settled factory state permits the original iron/copper furnaces and strictly
+unpaid output/outpost proposals, with matching native entity identities and
+bounded known schemas. Output/input/outpost component ownership, pending work,
+faults and receipts must remain empty. Proposals are never surveyed, cleared or
+adopted by this check. The two snapshot reads must retain the same qualified state.
 It installs no Lua and changes no owner, receipt, payment, or world state.
 Active, partial, faulted, external, changed, missing, or additional routes remain
 reconciliation failures. Other native profiles retain their existing guards.
+
+The craft module also retains its most recent completed job. A `job == nil`
+requirement therefore rejects ordinary post-craft resumptions. This path accepts
+a completed receipt only when the captured checkpoint contains both its exact
+completion event and a unique verified attempt: receipt, plan, output totals and
+clock bounds must agree. Native actor identity, paid/full acceptance, completion,
+empty queue and unchanged event callbacks are checked independently. A missing
+historical binding still requires reconciliation. The check does not credit the
+outputs again or require them to remain unspent in the current inventory.
+
+The live preflight found two settled furnaces, two unpaid output proposals, two
+unpaid outpost proposals and the completed 38-pole craft. The candidate read-only
+qualifier verified that state and all 28 paid connector cells at tick 9355527
+without changing the checkpoint. This is attachment evidence, not resumed gameplay.
 
 The exact boiler planner error can be revisited once with the existing
 changed-contract recovery authorization. It is **not** added to automatic
