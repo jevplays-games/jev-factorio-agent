@@ -2,10 +2,63 @@
 from copy import deepcopy
 from dataclasses import asdict
 import math
+import json
 import re
 from types import SimpleNamespace
 
 from ..craft_jobs import counts, identifier, natural, receipt_for
+
+
+def checkpoint_background_craft(data):
+    """Bind unresolved background work without claiming prior verification."""
+    if data.get('background_job') is None:
+        return None
+    from ..memory import checkpoint_memory_type
+    memory = checkpoint_memory_type(data).from_bytes(
+        json.dumps(data, sort_keys=True, allow_nan=False).encode(),
+        data['session_id'], data['target'])
+    if any(getattr(memory, key, None) is not None for key in
+           ('pending', 'attempt', 'active_plan', 'transfer_recovery')):
+        raise ValueError('Background attachment requires no foreground work')
+    binding = {'job': deepcopy(memory.background_job),
+               'attempt': deepcopy(memory.background_attempt),
+               'step': deepcopy(memory.background_step), 'checkpoint_tick': memory.last_tick}
+    validate_background_craft_binding(binding)
+    return binding
+
+
+def validate_background_craft_binding(binding):
+    from ..background import _validate_background_step
+    from ..craft_jobs import CraftJob
+    from ..telemetry import validate_attempt
+    if not isinstance(binding, dict) or set(binding) != {'job', 'attempt', 'step', 'checkpoint_tick'}:
+        raise ValueError('Invalid background craft attachment binding')
+    job = CraftJob.from_dict(binding['job'])
+    attempt = binding['attempt']
+    validate_attempt(attempt)
+    _validate_background_step(job, attempt, binding['step'])
+    if (job.failed or attempt['plan_id'] != job.plan_id or attempt['step_index'] != 0
+            or attempt['receipt'] != job.parameters['receipt']
+            or attempt['started_tick'] > job.started_tick
+            or natural(binding['checkpoint_tick']) < job.last_progress_tick):
+        raise ValueError('Background craft attachment differs from checkpoint')
+    return job
+
+
+def verify_background_craft(receipt, inventory, binding, result, tick):
+    """Qualify completed native work; only the controller may commit its outcome."""
+    job = validate_background_craft_binding(binding)
+    if (job.session_id != result['session_id'] or job.actor['unit_number'] != result['actor_unit']
+            or tick < binding['checkpoint_tick'] or not isinstance(receipt, dict)
+            or receipt.get('status') != 'completed' or receipt.get('error') is not None
+            or counts(inventory) != inventory or set(inventory) != set(job.outputs)):
+        raise ValueError('Retained background craft requires reconciliation')
+    snapshot = SimpleNamespace(session_id=result['session_id'], tick=tick, inventory=inventory,
+        factory={'craft_jobs_protocol': 1, 'craft_job': receipt,
+                 'craft_job_actor': {**job.actor, 'session_id': job.session_id},
+                 'player_connected': True, 'player_bound': True})
+    if not job.observe(snapshot):
+        raise ValueError('Retained background craft has not completed')
 
 
 def checkpoint_completed_craft(data):

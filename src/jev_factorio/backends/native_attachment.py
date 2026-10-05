@@ -497,10 +497,16 @@ def prepare_install_command(script: str, attachment=None) -> str:
 
 def readback(client, *, receipt_path=None, connector_witness_path=None,
              checkpoint_binding=None,
-             completed_craft=None,
+             completed_craft=None, background_craft=None,
              allow_legacy_manual_cycle_repair=False,
              allow_unqualified_connector_bridge=False):
     result = decode_native(client.send_command('/sc ' + PROBE))
+    if background_craft is not None:
+        from .native_current_attachment import is_current_direct_installation
+        if (completed_craft is not None or not isinstance(result, dict)
+                or not is_current_direct_installation(result)
+                or not isinstance(checkpoint_binding, dict) or not checkpoint_binding.get('routes')):
+            raise RuntimeError('Background craft requires the current checkpoint-bound direct profile')
     if isinstance(result, dict) and result.get('connector_snapshot_qualified') is True:
         result['connector_snapshot_ownership'] = _normalize_empty_connector_routes(
             result.get('connector_snapshot_ownership'))
@@ -650,7 +656,8 @@ def readback(client, *, receipt_path=None, connector_witness_path=None,
         if supported_direct:
             from .native_current_attachment import qualify_current_connector_snapshot
             return qualify_current_connector_snapshot(
-                client, result, checkpoint_binding=checkpoint_binding, completed_craft=completed_craft)
+                client, result, checkpoint_binding=checkpoint_binding, completed_craft=completed_craft,
+                background_craft=background_craft)
         if (result['modules']['connector_ownership']
                 and not (profile == LEGACY_MANUAL_CYCLE_PROFILE
                          and allow_legacy_manual_cycle_repair)
