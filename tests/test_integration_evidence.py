@@ -11,6 +11,19 @@ from jev_factorio.acceptance_io import canonical
 from integration_evidence_fixtures import evidence
 
 
+def configure_output_buffers(args, enabled):
+    rows, trial, initial, final = args
+    trial['configuration']['furnace_output_buffers'] = enabled
+    for record in rows:
+        record['acceptance_configuration'] = deepcopy(trial['configuration'])
+    for checkpoint in (initial, final):
+        if enabled:
+            checkpoint.update(output_buffers_schema=1, output_commitments={})
+        else:
+            checkpoint.pop('output_buffers_schema', None)
+            checkpoint.pop('output_commitments', None)
+
+
 def test_reconciled_fixture_is_still_not_native_acceptance():
     rows, trial, initial, final = evidence()
     value = report.analyze_rows(rows, trial, initial, final)
@@ -199,6 +212,103 @@ def test_cli_never_overwrites_and_does_not_echo_private_payload(tmp_path, capsys
     assert 'private-fixture' not in capsys.readouterr().err
 
 
+@pytest.mark.parametrize('boundary', ['initial', 'final'])
+@pytest.mark.parametrize(('enabled', 'extension_present'), [(False, True), (True, False)])
+def test_analyze_rows_rejects_output_buffer_composition_mismatch(boundary, enabled,
+                                                                  extension_present):
+    args = evidence()
+    configure_output_buffers(args, enabled)
+    checkpoint = args[2 if boundary == 'initial' else 3]
+    if extension_present:
+        checkpoint.update(output_buffers_schema=1, output_commitments={})
+    else:
+        checkpoint.pop('output_buffers_schema', None)
+        checkpoint.pop('output_commitments', None)
+
+    result = report.analyze_rows(*args)
+    assert 'checkpoint_composition_mismatch' in result['issues']
+    assert not result['integrity_checks_passed']
+    assert not result['measurement_checks_passed']
+    assert result['native_acceptance'] == 'not_accepted'
+    assert result['deployment_authorized'] is False
+
+
+def test_analyze_rows_accepts_declared_output_buffer_composition():
+    args = evidence()
+    configure_output_buffers(args, True)
+    result = report.analyze_rows(*args)
+    assert result['integrity_checks_passed'], result['issues']
+    assert result['measurement_checks_passed'], result['issues']
+    assert result['native_acceptance'] == 'not_accepted'
+    assert result['deployment_authorized'] is False
+
+
+def test_output_owner_prefix_is_retained_inside_composed_checkpoints():
+    args = evidence()
+    configure_output_buffers(args, True)
+    owner = {'recipe:iron-plate': {
+        'source_unit': 50000,
+        'layout': 'output-layout:fixture',
+        'parts': {'chest': {
+            'role': 'fixture:output-chest', 'unit_number': 50001,
+            'receipt': 'paid:fixture:output-chest', 'paid': 1,
+        }},
+    }}
+    args[2]['output_commitments'] = deepcopy(owner)
+    args[3]['output_commitments'] = deepcopy(owner)
+    valid = report.analyze_rows(*args)
+    assert valid['integrity_checks_passed'], valid['issues']
+
+    args[3]['output_commitments'] = {}
+    regressed = report.analyze_rows(*args)
+    assert 'composed_ownership_regressed' in regressed['issues']
+    assert not regressed['integrity_checks_passed']
+    assert regressed['native_acceptance'] == 'not_accepted'
+
+
+@pytest.mark.parametrize('boundary', ['initial', 'final'])
+@pytest.mark.parametrize(('enabled', 'extension_present'), [(False, True), (True, False)])
+def test_file_analyzer_rejects_output_buffer_composition_mismatch_without_mutation(
+        tmp_path, boundary, enabled, extension_present):
+    args = evidence()
+    configure_output_buffers(args, enabled)
+    checkpoint = args[2 if boundary == 'initial' else 3]
+    if extension_present:
+        checkpoint.update(output_buffers_schema=1, output_commitments={})
+    else:
+        checkpoint.pop('output_buffers_schema', None)
+        checkpoint.pop('output_commitments', None)
+    paths = files(tmp_path, args)
+    before = {name: path.read_bytes() for name, path in paths.items()}
+
+    result = report.analyze(paths['gameplay'], paths['trial'],
+                            paths['initial_checkpoint'], paths['final_checkpoint'])
+    assert 'checkpoint_composition_mismatch' in result['issues']
+    assert not result['measurement_checks_passed']
+    assert result['native_acceptance'] == 'not_accepted'
+    assert result['deployment_authorized'] is False
+    assert before == {name: path.read_bytes() for name, path in paths.items()}
+
+
+def test_cli_exports_composition_failure_without_acceptance_or_authority(tmp_path):
+    args = evidence()
+    configure_output_buffers(args, False)
+    args[3].update(output_buffers_schema=1, output_commitments={})
+    paths = files(tmp_path / 'inputs', args)
+    output = tmp_path / 'report.json'
+    cli_args = [item for key, path in paths.items()
+                for item in ('--' + key.replace('_', '-'), str(path))]
+    cli_args += ['--output', str(output)]
+
+    with pytest.raises(SystemExit) as result:
+        report.main(cli_args)
+    assert result.value.code == 2
+    saved = json.loads(output.read_bytes())
+    assert 'checkpoint_composition_mismatch' in saved['issues']
+    assert saved['native_acceptance'] == 'not_accepted'
+    assert saved['deployment_authorized'] is False
+
+
 def test_symlink_and_incomplete_jsonl_rejected(tmp_path):
     paths = files(tmp_path)
     target = paths['gameplay']; alias = tmp_path / 'alias'; alias.symlink_to(target)
@@ -280,6 +390,7 @@ def test_valid_successor_composed_checkpoint_can_be_analyzed():
     args = evidence()
     for checkpoint in args[2:]:
         checkpoint.update(background_schema=2, background_job=None, background_attempt=None,
+                          output_buffers_schema=1, output_commitments={},
                           input_routes_schema=1, input_commitments={}, successor_schema=1,
                           successor_projects={}, successor_receipts={})
     for flag in ('background_work', 'furnace_output_buffers', 'furnace_input_belts', 'ore_side_successors'):
@@ -527,7 +638,8 @@ def test_native_positive_samples_must_advance_with_attributed_receipts():
 def test_observed_input_commitment_cannot_be_omitted_from_final_checkpoint():
     args = evidence()
     for checkpoint in args[2:]:
-        checkpoint.update(input_routes_schema=1, input_commitments={})
+        checkpoint.update(output_buffers_schema=1, output_commitments={},
+                          input_routes_schema=1, input_commitments={})
     args[1]['configuration'].update(furnace_output_buffers=True, furnace_input_belts=True)
     for row in args[0]:
         row['acceptance_configuration'] = deepcopy(args[1]['configuration'])
