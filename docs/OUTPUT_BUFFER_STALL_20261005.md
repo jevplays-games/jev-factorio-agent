@@ -94,3 +94,28 @@ contradictory urgency/reason annotations, existing ownership/payment/receipt
 negatives, and the recorded V16 request. Offline qualification is not a JEV
 approval; production recovery still requires merged-source preflight and a
 fresh independent decision.
+
+
+## Follow-up: construction kit inherited the producer's output target
+
+The campaign crafted 20 science packs and started logistic-science research,
+then acquired components for an assembler intended to make later science.
+At tick 9669167 its next action collected one paid iron plate from the owned
+furnace. The recursive path correctly began at `assembling-machine-1`, but the
+local objective still named `automation-science-pack`. The output-pickup proof
+correctly rejected that mismatch, and JEV rejected unsupported progress.
+
+While compiling an unbuilt producer's kit, temporarily focus on one machine.
+Restore the caller's focus even if compilation fails. Keep the original capital
+specification, stage, deadline, failure budget, native action and receipt intact.
+The model sees kit progress separately from the planner's projected production
+payoff; neither acquiring a plate nor completing the kit proves science output.
+Installed-machine supply continues to use the producer's ordinary target.
+
+For a construction hold, compare `local_target.item` with the first item in the
+native dependency path. A machine-kit path must not pretend that the eventual
+product directly consumes the kit's inputs. Validate the actual owned output,
+recipe path and tick, then recompile the current capital continuation without
+dispatch. A fresh native diagnostic at tick 9689426 restored the one-plate pickup
+proof with the same action/receipt. Model approval and gameplay remain separate
+acceptance checks.
