@@ -308,20 +308,22 @@ local ok=rt and type(rt.jev_session_id)=="string" and #rt.jev_session_id>0
     and good(f.bind) and good(f.observe) and good(f.place) and good(f.tick_handler)
 if c then ok=ok and good(c.observe) and good(c.transfer) and good(c.configure)
     and l and l.schema==1 and c.launch==l.launch and c.craft==l.craft
-    and good(l.observer) and good(c.observation_snapshot) and good(c.observation_snapshot_v2)
+    and good(l.observer)
+    and (c.observation_snapshot==nil or good(c.observation_snapshot))
+    and (c.observation_snapshot_v2==nil or good(c.observation_snapshot_v2))
 end
 if j then ok=ok and l and good(j.observe_wrapper) and good(j.previous_observe)
     and j.previous_observe==l.observer end
-if b then ok=ok and j and l and b.protocol==1 and good(b.observer) and good(b.transfer)
-    and b.previous_observe==j.observe_wrapper and b.previous_transfer==l.transfer
+if b then ok=ok and l and b.protocol==1 and good(b.observer) and good(b.transfer)
+    and b.previous_observe==(j and j.observe_wrapper or l.observer)
+    and b.previous_transfer==l.transfer
     and script.get_event_handler(defines.events.on_tick)==b.tick_handler end
 if i then ok=ok and b and i.protocol==1 and i.previous_observe==b.observer
     and i.previous_transfer==b.transfer and good(i.observer) and good(i.transfer) end
     if s then ok=ok and s.protocol==1 and s.implementation_revision==4
     and s.contract_family=="straight-solid-corridor-v1"
     and s.reservation_contract=="full-corridor-manhattan-v1" and type(s.coal_api)=="table"
-    and c.observe==s.observer and c.transfer==s.transfer and c.configure==s.configure
-    and i and b and j end
+    and c.observe==s.observer and c.transfer==s.transfer and c.configure==s.configure end
 local bridge=rt and rt.connector_observer_bridge_v1
 if bridge then ok=ok and bridge.protocol==1 and good(bridge.previous_observe)
     and good(bridge.observer) and bridge.observer==c.observe
@@ -494,6 +496,7 @@ def prepare_install_command(script: str, attachment=None) -> str:
 
 
 def readback(client, *, receipt_path=None, connector_witness_path=None,
+             checkpoint_binding=None,
              allow_legacy_manual_cycle_repair=False,
              allow_unqualified_connector_bridge=False):
     result = decode_native(client.send_command('/sc ' + PROBE))
@@ -623,9 +626,9 @@ def readback(client, *, receipt_path=None, connector_witness_path=None,
                 raise RuntimeError('Closed-world migration profile requires reconciliation')
         elif profile is not False:
             raise RuntimeError('Unknown native installation profile requires reconciliation')
-        from .native_current_attachment import is_current_direct_installation
-        current_direct = is_current_direct_installation(result)
-        if (result['modules']['connector_ownership'] and not current_direct
+        from .native_current_attachment import is_supported_direct_installation
+        supported_direct = is_supported_direct_installation(result)
+        if (result['modules']['connector_ownership'] and not supported_direct
                 and not (profile == LEGACY_MANUAL_CYCLE_PROFILE
                          and allow_legacy_manual_cycle_repair)
                 and (result['modules']['connector_observer_bridge_v1'] is not True
@@ -643,9 +646,10 @@ def readback(client, *, receipt_path=None, connector_witness_path=None,
                 continue  # Exact e759 hash is pinned; retained closure is reused.
             if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != expected:
                 raise RuntimeError('Native Lua source differs from installed manifest')
-        if current_direct:
+        if supported_direct:
             from .native_current_attachment import qualify_current_connector_snapshot
-            return qualify_current_connector_snapshot(client, result)
+            return qualify_current_connector_snapshot(
+                client, result, checkpoint_binding=checkpoint_binding)
         if (result['modules']['connector_ownership']
                 and not (profile == LEGACY_MANUAL_CYCLE_PROFILE
                          and allow_legacy_manual_cycle_repair)

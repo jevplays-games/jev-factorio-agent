@@ -588,6 +588,14 @@ def _has_provider_operator_handoff(reason: object, history: object, attempts: li
     return False
 
 
+def _source_recovery_reason(reason, allow_source_change):
+    # Only an explicit changed-contract admission can revisit this planner
+    # failure. Do not add it to normal polling or request-attempt reasons.
+    return is_recoverable_reason(reason) or (
+        allow_source_change
+        and reason == 'Current native boiler identity and coal stock are required')
+
+
 def validate_memory_state(memory, current_source: dict, *, allow_source_change: bool = False) -> None:
     current = _source(current_source)
     if memory.blocked_recovery is None:
@@ -600,9 +608,9 @@ def validate_memory_state(memory, current_source: dict, *, allow_source_change: 
         raise ValueError("First blocked recovery requires explicit changed-contract authorization")
     if state["source_revision"] != current and not (
             allow_source_change and memory.status == "blocked"
-            and is_recoverable_reason(memory.reason)):
+            and _source_recovery_reason(memory.reason, allow_source_change)):
         raise ValueError("Persistent blocked-recovery source changed; explicit source authorization is required")
-    if (memory.status == "blocked" and not is_recoverable_reason(memory.reason)
+    if (memory.status == "blocked" and not _source_recovery_reason(memory.reason, allow_source_change)
             and not _has_provider_operator_handoff(
                 memory.reason, memory.history, state["attempts"])):
         raise ValueError("Persistent recovery does not admit this blocked reason")
@@ -627,7 +635,7 @@ def validate_checkpoint_metadata(data: object, current_source: dict, *,
     if type(session_id) is not str or not session_id:
         raise ValueError("Persistent blocked-recovery session identity is missing")
     if state is None:
-        if status == "blocked" and not is_recoverable_reason(reason):
+        if status == "blocked" and not _source_recovery_reason(reason, allow_source_change):
             raise ValueError("Persistent recovery does not admit this blocked reason")
         if status == "blocked" and not allow_source_change:
             raise ValueError("Blocked resume requires source-authorized first recovery")
@@ -637,9 +645,9 @@ def validate_checkpoint_metadata(data: object, current_source: dict, *,
         raise ValueError("First blocked recovery requires explicit changed-contract authorization")
     if state["source_revision"] != _source(current_source) and not (
             allow_source_change and status == "blocked"
-            and is_recoverable_reason(reason)):
+            and _source_recovery_reason(reason, allow_source_change)):
         raise ValueError("Persistent blocked-recovery source changed; explicit source authorization is required")
-    if (status == "blocked" and not is_recoverable_reason(reason)
+    if (status == "blocked" and not _source_recovery_reason(reason, allow_source_change)
             and not _has_provider_operator_handoff(
                 reason, data.get("history"), state["attempts"])):
         raise ValueError("Persistent recovery does not admit this blocked reason")
@@ -655,7 +663,7 @@ def ensure_state(memory, source_revision: dict, *, allow_source_change: bool = F
     state = _validate_state(memory.blocked_recovery, memory.session_id)
     if state["source_revision"] != source:
         if not (allow_source_change and memory.status == "blocked"
-                and is_recoverable_reason(memory.reason)):
+                and _source_recovery_reason(memory.reason, allow_source_change)):
             raise ValueError("Persistent blocked-recovery source changed")
         state["source_revision"] = source
     return state
