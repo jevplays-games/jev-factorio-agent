@@ -7,7 +7,7 @@ import pytest
 from jev_factorio.skills import Plan
 from jev_factorio.state import GameSnapshot
 from jev_factorio.planning.catalog import Catalog
-from jev_factorio.planning.craft_demand import craft_demand, qualified_craft_demand
+from jev_factorio.planning.decision_support import craft_demand, qualified_craft_demand
 from jev_factorio.planning.bootstrap_chain import catalog_projection
 from jev_factorio.planning.decision_support import scheduling_context
 from jev_factorio.judgments import question_batch, select_plan

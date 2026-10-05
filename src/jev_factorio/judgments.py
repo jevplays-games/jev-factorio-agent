@@ -2990,7 +2990,7 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     'start evidence. Missing, stale, mismatched or contrary current ownership, inputs, '
                     'fuel or recipe dependencies means unsupported. Later output/full completion remain '
                     'unverified; this judgment waives no native checks.')
-            from .planning.craft_demand import qualified_craft_demand
+            from .planning.decision_support import qualified_craft_demand
             if qualified_craft_demand(plan, facts, row):
                 questions[plan.id + '/useful_progress']['instructions'] = (
                     f'For {pointer}, inspect craft_recipe_demand and the independent '
