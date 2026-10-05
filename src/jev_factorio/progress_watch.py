@@ -7,6 +7,7 @@ adapter is a gameplay controller, model client or recovery authority.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -17,6 +18,72 @@ import time
 
 def number(value):
     return type(value) in (int, float) and math.isfinite(value)
+
+
+def background_sample(checkpoint):
+    """Project the controller's receipt-bound craft observation for its probe.
+
+    This reads retained native evidence; it cannot verify completion or dispatch
+    anything. The trusted probe must read an atomic, identity-pinned checkpoint.
+    """
+    job = checkpoint.get('background_job')
+    if job is None:
+        return None
+    attempt = checkpoint.get('background_attempt')
+    step = checkpoint.get('background_step')
+    if not all(isinstance(x, dict) for x in (job, attempt, step)):
+        raise ValueError('unbound background craft')
+    parameters = job.get('parameters')
+    if (not isinstance(parameters, dict) or job.get('failed') != ''
+            or job.get('session_id') != checkpoint.get('session_id')
+            or attempt.get('action') != 'factory_craft_job'
+            or attempt.get('plan_id') != job.get('plan_id')
+            or attempt.get('receipt') != parameters.get('receipt')
+            or attempt.get('step_index') != 0
+            or attempt.get('step_sha256') != hashlib.sha256(json.dumps(
+                step, sort_keys=True, allow_nan=False, separators=(',', ':')).encode()).hexdigest()
+            or step.get('action') != 'factory_craft_job'
+            or step.get('parameters') != parameters):
+        raise ValueError('unbound background craft')
+    return dict(receipt=parameters.get('receipt'), requested=parameters.get('batches'),
+                finished=job.get('finished'), started_tick=job.get('started_tick'),
+                last_progress_tick=job.get('last_progress_tick'),
+                deadline_tick=job.get('deadline_tick'), observed_tick=checkpoint.get('last_tick'))
+
+
+def craft_progress(sample, previous, now):
+    """Require observed counter movement, not a fresh timestamp or new job ID."""
+    if sample is None:
+        return None
+    if not isinstance(sample, dict):
+        raise ValueError('invalid tracked craft evidence')
+    keys = ('requested', 'finished', 'started_tick', 'last_progress_tick',
+            'deadline_tick', 'observed_tick')
+    receipt = sample.get('receipt')
+    if (not isinstance(receipt, str) or not 1 <= len(receipt) <= 128
+            or any(type(sample.get(k)) is not int or sample[k] < 0 for k in keys)
+            or not 0 <= sample['finished'] < sample['requested'] <= 200
+            or not sample['started_tick'] <= sample['last_progress_tick']
+            <= sample['observed_tick'] < sample['deadline_tick']):
+        raise ValueError('invalid tracked craft evidence')
+    result = {k: sample[k] for k in ('receipt', *keys)}
+    result['advanced_at'] = None
+    if isinstance(previous, dict) and previous.get('receipt') == receipt:
+        fixed = ('requested', 'started_tick', 'deadline_tick')
+        counters = ('finished', 'last_progress_tick', 'observed_tick')
+        if (any(previous.get(k) != sample[k] for k in fixed)
+                or any(type(previous.get(k)) is not int or sample[k] < previous[k]
+                       for k in counters)):
+            raise ValueError('tracked craft evidence regressed or changed')
+        count_moved = sample['finished'] > previous['finished']
+        tick_moved = sample['last_progress_tick'] > previous['last_progress_tick']
+        if count_moved != tick_moved:
+            raise ValueError('tracked craft counter and event tick disagree')
+        stamp = previous.get('advanced_at')
+        if stamp is not None and (not number(stamp) or not 0 <= stamp <= now + 2):
+            raise ValueError('invalid tracked craft progress time')
+        result['advanced_at'] = now if count_moved else stamp
+    return result
 
 
 def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
@@ -30,7 +97,7 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
               'progress_tick': prior.get('progress_tick'),
               'progress_age_seconds': None, 'blocked_since': None,
               'blocked_age_seconds': None, 'pending': False,
-              'automatic_recovery_allowed': False}
+              'automatic_recovery_allowed': False, 'craft_progress': None}
     if number(prior.get('at')) and now + 2 < prior['at']:
         result['reason'] = 'monitor clock regressed'
         return result
@@ -57,6 +124,14 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
     result.update(progress_tick=tick, last_progress_at=stamp,
                   progress_age_seconds=max(0, now - stamp) if stamp is not None else None,
                   pending=sample.get('pending') is True)
+    craft_error = None
+    try:
+        craft = craft_progress(sample.get('background_craft'), prior.get('craft_progress'), now)
+        result['craft_progress'] = craft
+    except ValueError as error:
+        craft = None
+        craft_error = str(error)
+    craft_stamp = craft.get('advanced_at') if craft else None
     status, phase = sample.get('checkpoint_status'), sample.get('owner_phase')
     if phase == 'stopped_by_service_owner':
         result.update(status='stopped', reason='stopped by service owner', attention=False)
@@ -72,6 +147,10 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
                       blocked_since=since, blocked_age_seconds=now - since)
     elif status != 'running':
         result['reason'] = 'unrecognized controller state'
+    elif craft_error:
+        result['reason'] = craft_error
+    elif number(craft_stamp) and now - craft_stamp < stall_seconds:
+        result.update(status='progressing', reason='tracked craft is advancing', attention=False)
     elif stamp is None or now - stamp >= stall_seconds:
         result.update(status='no_progress', reason=('awaiting verified progress' if stamp is None
                       else 'no recent verified useful action'))

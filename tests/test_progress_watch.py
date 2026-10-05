@@ -87,3 +87,96 @@ def test_journal_rotation_is_bounded_and_retains_latest_transition(tmp_path):
     for i in range(10): append_event(path, {'event': i}, max_bytes=1, backups=2)
     assert {p.name for p in tmp_path.iterdir()} == {'events', 'events.1', 'events.2'}
     assert json.loads(path.read_text()) == {'event': 9}
+
+
+# Native watch observations for receipt fd651ce786e54186a538987de8592134:
+# 8/20 at tick10927618, then18/20 at10931102. The old monitor falsely
+# raised no_progress at1791217322 before completion at10931702.
+def craft(**changes):
+    return dict(receipt='fd651ce786e54186a538987de8592134', requested=20,
+                finished=8, started_tick=10924421, last_progress_tick=10927308,
+                deadline_tick=10938821, observed_tick=10927618, **changes)
+
+
+def test_recorded_long_craft_advances_without_rewriting_completed_action_age():
+    first = classify(sample(at=1791217253, last_progress_at=1791217202,
+                            background_craft=craft()), {}, 1791217253, 'campaign')
+    advanced = {**craft(), 'finished': 18, 'last_progress_tick': 10930922,
+                'observed_tick': 10931102}
+    second = classify(sample(at=1791217314, last_progress_at=1791217202,
+                             background_craft=advanced), first, 1791217314, 'campaign')
+    current = classify(sample(at=1791217322, last_progress_at=1791217202,
+                              background_craft=advanced), second, 1791217322, 'campaign')
+    assert current['status'] == 'progressing' and not current['attention']
+    assert current['reason'] == 'tracked craft is advancing'
+    assert current['progress_age_seconds'] == 120
+    assert current['last_progress_at'] == 1791217202
+    assert current['craft_progress']['advanced_at'] == 1791217314
+    assert not current['automatic_recovery_allowed'] and banner(current) == ''
+    # Serialized state retains the same clock across observer restarts; repeated
+    # counts, fresh world ticks and rewritten owner timestamps cannot extend it.
+    later = classify(sample(at=1791217434, last_progress_at=1791217434,
+                            background_craft={**advanced, 'observed_tick': 10938000}),
+                     json.loads(json.dumps(current)), 1791217434, 'campaign')
+    assert later['status'] == 'no_progress' and later['attention']
+    assert later['craft_progress']['advanced_at'] == 1791217314
+
+
+def test_new_craft_identity_or_first_observation_is_not_progress():
+    first = classify(sample(at=1100, background_craft=craft()), {}, 1100, 'campaign')
+    assert first['status'] == 'no_progress'
+    other = {**craft(), 'receipt': 'new-job', 'finished': 9, 'last_progress_tick': 10928000,
+             'observed_tick': 10928001}
+    second = classify(sample(at=1101, background_craft=other), first, 1101, 'campaign')
+    assert second['status'] == 'no_progress'
+    assert second['craft_progress']['advanced_at'] is None
+
+
+@pytest.mark.parametrize('change', [
+    {'finished': 7}, {'finished': 9}, {'last_progress_tick': 10928000},
+    {'deadline_tick': 10940000}, {'requested': 21}, {'observed_tick': 10927300},
+    {'finished': True}, {'observed_tick': 10938821}, {'receipt': ''},
+])
+def test_inconsistent_or_expired_craft_evidence_is_visible(change):
+    first = classify(sample(background_craft=craft()), {}, 1000, 'campaign')
+    current = classify(sample(at=1001, background_craft={**craft(), **change}),
+                       first, 1001, 'campaign')
+    assert current['status'] == 'unknown' and current['attention']
+    assert not current['automatic_recovery_allowed']
+
+
+@pytest.mark.parametrize('status', ['blocked', 'uncertain', 'completed'])
+def test_advancing_craft_never_hides_controller_terminal_state(status):
+    first = classify(sample(background_craft=craft()), {}, 1000, 'campaign')
+    advanced = {**craft(), 'finished': 9, 'last_progress_tick': 10928000,
+                'observed_tick': 10928001}
+    current = classify(sample(at=1001, background_craft=advanced, checkpoint_status=status),
+                       first, 1001, 'campaign')
+    assert current['status'] == status
+    assert current['attention'] == (status != 'completed')
+
+
+def test_background_projection_binds_current_checkpoint_job_and_attempt():
+    from jev_factorio.progress_watch import background_sample
+    from jev_factorio.telemetry import fingerprint
+    parameters = {'receipt': 'craft-1', 'batches': 20, 'recipe': 'logistic-science-pack'}
+    step = {'action': 'factory_craft_job', 'parameters': parameters}
+    checkpoint = {'session_id': 'campaign', 'last_tick': 200,
+                  'background_step': step,
+                  'background_job': {'session_id': 'campaign', 'parameters': parameters,
+                                     'plan_id': 'craft', 'failed': '', 'finished': 2,
+                                     'started_tick': 100, 'last_progress_tick': 190,
+                                     'deadline_tick': 500},
+                  'background_attempt': {'action': 'factory_craft_job', 'plan_id': 'craft',
+                                         'receipt': 'craft-1', 'step_index': 0,
+                                         'step_sha256': fingerprint(step)}}
+    assert background_sample(checkpoint) == {
+        'receipt': 'craft-1', 'requested': 20, 'finished': 2, 'started_tick': 100,
+        'last_progress_tick': 190, 'deadline_tick': 500, 'observed_tick': 200}
+    for key, value in [('receipt', 'other'), ('step_index', 1), ('step_sha256', '0' * 64)]:
+        changed = {**checkpoint, 'background_attempt': {**checkpoint['background_attempt'], key: value}}
+        with pytest.raises(ValueError, match='unbound'):
+            background_sample(changed)
+    with pytest.raises(ValueError, match='unbound'):
+        background_sample({**checkpoint, 'session_id': 'other'})
+    assert background_sample({'background_job': None}) is None
