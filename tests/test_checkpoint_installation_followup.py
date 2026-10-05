@@ -271,7 +271,9 @@ def test_io_counters_roundtrip_without_inventing_legacy_measurement(tmp_path):
     assert snapshot['checkpoint_operations']['verification_read_calls'] == 1
     assert snapshot['checkpoint_operations']['directory_sync_calls'] == 1
     log = tmp_path / 'metrics.jsonl'
-    log.write_text(json.dumps({'performance': snapshot}) + '\n')
+    # summarize() consumes gameplay rows; match the controller's declared
+    # record shape while preserving this isolated checkpoint-counter roundtrip.
+    log.write_text(json.dumps({'action': 'observe', 'phases': [], 'performance': snapshot}) + '\n')
     assert summarize(log)['checkpoint_operations'] == snapshot['checkpoint_operations']
     legacy = PerformanceCounters()
     legacy.checkpoint({'status': 'written', 'bytes': 5, 'capture_calls': 1, 'serialization_calls': 1})
