@@ -6,7 +6,7 @@ import pytest
 
 from jev_factorio.judgments import question_batch, select_plan
 from jev_factorio.jev_client import MockJevClient
-from jev_factorio.planning.craft_overlap import add_craft_overlap_evidence
+from jev_factorio.planning.decision_support import add_craft_overlap_evidence
 from jev_factorio.planning.decision_support import candidate_evidence, scheduling_context
 from jev_factorio.planning.ready_work import ReadyWorkPlanner
 from test_factory import catalog, recipe, snapshot
