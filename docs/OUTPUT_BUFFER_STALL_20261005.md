@@ -60,3 +60,37 @@ paid inserter commissioning, changed native craft inputs/outputs/baseline/recipe
 step hash and later failed attempts, and 200 ordinary events within the same
 history bound. Native read-only qualification is separate from resumed gameplay
 and does not prove uninterrupted multi-day operation.
+
+
+## Follow-up: valid input proof suppressed by nonurgent fuel
+
+V16 resumed with a verified 20-copper pickup at tick 9623787, then crafted a
+furnace and mining drill and gathered 40 iron ore. It held again at tick 9633258
+while offering an ore insert followed by a coal insert at the owned iron furnace.
+The furnace contained three coal. The first input proof was present, but its
+independent question qualification required urgency 3 and an observed-low-fuel
+reason. The ranking code correctly assigns those only below two coal. JEV
+therefore received generic start questions without the qualified service hint
+and rejected the plan for missing start evidence. The existing controller later
+resumed on changed native evidence and verified the two service transfers at
+ticks 9644072 and 9644271 without an operator restart; the suppression defect
+still needs correction to avoid waiting for that incidental change.
+
+Validate urgency and reasons against the observed fuel range instead: one coal
+has the low-fuel ranking; two through four coal have ordinary priority. The
+current paid ore input remains useful without an urgent refuel. This does not
+increase priority, change JEV thresholds, assume receiver capacity, or authorize
+the later fuel transfer. Exact owned machine, native recipe path, carried budget,
+unused receipts, session/tick and per-step native guards still apply.
+
+For this symptom, inspect `candidate_rejections` and compare the presence of
+`paid_service_input_start_evidence` with its inclusion in the independent
+`needs_observation`, usefulness and benefit questions. Check both sides of the
+fuel threshold; a ranking annotation must not silently suppress valid start
+evidence. Preserve the rejected request and do not repeat it unchanged.
+
+Regression coverage includes every admitted fuel level (one through four),
+contradictory urgency/reason annotations, existing ownership/payment/receipt
+negatives, and the recorded V16 request. Offline qualification is not a JEV
+approval; production recovery still requires merged-source preflight and a
+fresh independent decision.

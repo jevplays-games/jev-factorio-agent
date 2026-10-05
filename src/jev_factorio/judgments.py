@@ -206,8 +206,12 @@ def _qualified_paid_service_input(plan, facts, row):
                 or marker['estimate_basis'] != 'Manhattan_distance_and_declared_policy_not_native_timing'
                 or row.get('work_scope') != 'immediate' or row.get('unknowns') != []
                 or row.get('requires_investment') is not False
-                or row.get('reasons') != [f'observed_low_fuel:{role}']
-                or type(row.get('urgency')) is not int or row['urgency'] != 3
+                # Start evidence is independent of the refuel ranking heuristic.
+                # A furnace with 2-4 coal still accepts its current paid recipe input.
+                or row.get('reasons') != ([f'observed_low_fuel:{role}']
+                    if machine['fuel']['coal'] < 2 else [])
+                or type(row.get('urgency')) is not int
+                or row['urgency'] != (3 if machine['fuel']['coal'] < 2 else 0)
                 or factory.get('craft_job', {}).get('status') not in {None, 'completed'}
                 or row.get('local_target') != local
                 or local.get('ultimate_goal') != plan.goal
