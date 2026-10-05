@@ -44,6 +44,109 @@ def validate_commitments(owned: dict, *, successors: bool = False) -> None:
             units.add(paid["unit_number"]); paid_roles.add(paid["role"]); receipts.add(paid["receipt"])
 
 
+def _validate_composed_paid_identities(memory, output_owners: dict | None = None) -> None:
+    """Reject one paid component claimed by distinct retained owner families.
+
+    Route endpoints and ``source_unit`` values are references to existing
+    entities, not newly paid parts.  Only each family's retained ``parts`` map
+    participates.  Successor input receipts intentionally mirror the input
+    route owner's same source/part; that exact mirror is indexed once.
+    """
+    if output_owners is None:
+        output_owners = {}
+        if hasattr(memory, "output_commitments"):
+            if not isinstance(memory.output_commitments, dict):
+                raise ValueError("Invalid retained output owner map")
+            output_owners.update(memory.output_commitments)
+        if hasattr(memory, "successor_receipts"):
+            if not isinstance(memory.successor_receipts, dict):
+                raise ValueError("Invalid retained successor owner map")
+            for source, retained in memory.successor_receipts.items():
+                if not isinstance(retained, dict) or not isinstance(retained.get("output"), dict):
+                    raise ValueError("Invalid retained successor output owners")
+                if retained["output"]:
+                    if source in output_owners:
+                        raise ValueError("Output and successor output share a retained owner key")
+                    output_owners[source] = {"parts": retained["output"]}
+
+    seen = {"unit_number": {}, "receipt": {}, "role": {}}
+
+    def add(family, source, part, paid, mirror=None):
+        if (not isinstance(paid, dict)
+                or type(paid.get("unit_number")) is not int
+                or not 0 < paid["unit_number"] <= 2**53 - 1
+                or not isinstance(paid.get("receipt"), str)
+                or not 0 < len(paid["receipt"]) <= 128
+                or not isinstance(paid.get("role"), str)
+                or not 0 < len(paid["role"]) <= 128
+                or type(paid.get("paid")) is not int or paid["paid"] != 1):
+            raise ValueError("Invalid retained paid owner identity")
+        identity = (paid["unit_number"], paid["receipt"], paid["role"])
+        owner = (family, source, part)
+        for dimension in ("unit_number", "receipt", "role"):
+            value = paid[dimension]
+            previous = seen[dimension].get(value)
+            if previous is not None:
+                previous_identity, previous_mirror, previous_owner = previous
+                if not (mirror is not None and mirror == previous_mirror
+                        and identity == previous_identity):
+                    raise ValueError(
+                        f"Aliased retained paid owner {dimension}: {previous_owner!r} and {owner!r}")
+            else:
+                seen[dimension][value] = (identity, mirror, owner)
+
+    def add_map(family, mapping, *, mirror_family=None):
+        if not isinstance(mapping, dict):
+            raise ValueError(f"Invalid retained {family} owner map")
+        for source, entry in mapping.items():
+            if not isinstance(entry, dict) or not isinstance(entry.get("parts"), dict):
+                raise ValueError(f"Invalid retained {family} owner entry")
+            for part, paid in entry["parts"].items():
+                mirror = None
+                if mirror_family == "input":
+                    retained = getattr(memory, "successor_receipts", {}).get(source, {})
+                    mirrored = retained.get("input", {}) if isinstance(retained, dict) else {}
+                    if isinstance(mirrored, dict) and mirrored.get(part) == paid:
+                        mirror = ("input-successor", source, part)
+                add(family, source, part, paid, mirror)
+
+    # `output_owners` includes the output parts mirrored through successor
+    # receipts, preserving the existing composed output validation.
+    for source, entry in output_owners.items():
+        if not isinstance(entry, dict) or not isinstance(entry.get("parts"), dict):
+            raise ValueError("Invalid composed output owner entry")
+        family = "successor_output" if source in SUCCESSOR_SOURCES else "output"
+        for part, paid in entry["parts"].items():
+            add(family, source, part, paid)
+
+    if hasattr(memory, "input_commitments"):
+        add_map("input", memory.input_commitments, mirror_family="input")
+
+    if hasattr(memory, "successor_receipts"):
+        receipts = memory.successor_receipts
+        if not isinstance(receipts, dict):
+            raise ValueError("Invalid retained successor owner map")
+        for source, retained in receipts.items():
+            if not isinstance(retained, dict) or not isinstance(retained.get("input"), dict):
+                raise ValueError("Invalid retained successor input owners")
+            for part, paid in retained["input"].items():
+                mirror = None
+                input_entry = getattr(memory, "input_commitments", {}).get(source, {})
+                input_parts = input_entry.get("parts", {}) if isinstance(input_entry, dict) else {}
+                if isinstance(input_parts, dict) and input_parts.get(part) == paid:
+                    mirror = ("input-successor", source, part)
+                add("successor_input", source, part, paid, mirror)
+
+    if hasattr(memory, "outpost_commitments"):
+        add_map("outpost", memory.outpost_commitments)
+
+    if hasattr(memory, "solid_commitments"):
+        add_map("solid", memory.solid_commitments)
+
+    if hasattr(memory, "coal_commitments"):
+        add_map("coal", memory.coal_commitments)
+
+
 def expected_commitments(memory) -> dict:
     """Combine disjoint durable ordinary and successor output owners."""
     owned = deepcopy(memory.output_commitments)
@@ -65,6 +168,7 @@ def expected_commitments(memory) -> dict:
                     raise ValueError('Invalid or aliased successor output ownership')
                 owned[source] = known
     validate_commitments(owned, successors=successors)
+    _validate_composed_paid_identities(memory, owned)
     return owned
 
 
