@@ -136,10 +136,17 @@ def catalog_projection(snapshot, catalog, plans):
                 route_state = {'protocol': snapshot.factory['input_routes']['protocol'],
                     'session_id': snapshot.session_id, 'tick': snapshot.tick,
                     'sources': {source: deepcopy(observed_routes[source])}}
-        marker = (plan.materials or {}).get('bootstrap_output_pickup') or (plan.materials or {}).get('recipe_input_transfer')
+        marker = ((plan.materials or {}).get('bootstrap_output_pickup')
+                  or (plan.materials or {}).get('recipe_input_transfer')
+                  or (plan.materials or {}).get('output_pickup'))
         if not isinstance(marker, dict):continue
         path = marker.get('planner_item_path')
         if not isinstance(path, list):continue
+        if 'output_pickup' in (plan.materials or {}):
+            role = marker.get('source_role', '')
+            source_recipe = catalog.recipes.get(role.removeprefix('recipe:'))
+            if source_recipe is not None:
+                recipes[source_recipe['name']] = deepcopy(source_recipe)
         if 'recipe_input_transfer' in (plan.materials or {}):
             machine = snapshot.factory.get('entities', {}).get(marker.get('source_role'), {})
             name = machine.get('name')

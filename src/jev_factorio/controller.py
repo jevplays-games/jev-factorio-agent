@@ -1844,7 +1844,12 @@ class HierarchicalLoop(AgentLoop):
             else:
                 facts = self._model_facts(snapshot)
                 if self.catalog is not None and any(
-                        isinstance((plan.materials or {}).get('bootstrap_output_pickup'), dict) for plan in plans):
+                        isinstance((plan.materials or {}).get('bootstrap_output_pickup'), dict)
+                        or any(isinstance(((self._selection_support.get('candidate_evidence') or {})
+                            .get(plan.id, {}).get(key) or {}).get('recipe_dependency_chain'), dict)
+                            for key in ('output_pickup_start_evidence',
+                                        'recipe_input_transfer_start_evidence'))
+                        for plan in plans):
                     from .planning.bootstrap_chain import catalog_projection
                     facts['factory']['recipe_dependency_catalog'] = catalog_projection(snapshot, self.catalog, plans)
                 if facts["factory"]:

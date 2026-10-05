@@ -137,3 +137,41 @@ production primary even if an older lookahead candidate survives. Retain those
 independent alternatives, but do not let their presence suppress the current
 production need. A read-only projection exposed this second ordering problem;
 no live checkpoint was changed by that diagnostic.
+
+
+## Follow-up: owned-output pickup omitted native recipe demand
+
+V17 expired the prior capital investment exactly once at tick 9793851, retained
+its failure budget of two, and verified five coal/copper production actions.
+At tick 9805923 it held on an ordinary iron-plate pickup. The start witness
+correctly bound one ready plate to its owned furnace, but exposed only the item
+names in the science-to-gear-to-plate dependency path. The model request omitted
+the native recipe quantities and remaining carried-input deficit. JEV chose the
+pickup globally (confidence 0.67) while independently rejecting its usefulness.
+A global choice does not override that rejection.
+
+Reuse the existing validated dependency accounting for ordinary owned-output
+pickups. The current native catalog gives 20 science batches, 20 gear batches,
+and a 40-plate carried-input requirement; nine carried plates leave a deficit
+of 31. A one-plate pickup advances only that selected branch. It does not prove
+the whole recipe bill, travel, pickup, downstream output, or research completion.
+Keep the ready-stock proof separate when no current recipe deficit qualifies.
+The existing paid-service wrapper retains its original proof shape.
+
+The controller previously attached the independent recipe catalog only when a
+bootstrap pickup was offered. Attach the same bounded catalog projection when
+an ordinary output pickup or recipe-input transfer has a dependency-chain
+witness. Independently recompute ownership, ready stock, action/receipt identity,
+recipe arithmetic, inventory, session, tick and catalog version before adding
+the demand-specific usefulness question. Keep every JEV and native execution
+gate and the existing request-byte bound.
+
+For this hold, compare `candidate_rejections`, the independent usefulness
+answer, `output_pickup_start_evidence`, and
+`facts.factory.recipe_dependency_catalog`. The allocation ledger's `remaining`
+is not carried inventory. Check quantities against `facts.inventory` and the
+native recipe edges. Preserve the failed request; do not retry it unchanged.
+A single read-only diagnostic with this added evidence selected the same pickup
+at confidence 0.55, useful probability 0.83, and missing-observation probability
+0.23, passing the unchanged gates with both original candidates offered. That
+diagnostic dispatched nothing and is separate from production acceptance.

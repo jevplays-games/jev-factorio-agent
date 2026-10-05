@@ -1579,7 +1579,8 @@ def _paid_service_start_evidence(snapshot, catalog, plan, *, pickup=False):
         materials = {k: v for k, v in plan.materials.items() if k != 'service_visit'}
         atomic = replace(plan, id=f'factory:{first_action}:{role}',
                          steps=(first,), materials=materials)
-        input_start = (_output_pickup_start_evidence(snapshot, catalog, atomic) if pickup
+        input_start = (_output_pickup_start_evidence(
+            snapshot, catalog, atomic, include_dependency_chain=False) if pickup
                        else _recipe_input_transfer_start_evidence(snapshot, catalog, atomic))
         if input_start is None:
             return None
@@ -1629,7 +1630,8 @@ def _paid_service_output_start_evidence(snapshot, catalog, plan):
     return _paid_service_start_evidence(snapshot, catalog, plan, pickup=True)
 
 
-def _output_pickup_start_evidence(snapshot, catalog, plan, *, path_root=None):
+def _output_pickup_start_evidence(snapshot, catalog, plan, *, path_root=None,
+                                  include_dependency_chain=True):
     """Describe ready output at an owned native source, never a completed pickup."""
     if len(plan.steps) != 1:
         return None
@@ -1687,7 +1689,7 @@ def _output_pickup_start_evidence(snapshot, catalog, plan, *, path_root=None):
             or factory.get('player_connected') is not True
             or factory.get('player_bound') is not True):
         return None
-    return {
+    evidence = {
         'observed_tick': snapshot.tick,
         'planner_item_path': list(path),
         'owned_source_role': role,
@@ -1700,6 +1702,25 @@ def _output_pickup_start_evidence(snapshot, catalog, plan, *, path_root=None):
         'basis': 'current_planner_output_and_owned_native_machine',
         'native_pickup_and_inventory_delta_require_verification': True,
     }
+    if include_dependency_chain and path_root is None and len(path) > 1:
+        try:
+            from .bootstrap_chain import dependency_chain
+            chain = dependency_chain(snapshot, catalog, local, path)
+            carried = snapshot.inventory.get(item, 0)
+            required = chain['raw_input_inventory_target']
+            if (type(carried) is int and 0 <= carried < required
+                    and quantity <= required - carried):
+                evidence['recipe_dependency_chain'] = chain
+                evidence['current_input_demand'] = {
+                    'required_carried_quantity': required,
+                    'carried_quantity': carried,
+                    'remaining_deficit': required - carried,
+                }
+                evidence['session_id'] = snapshot.session_id
+                evidence['native_catalog_version'] = catalog.version
+        except (KeyError, TypeError, ValueError, AttributeError, ArithmeticError):
+            pass  # Preserve the original ready-stock witness without a demand claim.
+    return evidence
 
 
 def _bootstrap_output_ownership_digest(owned):
