@@ -4,6 +4,7 @@ All native-looking inputs here are synthetic local controls. A successful
 capture remains ``native_acceptance=not_accepted``.
 """
 from copy import deepcopy
+import gzip
 import hashlib
 import json
 
@@ -16,8 +17,10 @@ from jev_factorio.coal_controller import coal_loop_type
 from jev_factorio.complete_capture import capture, verify
 from jev_factorio.integration_evidence import analyze_rows, validate_trial
 from jev_factorio.solid_controller import solid_loop_type
+from jev_factorio.state import GameSnapshot
 from jev_factorio.planning.connection_identity import PREFIX, connection_key
 from integration_evidence_fixtures import evidence
+from input_routes_fixtures import SOURCE as INPUT_SOURCE, fixture as input_route_fixture, full as full_input_route
 from test_complete_capture import test_complete_capture_v2_admission_roundtrip as prepare_complete_fixture
 from test_solid_route_integration import Backend as SolidBackend, native_catalog
 
@@ -106,6 +109,26 @@ def _capture_roundtrip(tmp_path, data, label):
     return reviewed, manifest, trial
 
 
+def _rewrite_capture_rows(directory, mutate):
+    """Reseal a valid bundle after an adversary edits projected gameplay."""
+    gameplay = directory / "gameplay.jsonl.gz"
+    rows = [json.loads(line) for line in gzip.decompress(gameplay.read_bytes()).splitlines()]
+    mutate(rows)
+    payload = b"".join(canonical(row) for row in rows)
+    gameplay.write_bytes(gzip.compress(payload, mtime=0))
+    manifest_path = directory / "capture-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest["decompressed_bytes"] = len(payload)
+    manifest["decompressed_sha256"] = hashlib.sha256(payload).hexdigest()
+    manifest_path.write_bytes(canonical(manifest))
+    names = sorted(path.name for path in directory.iterdir() if path.name != "SHA256SUMS")
+    sums = "".join(
+        hashlib.sha256((directory / name).read_bytes()).hexdigest() + "  " + name + "\n"
+        for name in names
+    )
+    (directory / "SHA256SUMS").write_text(sums, encoding="ascii")
+
+
 def _feature_capture_data(tmp_path):
     data = _inputs(tmp_path)
     producer = _actual_composed_record(tmp_path, data["trial"])
@@ -116,6 +139,7 @@ def _feature_capture_data(tmp_path):
             background_schema=producer["background_schema"],
             background_job=deepcopy(producer["background_job"]),
             background_attempt=deepcopy(producer["background_attempt"]),
+            background_step=None,
         )
     emitted = (
         "factory_scheduling", "mining_outposts",
@@ -199,25 +223,39 @@ def test_actual_composed_record_and_capture_preserve_enabled_and_absent_disabled
 @pytest.mark.parametrize("missing", ["background_work", "background_job"])
 def test_verified_capture_cannot_hide_enabled_composed_feature_fields(missing, tmp_path):
     data = _feature_capture_data(tmp_path)
-    for row in data["rows"]:
-        row.pop(missing, None)
     reviewed, manifest, trial = _capture_roundtrip(tmp_path, data, "omitted-background")
     assert manifest["capture_complete"] is True
     assert reviewed["manifest"]["native_acceptance"] == "not_accepted"
-    analyzed = analyze_rows(reviewed["rows"], trial, data["initial"], data["final"])
+    altered = deepcopy(reviewed["rows"])
+    for row in altered:
+        row.pop(missing, None)
+    analyzed = analyze_rows(altered, trial, data["initial"], data["final"])
     assert "feature_composition_mismatch" in analyzed["issues"]
     assert not analyzed["integrity_checks_passed"]
     assert analyzed["native_acceptance"] == "not_accepted"
 
+    directory = tmp_path / "capture-omitted-background"
+    _rewrite_capture_rows(directory, lambda rows: [row.pop(missing, None) for row in rows])
+    message = ("Capture background_work record flag differs from treatment" if missing == "background_work"
+               else "Enabled background_work record evidence is missing")
+    with pytest.raises(ValueError, match=message):
+        verify(directory)
+
 
 def test_verified_capture_cannot_relabel_enabled_feature_as_disabled(tmp_path):
     data = _feature_capture_data(tmp_path)
-    for row in data["rows"]:
-        row["background_work"] = False
     reviewed, _, trial = _capture_roundtrip(tmp_path, data, "conflicting-background")
-    analyzed = analyze_rows(reviewed["rows"], trial, data["initial"], data["final"])
+    altered = deepcopy(reviewed["rows"])
+    for row in altered:
+        row["background_work"] = False
+    analyzed = analyze_rows(altered, trial, data["initial"], data["final"])
     assert "feature_composition_mismatch" in analyzed["issues"]
     assert not analyzed["integrity_checks_passed"]
+
+    directory = tmp_path / "capture-conflicting-background"
+    _rewrite_capture_rows(directory, lambda rows: [row.__setitem__("background_work", False) for row in rows])
+    with pytest.raises(ValueError, match="Capture background_work record flag differs from treatment"):
+        verify(directory)
 
 
 def test_analyzer_checks_outpost_emitter_flag_and_required_evidence():
@@ -389,8 +427,8 @@ _PRODUCER_FEATURE_FIELDS = (
 
 
 def _actual_cli_matrix_record(tmp_path, trial, features, *, fail_input_observation=False,
-                              coal_observation=None):
-    """Emit top-level fields from the actual current CLI-selected _record MRO."""
+                              coal_observation=None, observation_state=None):
+    """Record one composed observation using typed empty optional telemetry."""
     from jev_factorio.buffer_controller import buffered_loop_type
     from jev_factorio.controller import HierarchicalLoop
     from jev_factorio.input_controller import input_loop_type
@@ -398,6 +436,10 @@ def _actual_cli_matrix_record(tmp_path, trial, features, *, fail_input_observati
     from jev_factorio.successor_controller import successor_loop_type
 
     backend = SolidBackend()
+    if observation_state is not None:
+        # Reuse the scaffold's session and economic/solid source evidence so
+        # the real observers see one coherent synthetic snapshot.
+        backend.state = GameSnapshot(**deepcopy(observation_state))
     backend.craft_jobs_supported = True
     backend.coal_supply_supported = True
     backend.output_buffers_supported = True
@@ -406,6 +448,36 @@ def _actual_cli_matrix_record(tmp_path, trial, features, *, fail_input_observati
     backend.successors_supported = True
     backend.checkpoint = tmp_path / "matrix-producer-checkpoint.json"
     backend.enable_factory = lambda: native_catalog()
+
+    factory = backend.state.factory
+    optional_observations = {
+        "furnace_output_buffers": "output_buffers",
+        "furnace_input_belts": "input_routes",
+        "mining_outposts": "mining_outposts",
+        "ore_side_successors": "successors",
+    }
+    for flag, field in optional_observations.items():
+        if not features[flag]:
+            continue
+        existing = factory.get(field)
+        if existing is not None and existing.get("sources"):
+            raise AssertionError(f"Refusing to replace existing {field} ownership")
+        factory[field] = {
+            "protocol": 1,
+            "session_id": backend.state.session_id,
+            "tick": backend.state.tick,
+            "sources": {},
+        }
+    if features["ore_side_successors"]:
+        existing_sites = factory.get("production_sites")
+        if existing_sites is not None and existing_sites.get("sources"):
+            raise AssertionError("Refusing to replace existing production-site evidence")
+        factory["production_sites"] = {
+            "protocol": 1,
+            "session_id": backend.state.session_id,
+            "tick": backend.state.tick,
+            "sources": {},
+        }
 
     # This is the same outer-to-inner order selected in main.py. The successor
     # vector is the supported resumed-controller composition; this bounded
@@ -485,9 +557,15 @@ def _actual_cli_matrix_record(tmp_path, trial, features, *, fail_input_observati
         from jev_factorio.coal_supply import sources as coal_sources
         assert coal_sources(backend.state) == {}
         assert loop._coal_protocol_matches_treatment(backend.state)
+        # Keep the pre-observation checkpoint valid. The uncertain record must
+        # describe the transition from a supported protocol-1 snapshot to the
+        # malformed protocol-0 snapshot, not two identical malformed states.
+        before = deepcopy(backend.state)
         backend.state.factory["input_routes"] = {"protocol": 0}
-        loop._observe()
-    return loop._record(backend.state, "observe", "synthetic MRO field projection", backend.state)
+    else:
+        before = deepcopy(backend.state)
+    observed = loop._observe()
+    return loop._record(before, "observe", "synthetic MRO field projection", observed)
 
 
 def _matrix_capture_data(tmp_path, features, *, fail_input_observation=False):
@@ -498,7 +576,7 @@ def _matrix_capture_data(tmp_path, features, *, fail_input_observation=False):
     )
     producer = _actual_cli_matrix_record(
         tmp_path, data["trial"], features, fail_input_observation=fail_input_observation,
-        coal_observation=coal_observation)
+        coal_observation=coal_observation, observation_state=data["rows"][0]["state"])
     if fail_input_observation:
         data["final"]["status"] = producer["status"]
         for row in data["rows"]:
@@ -509,7 +587,7 @@ def _matrix_capture_data(tmp_path, features, *, fail_input_observation=False):
     data["trial"]["campaign_treatment"] = deepcopy(producer["campaign_treatment"])
 
     checkpoint_extensions = {
-        "background_work": ("background_schema", ("background_job", "background_attempt")),
+        "background_work": ("background_schema", ("background_job", "background_attempt", "background_step")),
         "furnace_output_buffers": ("output_buffers_schema", ("output_commitments",)),
         "furnace_input_belts": ("input_routes_schema", ("input_commitments",)),
         "mining_outposts": ("outposts_schema", ("outpost_commitments",)),
@@ -521,7 +599,10 @@ def _matrix_capture_data(tmp_path, features, *, fail_input_observation=False):
                 checkpoint[schema_field] = producer.get(schema_field, 2 if flag == "background_work" else 1)
                 for field in fields:
                     if flag == "background_work":
-                        checkpoint[field] = deepcopy(producer[field])
+                        # This fixture's current producer is schema 2 with no
+                        # active task, whose exact emitted checkpoint step is null.
+                        checkpoint[field] = (None if field == "background_step"
+                                             else deepcopy(producer[field]))
                     else:
                         checkpoint[field] = {}
             else:
@@ -532,11 +613,51 @@ def _matrix_capture_data(tmp_path, features, *, fail_input_observation=False):
     # Only current producer feature fields are projected. The scaffold's state,
     # receipts, identity, campaign window, and checkpoint history remain the
     # bounded synthetic inputs prepared by the existing complete-capture test.
+    observed_factory = producer["after_state"]["factory"]
+    emitted_envelopes = {
+        "furnace_output_buffers": ("output_buffers", "buffer_evidence"),
+        "furnace_input_belts": ("input_routes", "input_route_evidence"),
+        "mining_outposts": ("mining_outposts", "mining_outpost_evidence"),
+        "ore_side_successors": ("successors", "successor_evidence"),
+    }
     for row in data["rows"]:
         for field in _PRODUCER_FEATURE_FIELDS:
             row.pop(field, None)
             if field in producer:
                 row[field] = deepcopy(producer[field])
+        for flag, (native_field, record_field) in emitted_envelopes.items():
+            if not features[flag]:
+                continue
+            # These matrix cases carry no paid route rows. Rebind the actual
+            # empty protocol envelope to each scaffold boundary's tick/session
+            # so the complete-record validator sees a typed observation, not
+            # a top-level receipt transplanted onto an unrelated factory state.
+            for label in ("state", "after_state"):
+                state = row[label]
+                if fail_input_observation and flag == "furnace_input_belts" and label == "state":
+                    envelope = {
+                        "protocol": 1,
+                        "session_id": state["session_id"],
+                        "tick": state["tick"],
+                        "sources": {},
+                    }
+                else:
+                    envelope = deepcopy(observed_factory[native_field])
+                if envelope.get("sources"):
+                    raise AssertionError("The empty composition matrix cannot rebind paid route evidence")
+                if not (fail_input_observation and flag == "furnace_input_belts"
+                        and label == "after_state"):
+                    envelope["session_id"] = state["session_id"]
+                    envelope["tick"] = state["tick"]
+                state["factory"][native_field] = envelope
+            row[record_field] = deepcopy(row["after_state"]["factory"][native_field])
+        if features["ore_side_successors"]:
+            for label in ("state", "after_state"):
+                state = row[label]
+                sites = deepcopy(observed_factory["production_sites"])
+                sites["session_id"] = state["session_id"]
+                sites["tick"] = state["tick"]
+                state["factory"]["production_sites"] = sites
     return data
 
 
@@ -604,6 +725,11 @@ def test_actual_input_route_failure_diagnostic_survives_capture_and_verify(tmp_p
     assert producer["input_validation_failure"] == {
         "stage": "route_schema", "exception_class": "ValueError"}
     assert producer["status"] == "uncertain"
+    assert producer["input_route_evidence"] == {"protocol": 0}
+    assert producer["after_state"]["factory"]["input_routes"] == {"protocol": 0}
+    assert producer["state"]["factory"]["input_routes"]["protocol"] == 1
+    assert data["initial"].get("input_commitments", {}) == {}
+    assert data["final"].get("input_commitments", {}) == {}
 
     reviewed, manifest, trial = _capture_roundtrip(tmp_path, data, "input-diagnostic")
     assert manifest["capture_complete"] is True
@@ -611,7 +737,63 @@ def test_actual_input_route_failure_diagnostic_survives_capture_and_verify(tmp_p
     assert reviewed["rows"][0]["input_validation_failure"] == producer["input_validation_failure"]
     analyzed = analyze_rows(reviewed["rows"], trial, data["initial"], data["final"])
     assert "feature_composition_mismatch" not in analyzed["issues"]
+    assert analyzed["integrity_checks_passed"] is False
+    assert "controller_or_route_failure" in analyzed["issues"]
+    assert "invalid_final_composed_observation" in analyzed["issues"]
     assert analyzed["native_acceptance"] == "not_accepted"
+
+
+@pytest.mark.parametrize("tamper", [
+    "invalid_before_observation", "status_not_uncertain", "extra_protocol_fields",
+    "forged_stage", "missing_diagnostic", "ordinary_unsupported_protocol",
+    "retained_paid_owner",
+])
+def test_input_failure_diagnostic_cannot_bypass_capture_ownership(tamper, tmp_path):
+    features = {
+        "background_work": False, "furnace_output_buffers": True,
+        "furnace_input_belts": True, "mining_outposts": False,
+        "ore_side_successors": False,
+    }
+    failure_case = tamper != "ordinary_unsupported_protocol"
+    data = _matrix_capture_data(tmp_path, features, fail_input_observation=failure_case)
+    if tamper == "invalid_before_observation":
+        for row in data["rows"]:
+            row["state"]["factory"]["input_routes"] = {"protocol": 0}
+    elif tamper == "status_not_uncertain":
+        data["final"]["status"] = "running"
+        for row in data["rows"]:
+            row["status"] = "running"
+    elif tamper == "extra_protocol_fields":
+        for row in data["rows"]:
+            invalid = {"protocol": 0, "sources": {}}
+            row["after_state"]["factory"]["input_routes"] = deepcopy(invalid)
+            row["input_route_evidence"] = deepcopy(invalid)
+    elif tamper == "forged_stage":
+        for row in data["rows"]:
+            row["input_validation_failure"] = {
+                "stage": "live_route", "exception_class": "ValueError",
+                "source": INPUT_SOURCE,
+            }
+    elif tamper == "missing_diagnostic":
+        for row in data["rows"]:
+            row["input_validation_failure"] = {}
+    elif tamper == "ordinary_unsupported_protocol":
+        for row in data["rows"]:
+            invalid = {"protocol": 0}
+            row["after_state"]["factory"]["input_routes"] = deepcopy(invalid)
+            row["input_route_evidence"] = deepcopy(invalid)
+    elif tamper == "retained_paid_owner":
+        paid_state = full_input_route(input_route_fixture())
+        route = paid_state.factory["input_routes"]["sources"][INPUT_SOURCE]
+        owner = {
+            "layout": route["layout"],
+            "source_unit": route["source_unit"],
+            "parts": deepcopy(route["parts"]),
+        }
+        data["initial"]["input_commitments"] = {INPUT_SOURCE: deepcopy(owner)}
+        data["final"]["input_commitments"] = {INPUT_SOURCE: deepcopy(owner)}
+    with pytest.raises(ValueError):
+        _capture_roundtrip(tmp_path, data, f"diagnostic-{tamper}")
 
 
 @pytest.mark.parametrize(("label", "features"), _CLI_EXTENSION_MRO_CASES)
