@@ -7,10 +7,22 @@ Gateway:     Vercel AI Gateway, model id "typesafe-ai/jev",
 """
 from __future__ import annotations
 
+import math
 import os
+import time
 
 import requests
 
+from .async_provider import (
+    AsyncProviderClient,
+    AsyncProviderDeadlineExceeded,
+    AsyncProviderPayloadError,
+    AsyncProviderResult,
+    RequestIdentity,
+    make_result,
+    request_payload_sha256,
+    snapshot_json,
+)
 from .provider_health import ProviderPayloadError
 
 API_URL = "https://api.typesafe.ai/v1/systemone"
@@ -138,6 +150,106 @@ class CloudflareJevClient:
         return result["answers"]
 
 
+class AsyncJevClient(AsyncProviderClient):
+    """Explicit async counterpart to :class:`JevClient`.
+
+    Each call returns immutable response data and its own identity. It does not
+    update shared ``last_usage``/``last_model`` attributes, so concurrent
+    completions cannot overwrite one another. The existing synchronous client
+    and factory remain unchanged.
+    """
+
+    uses_http_provider = True
+    answer_quantum = 0.01
+
+    def __init__(self, api_key: str | None = None, base_url: str = API_URL,
+                 model: str = "jev-latest", **transport_options):
+        super().__init__(**transport_options)
+        self.api_key = api_key or os.environ.get("TYPESAFE_API_KEY", "")
+        self.base_url = base_url
+        self.model = model
+
+    async def evaluate(self, state: dict, questions: dict, *, identity: RequestIdentity,
+                       deadline: float | None = None) -> AsyncProviderResult:
+        requested_model = self.model
+        body, payload_sha256 = await self.post_json(
+            identity=identity,
+            url=self.base_url,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            payload={"state": state, "model": requested_model, "questions": questions},
+            deadline=deadline,
+        )
+        answers = body.get("answers")
+        if not isinstance(answers, dict):
+            raise AsyncProviderPayloadError(identity)
+        return make_result(identity, answers, body.get("usage"), requested_model,
+                           body.get("model"), payload_sha256)
+
+
+class AsyncCloudflareJevClient(AsyncProviderClient):
+    """Explicit async client for the currently supported Cloudflare AI route."""
+
+    uses_http_provider = True
+
+    def __init__(self, account_id: str, api_token: str,
+                 model: str = "typesafe/jev", **transport_options):
+        super().__init__(**transport_options)
+        self.account_id = account_id
+        self.api_token = api_token
+        self.model = model
+        self.url = (f"https://api.cloudflare.com/client/v4/accounts/"
+                    f"{account_id}/ai/run")
+
+    async def evaluate(self, state: dict, questions: dict, *, identity: RequestIdentity,
+                       deadline: float | None = None) -> AsyncProviderResult:
+        requested_model = self.model
+        body, payload_sha256 = await self.post_json(
+            identity=identity,
+            url=self.url,
+            headers={"Authorization": f"Bearer {self.api_token}"},
+            payload={"model": requested_model, "input": {"state": state, "questions": questions}},
+            deadline=deadline,
+        )
+        result = body.get("result")
+        if body.get("success") is not True or not isinstance(result, dict):
+            raise AsyncProviderPayloadError(identity, "Provider rejected application request")
+        answers = result.get("answers")
+        if not isinstance(answers, dict):
+            raise AsyncProviderPayloadError(identity)
+        return make_result(identity, answers, result.get("usage"), requested_model,
+                           result.get("model"), payload_sha256)
+
+
+class AsyncMockJevClient:
+    """Offline async-shaped adapter that preserves the synchronous mock rules."""
+
+    is_mock = True
+    model = MockJevClient.model
+
+    async def evaluate(self, state: dict, questions: dict, *, identity: RequestIdentity,
+                       deadline: float | None = None) -> AsyncProviderResult:
+        if deadline is not None:
+            if (not isinstance(deadline, (int, float)) or isinstance(deadline, bool)
+                    or not math.isfinite(deadline)):
+                raise ValueError("deadline must be an absolute finite monotonic timestamp")
+            if deadline <= time.monotonic():
+                raise AsyncProviderDeadlineExceeded("provider request deadline expired", identity)
+        request = {"state": state, "model": self.model, "questions": questions}
+        snapshot = snapshot_json(request)
+        answers = MockJevClient().evaluate(snapshot["state"], snapshot["questions"])
+        return make_result(identity, answers, None, self.model, self.model,
+                           request_payload_sha256(snapshot))
+
+    async def aclose(self) -> None:
+        return None
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        await self.aclose()
+
+
 def make_client(*, allow_mock: bool = True, model: str | None = None) -> object:
     """Real client when a key exists, mock otherwise.
 
@@ -154,3 +266,27 @@ def make_client(*, allow_mock: bool = True, model: str | None = None) -> object:
     if not allow_mock:
         raise ValueError("Live Jev credentials are required; use an explicit offline mock")
     return MockJevClient()
+
+
+def make_async_client(*, allow_mock: bool = True, model: str | None = None,
+                      **transport_options) -> object:
+    """Construct an explicit async client using the same provider priority.
+
+    This factory is opt-in; the production controller and synchronous
+    ``make_client`` path are not changed by adding async transport support.
+    """
+    key = os.environ.get("TYPESAFE_API_KEY")
+    if key:
+        return AsyncJevClient(api_key=key, model=model or "jev-latest",
+                              **transport_options)
+    cf_token = os.environ.get("CLOUDFLARE_API_TOKEN")
+    cf_acct = os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+    if cf_token and cf_acct:
+        return AsyncCloudflareJevClient(account_id=cf_acct, api_token=cf_token,
+                                        model=model or "typesafe/jev",
+                                        **transport_options)
+    if not allow_mock:
+        raise ValueError("Live Jev credentials are required; use an explicit offline mock")
+    if transport_options:
+        raise ValueError("async mock does not accept HTTP transport options")
+    return AsyncMockJevClient()

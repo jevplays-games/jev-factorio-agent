@@ -19,6 +19,8 @@ dependencies = [
     # TypeSafe Python SDK: https://docs.typesafe.ai/sdk/python.md
     # Uncomment when you have a key (TypeSafe console, or route via Vercel AI Gateway).
     # "typesafe-sdk",
+    # Pinned async transport; async provider support is explicit and opt-in.
+    "httpx==0.28.1",
     "requests>=2.31",
     "python-dotenv>=1.0",
 ]
