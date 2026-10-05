@@ -1037,6 +1037,8 @@ def test_resume_with_repair_gate_never_starts_game(supervisor, monkeypatch):
 def test_code_verification_rejects_dirty_worktree(supervisor, monkeypatch):
     calls = iter([(0, "a" * 40), (0, " M src/changed.py")])
     monkeypatch.setattr(supervisor, "capture", lambda command: next(calls))
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: {
+        "commit": "a" * 40, "source_sha256": "1" * 64})
     assert not supervisor.verify_code({"commit": "a" * 40})
 
 
@@ -1075,6 +1077,8 @@ def test_code_verification_rejects_split_fetch_and_push_fork_owners(supervisor, 
         pytest.fail(f"unexpected verification command: {command}")
 
     monkeypatch.setattr(supervisor, "capture", capture)
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: {
+        "commit": commit, "source_sha256": "1" * 64})
 
     assert not supervisor.verify_code({"commit": commit,
         "pr_url": "https://github.com/jevplays-games/jev-factorio-agent/pull/1"})
@@ -1129,6 +1133,8 @@ def test_code_verification_rechecks_source_after_tests(supervisor, monkeypatch, 
         (0, "passed"), (0, status), (0, head),
     ])
     monkeypatch.setattr(supervisor, "capture", lambda command: next(calls))
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: {
+        "commit": commit, "source_sha256": "1" * 64})
     assert not supervisor.verify_code({"commit": commit,
         "pr_url": "https://github.com/jevplays-games/jev-factorio-agent/pull/1"})
 
@@ -1203,6 +1209,8 @@ def test_code_verification_requires_origin_and_checks_configured_fork(
         if command == [supervisor.config.python, '-m', 'pytest', 'tests/']: return 0, 'passed'
         pytest.fail(f'Unexpected command: {command}')
     monkeypatch.setattr(supervisor, 'capture', capture)
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: {
+        "commit": commit, "source_sha256": "1" * 64})
     assert supervisor.verify_code({'commit': commit,
         'pr_url': 'https://github.com/jevplays-games/jev-factorio-agent/pull/1'}) is accepted
     assert ([supervisor.config.python, '-m', 'pytest', 'tests/'] in seen) is accepted
@@ -1239,6 +1247,8 @@ def test_explicit_prevalidation_replaces_only_full_suite(supervisor, monkeypatch
             return cache_exit, ""
         pytest.fail(f"Unexpected command: {command}")
     monkeypatch.setattr(supervisor, "capture", capture)
+    monkeypatch.setattr(supervisor, "snapshot_revision", lambda **kwargs: {
+        "commit": commit, "source_sha256": "1" * 64})
     assert supervisor.verify_code({"commit": commit,
                                    "pr_url": "https://github.com/jevplays-games/jev-factorio-agent/pull/1",
                                    "prevalidation": reference}) is accepted

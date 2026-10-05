@@ -67,9 +67,31 @@ def source_revision(cwd: Path, *, timeout: float = 10,
     a fabricated clean revision. This is a source fingerprint, not a world save.
     """
     deadline = time.monotonic() + timeout
-    root = cwd.resolve()
-    excluded = tuple(path.resolve() for path in exclude_untracked)
-    excluded_prefixes = tuple(os.fspath(path.absolute()) for path in exclude_untracked_prefixes)
+    try:
+        root = cwd.resolve()
+        # Keep lexical names for matching Git's repository-relative paths, but
+        # also inspect resolved names so a symlink alias cannot turn an
+        # apparently narrow exclusion into the checkout (or one of its parents).
+        excluded_lexical = tuple(Path(os.path.abspath(os.fspath(path)))
+                                 for path in exclude_untracked)
+        excluded_resolved = tuple(path.resolve() for path in exclude_untracked)
+        prefixes = tuple(Path(os.path.abspath(os.fspath(path)))
+                         for path in exclude_untracked_prefixes)
+        resolved_prefixes = tuple(path.resolve() for path in prefixes)
+        if any(exclusion == root or root.is_relative_to(exclusion)
+               for exclusion in (*excluded_resolved, *resolved_prefixes)):
+            return None
+    except (OSError, RuntimeError, ValueError):
+        return None
+    excluded_prefixes = tuple(os.path.normcase(os.fspath(path)) for path in prefixes)
+    root_name = os.path.normcase(os.fspath(root))
+    # Prefix exclusions are intentionally lexical (for atomic temp siblings),
+    # so Path.is_relative_to alone cannot detect a prefix such as
+    # /tmp/campaign. that also matches a checkout at /tmp/campaign.runtime.
+    # Returning unknown is safer than silently omitting every untracked source
+    # file under that checkout; unrelated external checkpoint paths still work.
+    if any(root_name.startswith(prefix) for prefix in excluded_prefixes):
+        return None
 
     def git(*args: str) -> bytes:
         remaining = deadline - time.monotonic()
@@ -89,10 +111,10 @@ def source_revision(cwd: Path, *, timeout: float = 10,
         for name in names:
             if not name:
                 continue
-            path = (root / os.fsdecode(name)).absolute()
-            if any(path.is_relative_to(exclusion) for exclusion in excluded):
+            path = Path(os.path.abspath(os.fspath(root / os.fsdecode(name))))
+            if any(path.is_relative_to(exclusion) for exclusion in excluded_lexical):
                 continue
-            if os.fspath(path).startswith(excluded_prefixes):
+            if os.path.normcase(os.fspath(path)).startswith(excluded_prefixes):
                 continue
             included.add(name)
         return included
@@ -104,7 +126,14 @@ def source_revision(cwd: Path, *, timeout: float = 10,
         if not _SHA.fullmatch(head):
             return None
         index = git("ls-files", "--stage", "-z")
-        tracked = {entry.split(b"\t", 1)[1] for entry in index.split(b"\0") if entry}
+        entries = [entry.split(b"\t", 1) for entry in index.split(b"\0") if entry]
+        # Gitlinks need their own source provenance. Detect the index mode
+        # before consulting the worktree path: an absent submodule directory
+        # is just as unsupported as a materialized one.
+        if any(parts and parts[0].split() and parts[0].split()[0] == b"160000"
+               for parts in entries):
+            return None
+        tracked = {parts[1] for parts in entries}
         others = untracked()
         digest = hashlib.sha256()
         add(digest, b"jev-factorio.source.v1")
