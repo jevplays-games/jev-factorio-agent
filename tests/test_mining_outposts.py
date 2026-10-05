@@ -1161,10 +1161,18 @@ def test_cli_records_explicit_outpost_treatment_and_preserves_resume(monkeypatch
     from jev_factorio import main
     from jev_factorio.research_log import verify_run
     from jev_factorio.outpost_controller import MiningOutpostMixin
+    from jev_factorio.controller import HierarchicalLoop
+    from jev_factorio.buffer_controller import buffered_loop_type
+    from jev_factorio.input_controller import input_loop_type
+    from jev_factorio.outpost_controller import outpost_loop_type
     captured = {}
     monkeypatch.chdir(tmp_path)
     checkpoint = tmp_path / 'state.json'
-    checkpoint.write_text('{}')  # Recording loop deliberately does not read a live checkpoint.
+    selected = outpost_loop_type(input_loop_type(buffered_loop_type(HierarchicalLoop)))
+    memory = selected.memory_type('cli-outpost-session', 'rocket_launch', last_tick=300)
+    memory.save(checkpoint)
+    original_checkpoint = checkpoint.read_bytes()
+    selected.memory_type.load(checkpoint, 'cli-outpost-session', 'rocket_launch')
     monkeypatch.setattr('sys.argv', [
         'jev-factorio', '--backend', 'fle', '--controller', 'hierarchical',
         '--factory-scheduling', 'ready-work', '--furnace-output-buffers', '--furnace-input-belts',
@@ -1190,7 +1198,7 @@ def test_cli_records_explicit_outpost_treatment_and_preserves_resume(monkeypatch
     }
     assert captured['loop_options']['resume_controller'] and captured['steps'] == 0
     assert verify_run(tmp_path/'research')['complete']
-    assert checkpoint.read_text() == '{}'
+    assert checkpoint.read_bytes() == original_checkpoint
 
 
 def test_outpost_capability_cannot_be_silently_dropped():
