@@ -84,6 +84,7 @@ class CausalTrace:
         self.observation_phase = "before_decision"
         self._counts: dict[str, int] = {}
         self._failed = False
+        self._async_provider_call = None
         self.decision_id = self.observation_id = self.model_call_id = self.action_id = None
         self._session_id = self._world_kind = self._tick = None
         self._pending_key = self._pending_action_id = None
@@ -126,6 +127,25 @@ class CausalTrace:
             return None
         self._counts[kind] = self._counts.get(kind, 0) + 1
         return f"{kind}:{self._counts[kind]}"
+
+    def _reserve_async_provider_call(self):
+        """Reserve this trace against synchronous model-call entry while awaiting."""
+        if self._failed:
+            raise ResearchLogError("Causal trace has failed")
+        if self._async_provider_call is not None:
+            raise ResearchLogError("Causal trace already has an async provider call")
+        token = object()
+        self._async_provider_call = token
+        return token
+
+    def _release_async_provider_call(self, token) -> None:
+        if self._async_provider_call is token:
+            self._async_provider_call = None
+
+    def _require_sync_provider_admission(self) -> None:
+        if self._async_provider_call is not None:
+            raise ResearchLogError(
+                "Synchronous provider call cannot enter during an async provider call")
 
     def begin_step(self) -> None:
         if self._failed:
@@ -357,6 +377,7 @@ class TracedClient:
 
     def evaluate(self, state: dict, questions: dict) -> dict:
         trace, client = self._trace, self._client
+        trace._require_sync_provider_admission()
         trace.model_call_id = trace.identity("model")
         payload = {"state": state, "questions": questions,
                    "requested_model": getattr(client, "model", None),
