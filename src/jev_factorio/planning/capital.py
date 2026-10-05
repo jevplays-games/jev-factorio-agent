@@ -243,8 +243,13 @@ def matches(plan, state):
 
 
 def costs_allowed(plan, snapshot, state, catalog):
-    if state is None or matches(plan, state):
+    if state is None:
         return True
+    if matches(plan, state):
+        # The planner's frontier is not revisited while a committed plan is
+        # retained. Recheck its bounded lifetime at the final pre-dispatch gate.
+        return (type(snapshot.tick) is int
+                and snapshot.tick < state['deadline_tick'])
     held = held_kit(state, snapshot, catalog)
     costs = {}
     for step in plan.steps:
