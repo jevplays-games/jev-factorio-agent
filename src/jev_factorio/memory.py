@@ -286,6 +286,11 @@ class CampaignMemory:
                         or re.fullmatch(r"[0-9a-f]{64}", archive["head_sha256"]) is None
                         or memory.blocked_recovery is None):
                     raise ValueError("Invalid blocked-recovery archive pointer")
+            # Validate cross-family paid identities at the shared base loader,
+            # so composed checkpoints cannot bypass this check by omitting the
+            # output-buffer extension that historically performed it.
+            from .output_buffers import _validate_composed_paid_identities
+            _validate_composed_paid_identities(memory)
             return memory
         except (TypeError, KeyError, AttributeError, json.JSONDecodeError) as error:
             raise ValueError("Invalid controller checkpoint; refusing to reset it") from error
