@@ -10,14 +10,36 @@ import pytest
 from jev_factorio import coal_supply
 from jev_factorio.planning import coal_admission, coal_funding
 from jev_factorio.planning.coal_supply import candidates
-from test_coal_admission_contract import v2
 from test_coal_kit_funding import Backend, controller, offers
+
+
+def set_economic_protocol(backend):
+    data = backend.state.factory["coal_supply"]
+    data["protocol"] = 2
+    data["admission"] = {
+        "protocol": 1,
+        **{key: data[key] for key in (
+            "session_id", "tick", "actor_index", "surface_index", "force_index")},
+        "qualified": False,
+        "reason": "electric_conversion_and_construction_cost_unknown",
+    }
+    advance = backend.advance
+
+    def advance_with_bound_admission():
+        advance()
+        current = backend.state.factory["coal_supply"]
+        current["admission"].update({
+            key: current[key]
+            for key in ("session_id", "tick", "actor_index", "surface_index", "force_index")
+        })
+
+    backend.advance = advance_with_bound_admission
 
 
 def carried_backend(version):
     backend = Backend()
     if version == 2:
-        backend.state = v2()
+        set_economic_protocol(backend)
     backend.state.inventory.update(
         coal_supply.remaining_kit(coal_supply.sources(backend.state), backend.state))
     return backend
@@ -28,9 +50,10 @@ def allow_synthetic_selection(loop, patch):
     patch.setattr(loop, '_coal_admission_allows_start', lambda _snapshot: True)
 
 
-@pytest.mark.parametrize("version", [1, 2])
-def test_unqualified_carried_kit_never_starts_or_pays(version, tmp_path):
-    backend = carried_backend(version)
+def test_unqualified_carried_kit_never_starts_or_pays(tmp_path):
+    # Economic-admission treatment is protocol 2. Protocol 1 is covered by
+    # the explicit cross-wiring rejection controls in test_coal_protocol_binding.
+    backend = carried_backend(2)
     stock = deepcopy(backend.state.inventory)
     loop = controller(backend, tmp_path, coal_economic_admission=True)
     _, plans = offers(loop)
@@ -44,9 +67,8 @@ def test_unqualified_carried_kit_never_starts_or_pays(version, tmp_path):
     assert loop.memory.pending is None
 
 
-@pytest.mark.parametrize("version", [1, 2])
-def test_unqualified_direct_build_fails_commit_and_dispatch_boundaries(version, tmp_path):
-    backend = carried_backend(version)
+def test_unqualified_direct_build_fails_commit_and_dispatch_boundaries(tmp_path):
+    backend = carried_backend(2)
     loop = controller(backend, tmp_path, coal_economic_admission=True)
     snapshot = loop._observe()
     # The raw geometry planner is deliberately independent of controller policy.
@@ -60,9 +82,8 @@ def test_unqualified_direct_build_fails_commit_and_dispatch_boundaries(version, 
     assert not backend.calls
 
 
-@pytest.mark.parametrize("version", [1, 2])
-def test_unoffered_kit_cannot_create_funding_at_commit(version, tmp_path):
-    backend = carried_backend(version)
+def test_unoffered_kit_cannot_create_funding_at_commit(tmp_path):
+    backend = carried_backend(2)
     backend.state.inventory['electric-mining-drill'] = 0
     backend.state.factory['entities']['kit:storage'] = {
         'unit_number': 6000, 'name': 'wooden-chest', 'position': {'x': 2, 'y': 2},
@@ -78,9 +99,8 @@ def test_unoffered_kit_cannot_create_funding_at_commit(version, tmp_path):
     assert loop.memory.coal_funding is None and not backend.calls
 
 
-@pytest.mark.parametrize("version", [1, 2])
-def test_legacy_carried_policy_still_builds(version, tmp_path):
-    backend = carried_backend(version)
+def test_legacy_carried_policy_still_builds(tmp_path):
+    backend = carried_backend(1)
     loop = controller(backend, tmp_path)
     record = loop.step()
     assert record['action'] == coal_supply.COMMAND and record['verified']
@@ -159,6 +179,7 @@ def test_prepared_retry_exception_is_bound_to_checkpoint_and_native_receipt(monk
 
 def test_paid_funding_continues_when_new_admission_defers(monkeypatch, tmp_path):
     backend = Backend()
+    set_economic_protocol(backend)
     loop = controller(backend, tmp_path, coal_economic_admission=True)
     with monkeypatch.context() as patch:
         allow_synthetic_selection(loop, patch)

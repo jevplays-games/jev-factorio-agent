@@ -66,17 +66,15 @@ def test_lua_v2_is_explicit_and_carries_same_epoch():
     assert lua.eval("storage.coal_supply.snapshot().protocol") == 1
 
 
-def test_controller_direct_opt_in_defers_new_kit_on_v1_and_v2(tmp_path):
+def test_controller_direct_opt_in_defers_new_kit_on_unqualified_v2(tmp_path):
     from test_coal_kit_funding import Backend, controller, offers
-    for version in (1, 2):
-        backend = Backend()
-        if version == 2:
-            backend.state = v2()
-        loop = controller(backend, tmp_path / str(version), coal_economic_admission=True)
-        _, plans = offers(loop)
-        assert all(not plan.id.startswith("coal-kit:") for plan in plans)
-        assert loop._coal_kit_evidence["eligible"] is False
-        assert not backend.calls
+    backend = Backend()
+    backend.state = v2()
+    loop = controller(backend, tmp_path, coal_economic_admission=True)
+    _, plans = offers(loop)
+    assert all(not plan.id.startswith("coal-kit:") for plan in plans)
+    assert loop._coal_kit_evidence["eligible"] is False
+    assert not backend.calls
 
 
 def test_economic_checkpoint_roundtrip_rejects_treatment_downgrade(tmp_path):
@@ -106,8 +104,12 @@ def test_existing_paid_funding_rejects_in_place_admission_upgrade(tmp_path):
     loop._commit_solid(plan, snapshot)
     assert loop.memory.coal_funding is not None
     paid = deepcopy(loop.memory.coal_funding)
+    checkpoint_before = backend.checkpoint.read_bytes()
+    calls_before = deepcopy(backend.calls)
     loop._coal_economic_admission = True
-    loop._observe()
+    with pytest.raises(ValueError, match="protocol"):
+        loop._observe()
     assert loop.memory.status == 'uncertain'
     assert loop.memory.coal_funding == paid
-    assert not backend.calls
+    assert backend.checkpoint.read_bytes() == checkpoint_before
+    assert backend.calls == calls_before
