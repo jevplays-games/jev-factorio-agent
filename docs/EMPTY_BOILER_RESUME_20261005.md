@@ -69,7 +69,10 @@ state, and strict choice confidence are preserved.
    checkpoint. Never clear receipts, reinstall callbacks, or manufacture a witness.
 4. Test and merge the repair. Stage the immutable merged source and signed owner;
    verify native attachment with the checkpoint binding and the composed checkpoint
-   parser before stopping the held owner. Preserve the old checkpoint/config.
+   parser before stopping the held owner. Exercise the full CLI with the exact
+   production flags and captured checkpoint, a disabled backend boundary, and
+   disabled model client; helper-only preflight misses CLI gates. Preserve the old
+   checkpoint/config.
 5. Admit one source-bound recovery under the existing single-writer lock, pinning
    the exact checkpoint hash and terminal result. Start through the same service.
    Never replay an already consumed admission.
@@ -82,3 +85,24 @@ checkpoint cell/payment/identity mismatches, actual bundled Lua guards, owner-st
 preservation, and one-use recovery with retained attempt history. These checks
 do not establish uninterrupted multi-day reliability; ongoing monitoring remains
 necessary.
+
+## CLI preflight follow-up
+
+The 09:17 UTC launch exited with code 2 before backend attachment, provider calls,
+research events, or checkpoint changes. A duplicated CLI reason whitelist still
+excluded the boiler error even though the recovery schema accepted it. The CLI
+now uses the same eligibility set as checkpoint history validation. A regression
+runs the full composed persistent CLI and verifies both the accepted boiler case
+and rejection of an unknown reason, wrong checkpoint digest, and missing source.
+
+A disposable full-CLI probe against the exact live checkpoint reached the
+explicitly disabled backend boundary, with both connector and completed-craft
+bindings present. The checkpoint remained unchanged. This probe makes no model
+or native calls and does not consume recovery authorization.
+
+Retain the failed launch as a failure. A subsequent launch must distinguish the
+previous deployed revision from the revision that actually produced the blocked
+decision: a preflight-only failure does not consume a model reevaluation or
+advance that decision's source. Pin both revisions and the unchanged checkpoint;
+never reset the owner launch count or use an unrelated commit as justification
+for another JEV choice.
