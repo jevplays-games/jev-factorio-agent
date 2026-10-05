@@ -110,6 +110,7 @@ class ReplayReport:
     events: list[dict] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
     segments: list[str] = field(default_factory=list)
+    run_evidence: list[dict] = field(default_factory=list)
 
     def add(self, severity: str, code: str, message: str, line: int | None = None,
             decision_id: str | None = None) -> None:
@@ -137,7 +138,8 @@ class ReplayReport:
             "segments": self.segments, "mixed_segments": len(self.segments) > 1,
             "decision_count": None if self.format == "legacy" else len(self.decisions),
             "legacy_record_count": len(self.decisions) if self.format == "legacy" else None,
-            "decisions": self.decisions, "events": self.events,
+            "decisions": self.decisions, "run_evidence": self.run_evidence,
+            "events": self.events,
             "findings": [asdict(item) for item in self.findings],
         }
 
@@ -324,6 +326,7 @@ class _Audit:
     def prepare(self, events: list[dict]) -> None:
         previous_segment = None
         finished = False
+        terminal_decisions: set[tuple[str, str]] = set()
         for event in events:
             kind, payload = event["event_type"], event["payload"]
             segment = event["segment_id"]
@@ -351,12 +354,22 @@ class _Audit:
                 if field_name in payload and payload[field_name] != value:
                     self.issue(event, "identity_conflict", "Payload and correlation identities disagree")
             decision_id = event["correlation"].get("decision_id")
+            payload_decision = payload.get("decision_id")
+            claimed_decisions = {value for value in (decision_id, payload_decision)
+                                 if _identifier(value)}
+            if any((segment, value) in terminal_decisions for value in claimed_decisions):
+                self.issue(event, "post_terminal_evidence",
+                           "Decision evidence follows its terminal record")
+                continue
             if decision_id:
                 key = (segment, decision_id)
                 frame = self.frames.setdefault(key, _frame(*key))
                 frame["evidence"].append(event)
+                if kind == "decision_finished":
+                    terminal_decisions.add(key)
             elif kind in CAUSAL_EVENTS - {"observation"}:
                 self.issue(event, "unattributed_event", "Causal event has no decision identity", "gap")
+                continue
             if kind == "observation":
                 self.put("observation", self.identity(event, "observation_id"), event)
                 if not isinstance(payload.get("state"), dict):
@@ -714,19 +727,38 @@ truth or authorship. Missing evidence remains unknown and appears as a gap.
                 if report.manifest.get("schema") == "jev-factorio.manifest.v1":
                     if raw != json.dumps(report.manifest, sort_keys=True, separators=(",", ":"),
                                          ensure_ascii=True, allow_nan=False).encode("ascii") + b"\n":
-                        report.add("error", "noncanonical_manifest", "Producer manifest bytes are not canonical")
+                        raise ReplayInputError("Research manifest bytes are not canonical")
             except OSError as error:
                 raise ReplayInputError("Cannot read the run manifest") from error
         source = source / "events.jsonl"
     rows = _read(source, report, max_line_bytes, max_input_bytes, max_events)
     actual = rows and rows[0][1].get("schema") == EVENT_SCHEMA and "schema_version" in rows[0][1]
     if format == "research-v1" or (format == "auto" and actual):
+        from .research_log import digest as research_digest, validate_manifest
         from .replay_source import verify_source
         from .replay_causal import audit_producer
 
         report.format = "research-v1"
         report.events = [{"line": line, **event} for line, event in rows]
         report.run_id = rows[0][1].get("run_id") if rows else None
+        if report.manifest is not None:
+            try:
+                validate_manifest(report.manifest)
+            except (ValueError, TypeError, RecursionError) as error:
+                raise ReplayInputError("Invalid research manifest") from error
+            if rows:
+                first = rows[0][1]
+                first_payload = first.get("payload")
+                claimed_manifest = (first_payload.get("manifest_hash")
+                                    if isinstance(first_payload, dict) else None)
+                if (first.get("schema") == EVENT_SCHEMA
+                        and type(first.get("schema_version")) is int
+                        and first.get("schema_version") == 1
+                        and first.get("event_type") == "run_started"
+                        and isinstance(first.get("run_id"), str)
+                        and claimed_manifest == research_digest(report.manifest)
+                        and report.manifest.get("run_id") != rows[0][1].get("run_id")):
+                    raise ReplayInputError("Manifest run identity does not match source")
         try:
             checked = verify_source(rows, report.manifest, seal, expected_head)
         except (ValueError, TypeError, RecursionError):

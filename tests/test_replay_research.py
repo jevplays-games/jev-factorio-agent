@@ -59,7 +59,11 @@ def test_modified_producer_evidence_fails_before_causal_projection(tmp_path, tar
     row = json.loads(rows[0])
     row["run_id"] = "00000000-0000-0000-0000-000000000000"
     rows[0] = json.dumps(row)
-    file.write_text("\n".join(rows) + "\n")
+    if target == "manifest.json":
+        from jev_factorio.research_log import canonical_bytes
+        file.write_bytes(canonical_bytes(row) + b"\n")
+    else:
+        file.write_text("\n".join(rows) + "\n")
     report = replay_log(path, format="research-v1")
     assert report.status == "invalid"
     assert report.decisions == []
@@ -118,13 +122,12 @@ def test_resealed_invalid_causal_claims_fail(tmp_path, case):
 
 
 def test_noncanonical_manifest_never_claims_verified_integrity(tmp_path):
+    from jev_factorio.replay import ReplayInputError
     path = capture(tmp_path)
     file = path / "manifest.json"
     file.write_text(json.dumps(json.loads(file.read_text())) + "\n")
-    report = replay_log(path, format="research-v1")
-    assert report.status == "invalid"
-    assert report.integrity["status"] == "invalid"
-    assert report.decisions == []
+    with pytest.raises(ReplayInputError):
+        replay_log(path, format="research-v1")
 
 
 @pytest.mark.parametrize("controller", ["flat", "hierarchical"])
