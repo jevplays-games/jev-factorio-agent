@@ -19,6 +19,7 @@ from jev_factorio.async_provider import (
     AsyncProviderPayloadError,
     AsyncProviderQueueFull,
     AsyncProviderTimeout,
+    AsyncProviderClient,
     RequestIdentity,
 )
 from jev_factorio.jev_client import (
@@ -379,22 +380,329 @@ def test_cancellation_before_send_is_distinct_from_cancel_after_transport_entry(
             api_key="offline", transport=httpx.MockTransport(handler),
             max_concurrency=1, max_queue=1,
         )
-        active = asyncio.create_task(client.evaluate(STATE, QUESTIONS, identity=identity("active")))
+        active_identity = identity("active")
+        queued_identity = identity("queued")
+        active = asyncio.create_task(client.evaluate(
+            STATE, QUESTIONS, identity=active_identity
+        ))
         await entered.wait()
-        queued = asyncio.create_task(client.evaluate(STATE, QUESTIONS, identity=identity("queued")))
+        queued = asyncio.create_task(client.evaluate(
+            STATE, QUESTIONS, identity=queued_identity
+        ))
         await asyncio.sleep(0)
         assert client._waiting == 1
         queued.cancel()
         with pytest.raises(AsyncProviderCancelled) as before_send:
             await queued
+        assert isinstance(before_send.value, requests.RequestException)
+        assert not isinstance(before_send.value, asyncio.CancelledError)
+        assert before_send.value.identity == queued_identity
         assert before_send.value.delivery_phase == "not_sent"
+        assert isinstance(before_send.value.__cause__, asyncio.CancelledError)
+        assert not queued.cancelled()
+        assert client._waiting == 0
+        assert client._active == 1
+        assert len(sent) == 1
 
         active.cancel()
         with pytest.raises(AsyncProviderCancelled) as after_entry:
             await active
+        assert isinstance(after_entry.value, requests.RequestException)
+        assert not isinstance(after_entry.value, asyncio.CancelledError)
+        assert after_entry.value.identity == active_identity
         assert after_entry.value.delivery_phase == "may_have_been_sent"
+        assert isinstance(after_entry.value.__cause__, asyncio.CancelledError)
+        assert not active.cancelled()
         assert len(sent) == 1
+        assert client._active == 0
+        assert client._waiting == 0
         await client.aclose()
+        assert client.http_client.is_closed
+
+    run(exercise())
+
+
+def test_repeated_cancellation_during_active_release_preserves_delivery_and_drains():
+    async def exercise():
+        entered = asyncio.Event()
+        sent = []
+
+        async def handler(request):
+            sent.append(request)
+            entered.set()
+            await asyncio.Event().wait()
+
+        client = AsyncProviderClient(
+            transport=httpx.MockTransport(handler), max_concurrency=1, max_queue=1
+        )
+        request_identity = identity("double-cancel-active")
+        release_started = asyncio.Event()
+        original_release = client._release
+
+        async def observe_release():
+            release_started.set()
+            return await original_release()
+
+        client._release = observe_release
+        active = asyncio.create_task(client.post_json(
+            identity=request_identity, url="https://offline.invalid", headers={}, payload={}
+        ))
+        await entered.wait()
+        await client._condition.acquire()
+        try:
+            active.cancel()
+            await asyncio.wait_for(release_started.wait(), timeout=2)
+            assert not active.done()
+            assert client._active == 1
+            active.cancel()
+            await asyncio.sleep(0)
+            assert not active.done()
+            assert client._active == 1
+        finally:
+            client._condition.release()
+
+        with pytest.raises(AsyncProviderCancelled) as raised:
+            await active
+        assert raised.value.identity == request_identity
+        assert raised.value.delivery_phase == "may_have_been_sent"
+        assert isinstance(raised.value.__cause__, asyncio.CancelledError)
+        assert not active.cancelled()
+        assert len(sent) == 1
+        assert client._active == 0
+        assert client._waiting == 0
+        await client.aclose()
+        assert client.http_client.is_closed
+        assert not [task for task in asyncio.all_tasks()
+                    if task is not asyncio.current_task() and not task.done()]
+
+    run(exercise())
+
+
+def test_repeated_cancellation_of_queued_waiter_preserves_not_sent_identity():
+    async def exercise():
+        entered = asyncio.Event()
+        sent = []
+
+        async def handler(request):
+            sent.append(request)
+            entered.set()
+            await asyncio.Event().wait()
+
+        client = AsyncProviderClient(
+            transport=httpx.MockTransport(handler), max_concurrency=1, max_queue=1
+        )
+        active = asyncio.create_task(client.post_json(
+            identity=identity("queue-holder"), url="https://offline.invalid",
+            headers={}, payload={},
+        ))
+        await entered.wait()
+
+        wait_entered = asyncio.Event()
+        original_wait = client._condition.wait
+
+        async def observe_wait():
+            wait_entered.set()
+            return await original_wait()
+
+        client._condition.wait = observe_wait
+        queued_identity = identity("double-cancel-queued")
+        queued = asyncio.create_task(client.post_json(
+            identity=queued_identity, url="https://offline.invalid",
+            headers={}, payload={},
+        ))
+        await asyncio.wait_for(wait_entered.wait(), timeout=2)
+        assert client._waiting == 1
+        await client._condition.acquire()
+        try:
+            queued.cancel()
+            await asyncio.sleep(0)
+            assert not queued.done()
+            queued.cancel()
+            await asyncio.sleep(0)
+            assert not queued.done()
+            assert client._waiting == 1
+        finally:
+            client._condition.release()
+
+        with pytest.raises(AsyncProviderCancelled) as raised:
+            await queued
+        assert raised.value.identity == queued_identity
+        assert raised.value.delivery_phase == "not_sent"
+        assert isinstance(raised.value.__cause__, asyncio.CancelledError)
+        assert not queued.cancelled()
+        assert client._waiting == 0
+        assert client._active == 1
+        assert len(sent) == 1
+
+        client._condition.wait = original_wait
+        active.cancel()
+        with pytest.raises(AsyncProviderCancelled) as active_error:
+            await active
+        assert active_error.value.delivery_phase == "may_have_been_sent"
+        assert client._active == 0
+        assert client._waiting == 0
+        await client.aclose()
+        assert client.http_client.is_closed
+        assert not [task for task in asyncio.all_tasks()
+                    if task is not asyncio.current_task() and not task.done()]
+
+    run(exercise())
+
+
+def test_cancellation_during_success_cleanup_keeps_response_received_phase():
+    async def exercise():
+        entered = asyncio.Event()
+        respond = asyncio.Event()
+        sent = []
+
+        async def handler(request):
+            sent.append(request)
+            entered.set()
+            await respond.wait()
+            return response_for(request, {"answers": {"ok": True}})
+
+        client = AsyncProviderClient(
+            transport=httpx.MockTransport(handler), max_concurrency=1, max_queue=1
+        )
+        request_identity = identity("cancel-after-response")
+        release_started = asyncio.Event()
+        original_release = client._release
+
+        async def observe_release():
+            release_started.set()
+            return await original_release()
+
+        client._release = observe_release
+        request = asyncio.create_task(client.post_json(
+            identity=request_identity, url="https://offline.invalid", headers={}, payload={}
+        ))
+        await entered.wait()
+        await client._condition.acquire()
+        try:
+            respond.set()
+            await asyncio.wait_for(release_started.wait(), timeout=2)
+            request.cancel()
+            await asyncio.sleep(0)
+            assert not request.done()
+            request.cancel()
+            await asyncio.sleep(0)
+            assert not request.done()
+            assert client._active == 1
+        finally:
+            client._condition.release()
+
+        with pytest.raises(AsyncProviderCancelled) as raised:
+            await request
+        assert raised.value.identity == request_identity
+        assert raised.value.delivery_phase == "response_received"
+        assert isinstance(raised.value.__cause__, asyncio.CancelledError)
+        assert not request.cancelled()
+        assert len(sent) == 1
+        assert client._active == 0
+        assert client._waiting == 0
+        await client.aclose()
+        assert client.http_client.is_closed
+        assert not [task for task in asyncio.all_tasks()
+                    if task is not asyncio.current_task() and not task.done()]
+
+    run(exercise())
+
+
+def test_cleanup_cancellation_does_not_replace_existing_provider_http_error():
+    async def exercise():
+        entered = asyncio.Event()
+        respond = asyncio.Event()
+        sent = []
+
+        async def handler(request):
+            sent.append(request)
+            entered.set()
+            await respond.wait()
+            return httpx.Response(503, text="offline failure", request=request)
+
+        client = AsyncProviderClient(
+            transport=httpx.MockTransport(handler), max_concurrency=1, max_queue=1
+        )
+        request_identity = identity("error-during-cleanup")
+        release_started = asyncio.Event()
+        original_release = client._release
+
+        async def observe_release():
+            release_started.set()
+            return await original_release()
+
+        client._release = observe_release
+        request = asyncio.create_task(client.post_json(
+            identity=request_identity, url="https://offline.invalid", headers={}, payload={}
+        ))
+        await entered.wait()
+        await client._condition.acquire()
+        try:
+            respond.set()
+            await asyncio.wait_for(release_started.wait(), timeout=2)
+            request.cancel()
+            await asyncio.sleep(0)
+            request.cancel()
+            await asyncio.sleep(0)
+            assert not request.done()
+            assert client._active == 1
+        finally:
+            client._condition.release()
+
+        with pytest.raises(AsyncProviderHTTPError) as raised:
+            await request
+        assert raised.value.identity == request_identity
+        assert raised.value.delivery_phase == "response_received"
+        assert raised.value.response.status_code == 503
+        assert not request.cancelled()
+        assert len(sent) == 1
+        assert client._active == 0
+        assert client._waiting == 0
+        await client.aclose()
+        assert client.http_client.is_closed
+        assert not [task for task in asyncio.all_tasks()
+                    if task is not asyncio.current_task() and not task.done()]
+
+    run(exercise())
+
+
+def test_cancelling_close_waiter_remains_native_asyncio_cancellation():
+    async def exercise():
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def handler(request):
+            entered.set()
+            await release.wait()
+            return response_for(request, {"answers": {"ok": True}})
+
+        client = AsyncJevClient(
+            api_key="offline", transport=httpx.MockTransport(handler),
+            max_concurrency=1, max_queue=1,
+        )
+        active = asyncio.create_task(
+            client.evaluate(STATE, QUESTIONS, identity=identity("active"))
+        )
+        await entered.wait()
+        closing = asyncio.create_task(client.aclose())
+        for _ in range(100):
+            if client._closing:
+                break
+            await asyncio.sleep(0)
+        assert client._closing
+        assert client._active == 1
+
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        assert closing.cancelled()
+        assert not active.done()
+
+        release.set()
+        await active
+        assert client._active == 0
+        await client.aclose()
+        assert client.http_client.is_closed
 
     run(exercise())
 

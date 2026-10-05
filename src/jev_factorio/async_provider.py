@@ -94,11 +94,18 @@ class AsyncProviderDeadlineExceeded(AsyncProviderLocalError):
     """The absolute deadline expired before the transport was entered."""
 
 
-class AsyncProviderCancelled(asyncio.CancelledError, _RequestErrorContext):
-    """Cancellation with the conservative local delivery phase attached."""
+class AsyncProviderCancelled(requests.RequestException, _RequestErrorContext):
+    """Typed provider outcome for a caller-cancelled request.
+
+    This is deliberately not an ``asyncio.CancelledError``: Python 3.10 tasks
+    normalize cancellation subclasses when they cross an ``await`` boundary,
+    which discards the request identity and delivery phase. Awaiters receive
+    this provider exception, so its task is done with an exception rather than
+    reporting ``Task.cancelled()`` as true.
+    """
 
     def __init__(self, identity: RequestIdentity, delivery_phase: DeliveryPhase):
-        asyncio.CancelledError.__init__(self, "provider request cancelled")
+        requests.RequestException.__init__(self, "provider request cancelled")
         self._set_context(identity, delivery_phase)
 
 
@@ -286,22 +293,60 @@ class AsyncProviderClient:
                         self._active += 1
                         return
                     remaining = deadline - time.monotonic()
-                    try:
-                        await asyncio.wait_for(self._condition.wait(), timeout=remaining)
-                    except asyncio.TimeoutError:
+                    if remaining <= 0:
                         raise AsyncProviderDeadlineExceeded(
                             "provider request deadline expired", identity
-                        ) from None
+                        )
+                    task = asyncio.current_task()
+                    if task is None:
+                        raise RuntimeError("provider admission requires an asyncio task")
+                    timed_out = False
+
+                    def cancel_at_deadline() -> None:
+                        nonlocal timed_out
+                        timed_out = True
+                        task.cancel()
+
+                    timeout_handle = asyncio.get_running_loop().call_later(
+                        remaining, cancel_at_deadline
+                    )
+                    try:
+                        # Await Condition.wait directly. asyncio.wait_for creates
+                        # an inner task whose repeated cancellation can escape
+                        # before Condition.wait reacquires this lock on Python 3.10.
+                        await self._condition.wait()
+                    except asyncio.CancelledError:
+                        if timed_out:
+                            raise AsyncProviderDeadlineExceeded(
+                                "provider request deadline expired", identity
+                            ) from None
+                        raise
+                    finally:
+                        timeout_handle.cancel()
             finally:
                 if queued:
                     self._waiters.remove(waiter)
                     self._waiting -= 1
                 self._condition.notify_all()
 
-    async def _release(self) -> None:
-        async with self._condition:
-            self._active -= 1
-            self._condition.notify_all()
+    async def _release(self) -> asyncio.CancelledError | None:
+        """Release one active slot before honoring cancellation during cleanup.
+
+        Cancellation can arrive while this task waits to reacquire the
+        admission condition after a request has already been classified. Keep
+        waiting for the lock, then decrement exactly once; return the first
+        deferred cancellation so ``post_json`` can preserve or classify it.
+        """
+        deferred_cancellation = None
+        while True:
+            try:
+                async with self._condition:
+                    self._active -= 1
+                    self._condition.notify_all()
+                return deferred_cancellation
+            except asyncio.CancelledError as error:
+                if deferred_cancellation is None:
+                    deferred_cancellation = error
 
     async def post_json(self, *, identity: RequestIdentity, url: str,
                         headers: Mapping[str, str], payload: dict[str, Any],
@@ -319,6 +364,8 @@ class AsyncProviderClient:
             raise ValueError("deadline must be an absolute finite monotonic timestamp")
 
         acquired = False
+        delivery_phase = NOT_SENT
+        operation_failed = False
         try:
             try:
                 await self._acquire(identity, float(deadline))
@@ -332,6 +379,7 @@ class AsyncProviderClient:
             try:
                 # Entering HTTPX is the conservative ambiguity boundary. HTTPX
                 # cannot prove whether a remote peer acted after later cancel.
+                delivery_phase = MAY_HAVE_BEEN_SENT
                 response = await asyncio.wait_for(
                     self.http_client.post(url, headers=dict(headers), json=request_payload,
                                           follow_redirects=True),
@@ -352,6 +400,7 @@ class AsyncProviderClient:
             except httpx.TransportError as error:
                 raise AsyncProviderConnectionError(identity, MAY_HAVE_BEEN_SENT) from error
 
+            delivery_phase = RESPONSE_RECEIVED
             if time.monotonic() > float(deadline):
                 raise AsyncProviderTimeout(identity, MAY_HAVE_BEEN_SENT)
             if response.is_error:
@@ -363,9 +412,14 @@ class AsyncProviderClient:
             if not isinstance(body, dict):
                 raise AsyncProviderPayloadError(identity)
             return body, request_sha256
+        except BaseException:
+            operation_failed = True
+            raise
         finally:
             if acquired:
-                await self._release()
+                deferred_cancellation = await self._release()
+                if deferred_cancellation is not None and not operation_failed:
+                    raise AsyncProviderCancelled(identity, delivery_phase) from deferred_cancellation
 
     async def aclose(self) -> None:
         self._bind_loop()
