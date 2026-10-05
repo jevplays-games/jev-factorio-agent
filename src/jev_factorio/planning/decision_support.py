@@ -3945,9 +3945,102 @@ def _current_overlap_craft(snapshot, craft, row):
         and isinstance(outputs, dict) and outputs.get(step.item) == produced)
 
 
+def add_current_raw_bill_evidence(snapshot, catalog, plans, rows):
+    """Explain a current raw shortfall without treating forecast stock as paid.
+
+    Recompute only the named local material target, not research horizons, fuel,
+    machine capacity, or a completion forecast. A collectible output can reduce
+    this bill but still needs its own native collection and later judgments.
+    """
+    from .demand import SupplyLedger
+    from .factory import RAW_ITEMS
+
+    job = snapshot.factory.get('craft_job')
+    if (snapshot.world_kind != 'fle' or snapshot.game_version != catalog.version
+            or (job is not None and (not isinstance(job, dict) or job.get('status') != 'completed'))
+            or type(snapshot.tick) is not int or snapshot.tick < 0
+            or not snapshot.session_id or snapshot.factory.get('crafting_queue') != 0):
+        return
+    for plan in plans:
+        row = rows.get(plan.id, {})
+        local, start, raw = (row.get(key) for key in
+                            ('local_target', 'gather_start_evidence', 'raw_prerequisite'))
+        if (len(plan.steps) != 1 or row.get('work_scope') != 'immediate'
+                or row.get('unknowns') != [] or not isinstance(local, dict)
+                or not isinstance(start, dict) or not isinstance(raw, dict)):
+            continue
+        step = plan.steps[0]
+        item, target = local.get('item'), local.get('inventory_target')
+        current = snapshot.inventory.get(step.item, 0)
+        if (step.action != 'factory_gather' or step.effect != 'inventory'
+                or step.item not in RAW_ITEMS - {'wood'} or step.costs not in (None, {})
+                or not isinstance(item, str) or not item or item == step.item
+                or type(target) is not int or not 1 <= target <= 200
+                or local.get('ultimate_goal') != plan.goal
+                or type(current) is not int or current < 0
+                or type(step.threshold) is not int or step.threshold <= current
+                or (step.parameters or {}) != {'resource': step.item, 'quantity': step.threshold-current}
+                or start.get('observed_tick') != snapshot.tick
+                or start.get('session_id') != snapshot.session_id
+                or start.get('resource_inventory_now') != current
+                or start.get('target_inventory_after_this_step') != step.threshold
+                or start.get('resource_in_current_observation') is not True
+                or start.get('fair_target_identity_observed') is not True
+                or raw.get('observed_tick') != snapshot.tick
+                or not _current_item_dependency_path(snapshot, catalog,
+                    raw.get('planner_item_path'), item, step.item)):
+            continue
+        try:
+            ledger = SupplyLedger.capture(snapshot, catalog)
+            # Keep this explanation limited to already observed item supply.
+            # Pending craft ownership and production forecasts need other proofs.
+            if (ledger.reserved or any(ledger.queued_output.values())
+                    or any(ledger.in_flight_output.values())):
+                continue
+            carried_bill = catalog.material_plan(item, target, ledger.carried, snapshot.researched or [])
+            stock = dict(ledger.carried)
+            for name, count in ledger.collectible.items():
+                stock[name] = stock.get(name, 0) + count
+            collected_bill = catalog.material_plan(item, target, stock, snapshot.researched or [])
+            batches = collected_bill.batches
+            if len(batches) > 32 or len(carried_bill.shortages) > 16:
+                continue
+            # This is a solid deterministic material bill, not a fluid/coproduct solver.
+            for name in set(batches) | set(carried_bill.batches):
+                recipe = catalog.recipes[name]
+                if (len(recipe['products']) != 1 or any(
+                        entry.get('type') != 'item' or not _finite(entry.get('amount'))
+                        or entry['amount'] <= 0 or not float(entry['amount']).is_integer()
+                        for entry in recipe['ingredients'] + recipe['products'])
+                        or recipe['products'][0].get('probability', 1) != 1):
+                    raise ValueError('Unsupported material bill')
+            shortage = collected_bill.shortages.get(step.item, 0)
+            if not _finite(shortage) or shortage <= 0:
+                continue
+        except (ArithmeticError, KeyError, TypeError, ValueError):
+            continue
+        row['current_raw_material_bill'] = {
+            'observed_tick': snapshot.tick,
+            'basis': 'recomputed_native_catalog_local_target_only',
+            'local_target': dict(local),
+            'carried_only_shortages': dict(carried_bill.shortages),
+            'collectible_outputs_not_carried_or_paid': dict(ledger.collectible),
+            'shortages_if_observed_outputs_are_collected': dict(collected_bill.shortages),
+            'gather_resource': step.item,
+            'planned_inventory_increase': step.threshold - current,
+            'remaining_resource_shortfall_if_gather_and_collection_verify': max(
+                0, shortage - (step.threshold-current)),
+            'remaining_recipe_batches_after_supply_credit': dict(batches),
+            'limits': ('Material arithmetic only. Collection, gathering, conversion, fuel, '
+                       'machines and completion still require native checks and later JEV '
+                       'decisions. This does not choose or authorize an action.'),
+        }
+
+
 def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
     evidence = candidate_evidence(snapshot, catalog, plans)
     add_craft_overlap_evidence(snapshot, plans, evidence)
+    add_current_raw_bill_evidence(snapshot, catalog, plans, evidence)
     primary = (plans[0].materials or {}).get('local_objective') if plans else None
     if primary is None and goal == 'stockpile_fuel':
         primary = {'item': 'coal', 'inventory_target': 5, 'ultimate_goal': goal}
