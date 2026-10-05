@@ -8,19 +8,25 @@ import pytest
 
 from jev_factorio.backends.native_attachment import PROBE, readback, _asset_source
 from jev_factorio.backends.native_current_attachment import (
-    CURRENT_MODULES, current_connector_snapshot_command,
+    CURRENT_MODULES, DIRECT_MODULE_PROFILES, source_bound_direct_profile,
+    current_connector_snapshot_command,
 )
 from test_native_reattach import qualified
 
 
 def current():
+    return profile('current_full')
+
+
+def profile(name):
     row = qualified()
-    row['modules'] = {name: name in CURRENT_MODULES for name in row['modules']}
+    modules = DIRECT_MODULE_PROFILES[name]
+    row['modules'] = {asset: asset in modules for asset in row['modules']}
     row['native_installation'] = {
         'schema': 'jev.native-installation.v2', 'profile': False,
         'session_id': row['session_id'], 'actor_unit': row['actor_unit'],
-        'assets': {name: hashlib.sha256(_asset_source(name).read_bytes()).hexdigest()
-                   for name in CURRENT_MODULES},
+        'assets': {asset: hashlib.sha256(_asset_source(asset).read_bytes()).hexdigest()
+                   for asset in modules},
     }
     return row
 
@@ -95,7 +101,7 @@ def test_invalid_coherent_snapshot_is_not_attachment_authority(change):
 
 def lua_case():
     lua = pytest.importorskip('lupa.lua52').LuaRuntime(unpack_returned_tuples=True)
-    row = current()
+    row = profile('default')
     results = []
     lua.globals().rcon = lua.table_from({'print': results.append})
     lua.globals().helpers = lua.table_from({
@@ -107,14 +113,23 @@ def lua_case():
         local a={valid=true,unit_number=17,force={},surface={}}
         local p={connected=true,character=a,force=a.force,surface=a.surface,cheat_mode=false}
         game={speed=1,tick=100,tick_paused=false,get_player=function() return p end}
+        local function callback() end
+        local fair={actor=callback,bind=callback,observe=callback,place=callback,tick_handler=callback}
         local ownership={protocol=1,session_id='synthetic-session',tick=100,routes={}}
-        local c={connector_ledger={protocol=1,routes={}}}
-        c.observe=function() return {tick=game.tick,connector_ownership=ownership} end
+        local observed={tick=100,connector_ownership=ownership}
+        local launch={schema=1,launch=callback,craft=callback,transfer=callback}
+        launch.observer=function() return observed end
+        local c={entities={},connector_ledger={protocol=1,routes={}}}
+        c.launch,c.craft=launch.launch,launch.craft
+        c.configure,c.transfer=callback,launch.transfer
+        c.observe=launch.observer
         c.observe_connector_ownership=function() return ownership end
         c.connector_begin=function() end;c.connector_finish=function() end;c.connector_page=function() end
         jev_fle_runtime={jev_session_id='synthetic-session',agent_characters={[1]=a},campaign=c,
+          fair=fair,launch_readiness=launch,
           native_installation={schema='jev.native-installation.v2',session_id='synthetic-session',
-            actor_unit=17,assets=assets,callbacks={observe=c.observe,connector_observe=c.observe_connector_ownership,
+            actor_unit=17,assets=assets,callbacks={fair_tick=fair.tick_handler,observe=c.observe,
+              transfer=c.transfer,configure=c.configure,connector_observe=c.observe_connector_ownership,
               connector_begin=c.connector_begin,connector_finish=c.connector_finish,connector_page=c.connector_page}}}
     ''')
     return lua, row, results
@@ -122,6 +137,7 @@ def lua_case():
 
 def test_lua_observation_proves_direct_snapshot_without_installing_or_marking_runtime():
     lua, row, results = lua_case()
+    assert source_bound_direct_profile(row) == 'default'
     lua.execute(current_connector_snapshot_command(row).removeprefix('/sc '))
     assert len(results) == 1 and results[0]['tick'] == 100
     assert lua.eval('jev_fle_runtime.connector_observer_bridge_v1') is None
