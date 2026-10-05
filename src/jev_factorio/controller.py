@@ -24,7 +24,7 @@ from .research_log import EventSink, ResearchLogError, validate_output_paths
 from .blocked_persistence import DEFAULT_IDLE_OBSERVATIONS, IDLE_DELAY_SECONDS, MAX_IDLE_OBSERVATIONS
 from .judgments import DEFAULT_MAX_REQUEST_BYTES, Decision, select_plan
 from .loop import AgentLoop
-from .memory import CampaignMemory
+from .memory import CampaignMemory, retain_latest_craft
 from .planning.goals import GOALS, completed, goal_order
 from .skills import Plan, compile_plans
 from .state import GameSnapshot
@@ -765,7 +765,7 @@ class HierarchicalLoop(AgentLoop):
             **deepcopy(attempt), "outcome": outcome, "finished_tick": snapshot.tick,
             "finished_at_utc": utc_now(), "latency_seconds": latency,
         })
-        self.memory.attempt_outcomes = self.memory.attempt_outcomes[-64:]
+        self.memory.attempt_outcomes = retain_latest_craft(self.memory.attempt_outcomes)
         self._trace.release_attempt(attempt["id"])
         self.memory.attempt = None
         self._attempt_clock = None

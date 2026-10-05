@@ -1,5 +1,8 @@
 """Bind a retained completed native handcraft receipt to prior verification."""
 from copy import deepcopy
+from dataclasses import asdict
+import math
+import re
 from types import SimpleNamespace
 
 from ..craft_jobs import counts, identifier, natural, receipt_for
@@ -11,9 +14,28 @@ def checkpoint_completed_craft(data):
         return None
     events = [row for row in data.get('history', [])
               if row.get('kind') == 'background_job_completed']
-    if not events:
+    crafts = [row for row in data.get('attempt_outcomes', [])
+              if row.get('action') == 'factory_craft_job']
+    if not crafts:
+        if events:
+            raise ValueError('Completed craft has no unique checkpoint verification')
         return None
-    event = events[-1]
+    latest = max(crafts, key=lambda row: row['started_tick'])
+    if (latest.get('outcome') != 'verified'
+            or sum(row.get('receipt') == latest.get('receipt') for row in crafts) != 1):
+        raise ValueError('Latest craft has no unique verified attempt')
+    matching = [row for row in events if row.get('job') == latest.get('receipt')]
+    if not matching:
+        # Old checkpoints may have rotated the event away. Native attachment
+        # must reconstruct the exact committed Step from the receipt and recipe
+        # and match its retained fingerprint before accepting this binding.
+        return validate_completed_craft_binding({
+            'id': latest['receipt'], 'plan_id': latest['plan_id'],
+            'started_tick': latest['started_tick'], 'verified_tick': latest['finished_tick'],
+            'step_sha256': latest['step_sha256']})
+    if len(matching) != 1:
+        raise ValueError('Duplicate completed craft event')
+    event = matching[0]
     attempts = [row for row in data.get('attempt_outcomes', [])
                 if row.get('receipt') == event.get('job')
                 and row.get('action') == 'factory_craft_job'
@@ -25,21 +47,28 @@ def checkpoint_completed_craft(data):
         raise ValueError('Completed craft checkpoint verification differs')
     return validate_completed_craft_binding({
         'id': event['job'], 'plan_id': event['plan'], 'outputs': event['outputs'],
-        'started_tick': attempt['started_tick'], 'verified_tick': event['tick']})
+        'started_tick': attempt['started_tick'], 'verified_tick': event['tick'],
+        **({'step_sha256': attempt['step_sha256']} if 'step_sha256' in attempt else {})})
 
 
 def validate_completed_craft_binding(value):
     if (not isinstance(value, dict)
-            or set(value) != {'id', 'plan_id', 'outputs', 'started_tick', 'verified_tick'}):
+            or set(value) not in ({'id', 'plan_id', 'outputs', 'started_tick', 'verified_tick'},
+                                  {'id', 'plan_id', 'step_sha256', 'started_tick', 'verified_tick'},
+                                  {'id', 'plan_id', 'outputs', 'step_sha256', 'started_tick', 'verified_tick'})):
         raise ValueError('Invalid completed craft checkpoint binding')
     identifier(value['id']); identifier(value['plan_id'])
-    counts(value['outputs'], positive=True)
+    if 'outputs' in value:
+        counts(value['outputs'], positive=True)
+    if 'step_sha256' in value and (not isinstance(value['step_sha256'], str)
+                                  or not re.fullmatch('[0-9a-f]{64}', value['step_sha256'])):
+        raise ValueError('Invalid completed craft step fingerprint')
     if natural(value['started_tick']) > natural(value['verified_tick']):
         raise ValueError('Completed craft checkpoint clock regressed')
     return deepcopy(value)
 
 
-def verify_completed_craft(receipt, binding, result, tick):
+def verify_completed_craft(receipt, binding, result, tick, *, recipe=None):
     if binding is None:
         if receipt is not False:
             raise ValueError('Uncheckpointed retained craft receipt')
@@ -56,8 +85,51 @@ def verify_completed_craft(receipt, binding, result, tick):
     receipt_for({'receipt': binding['id'], 'recipe': receipt.get('recipe'),
                  'batches': receipt.get('requested')}, snapshot)
     if (receipt['status'] != 'completed' or receipt.get('error') is not None
-            or binding['plan_id'] != 'factory:factory_craft:' + receipt['recipe']
-            or receipt['outputs'] != binding['outputs']
+            or 'step_sha256' not in binding and binding['plan_id'] != 'factory:factory_craft:' + receipt['recipe']
+            or 'outputs' in binding and receipt['outputs'] != binding['outputs']
             or not binding['started_tick'] <= receipt['started_tick']
                    <= receipt['completed_tick'] <= binding['verified_tick'] <= tick):
         raise ValueError('Retained craft differs from checkpoint verification')
+
+    if 'step_sha256' in binding:
+        verify_completed_step(receipt, binding, recipe)
+
+
+def verify_completed_step(receipt, binding, recipe):
+    """Reconstruct only the canonical paid handcraft; unknown shapes stay held."""
+    from ..skills import Step
+    from ..telemetry import fingerprint
+    if (not isinstance(recipe, dict) or set(recipe) != {'energy', 'ingredients', 'products'}
+            or type(recipe['energy']) not in {int, float}
+            or not math.isfinite(recipe['energy']) or recipe['energy'] <= 0):
+        raise ValueError('Completed craft native recipe is unavailable')
+    batches = receipt['requested']
+    expected = {}
+    for key in ('ingredients', 'products'):
+        rows = recipe[key]
+        if (not isinstance(rows, list) or not 1 <= len(rows) <= 32
+                or key == 'products' and len(rows) != 1):
+            raise ValueError('Unsupported completed craft recipe')
+        values = {}
+        for row in rows:
+            if (not isinstance(row, dict) or row.get('type') != 'item'
+                    or type(row.get('amount')) is not int or row['amount'] <= 0
+                    or row.get('probability', 1) != 1
+                    or any(k in row for k in ('amount_min', 'amount_max'))):
+                raise ValueError('Unsupported completed craft recipe quantity')
+            item = identifier(row.get('name'))
+            if item in values:
+                raise ValueError('Duplicate completed craft ingredient')
+            values[item] = row['amount'] * batches
+        expected[key] = values
+    if receipt['inputs'] != expected['ingredients'] or receipt['outputs'] != expected['products']:
+        raise ValueError('Completed craft receipt differs from native recipe')
+    item, amount = next(iter(receipt['outputs'].items()))
+    step = Step('factory_craft_job', 'craft_job_complete', item,
+                receipt['baseline'][item] + amount,
+                costs=deepcopy(receipt['inputs']),
+                timeout_ticks=max(1800, math.ceil(recipe['energy'] * batches * 120)),
+                parameters={'recipe': receipt['recipe'], 'batches': batches,
+                            'receipt': receipt['id']})
+    if fingerprint(asdict(step)) != binding['step_sha256']:
+        raise ValueError('Completed craft differs from committed step fingerprint')

@@ -196,3 +196,50 @@ def test_cli_rejects_invalid_opt_in_before_backend(monkeypatch, arguments):
     with pytest.raises(SystemExit) as failure:
         main.cli()
     assert failure.value.code == 2
+
+
+@pytest.mark.parametrize("part", ["chest", "inserter"])
+def test_paid_component_placement_does_not_require_future_commissioning_coal(part):
+    state, data, row = setup()
+    state.inventory.pop("coal")
+    if part == "inserter":
+        row["state"] = "building"
+        row["parts"]["chest"] = {"role": row["chest_role"], "unit_number": 18,
+                                  "receipt": "paid-chest", "paid": 1}
+        state.factory["entities"][row["chest_role"]] = machine("wooden-chest", unit_number=18)
+    plan = need(state, data)
+    assert plan.steps[0].action == "factory_buffer_build"
+    assert plan.steps[0].parameters["part"] == part
+    assert plan.steps[0].allowed(state)
+    assert plan.steps[0].costs == {"wooden-chest" if part == "chest" else "burner-inserter": 1}
+
+
+@pytest.mark.parametrize("ready,expected", [(2, "factory_buffer_build"),
+                                           (10, "factory_extract"), (20, "factory_extract")])
+def test_unbuilt_buffer_preserves_batched_existing_furnace_pickup(ready, expected):
+    state, data, row = setup()
+    state.inventory.pop("coal")
+    state.factory["entities"][row["source"]]["output"] = {"iron-plate": ready}
+    before = deepcopy(state)
+    plan = need(state, data)
+    assert plan.steps[0].action == expected
+    assert plan.steps[0].allowed(state)
+    if expected == "factory_extract":
+        assert plan.steps[0].parameters["role"] == row["source"]
+        assert plan.steps[0].parameters["quantity"] == ready
+        assert plan.materials["output_pickup"]["planner_item_path"] == ["iron-plate"]
+    assert state == before
+
+
+def test_placed_inserter_still_requires_fuel_acquisition_then_native_flow():
+    state, data, row = setup(True)
+    state.inventory.pop("coal")
+    row["flow"] = {}
+    arm = row["parts"]["inserter"]["role"]
+    state.factory["entities"][arm]["fuel"] = {}
+    state.factory["entities"][row["source"]]["output"] = {"iron-plate": 20}
+    plan = need(state, data)
+    assert plan.steps[0].action == "factory_gather"
+    assert plan.steps[0].item == "coal"
+    assert plan.materials["fuel_service"]["consumers"][0]["role"] == arm
+    assert not plan.steps[0].satisfied(state)

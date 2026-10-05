@@ -239,30 +239,31 @@ class OutputBufferPlanner(ReadyWorkPlanner):
         for part, name in PARTS.items():
             if part not in parts:
                 self._buffer_service = True
-                for material, count in ((name, 1), ("coal", 5)):
-                    prerequisite = self._prerequisite(material, count, path)
-                    if prerequisite:
-                        step = prerequisite.steps[0]
-                        if material == name and step.action in {'factory_extract', 'factory_craft'}:
-                            item = step.parameters.get('item') if step.action == 'factory_extract' else step.item
-                            bill = construction_pickup_bill(self.snapshot, self.catalog, row, part, item)
-                            if bill is not None:
-                                prerequisite = replace(prerequisite, materials={
-                                    **(prerequisite.materials or {}),
-                                    'buffer_component_prerequisite': bill})
-                            if bill is not None and step.action == 'factory_extract':
-                                role = step.parameters['role']
-                                available = self.entities[role].get('output', {}).get(item, 0)
-                                if type(available) is int and available > 0:
-                                    quantity = min(self.collection_batch, available,
-                                                   bill['component_input_deficit'])
-                                    provenance = (prerequisite.materials or {}).get('output_pickup')
-                                    if isinstance(provenance, dict):
-                                        prerequisite = replace(prerequisite, steps=(replace(
-                                            step, parameters={**step.parameters, 'quantity': quantity}),),
-                                            description=f"Collect {quantity} {item} for current {name} output-buffer component",
-                                            materials=prerequisite.materials)
-                        return prerequisite
+                # Placement pays only this component. Acquire commissioning fuel
+                # after the paid inserter exists, through its normal service path.
+                prerequisite = self._prerequisite(name, 1, path)
+                if prerequisite:
+                    step = prerequisite.steps[0]
+                    if step.action in {'factory_extract', 'factory_craft'}:
+                        item = step.parameters.get('item') if step.action == 'factory_extract' else step.item
+                        bill = construction_pickup_bill(self.snapshot, self.catalog, row, part, item)
+                        if bill is not None:
+                            prerequisite = replace(prerequisite, materials={
+                                **(prerequisite.materials or {}),
+                                'buffer_component_prerequisite': bill})
+                        if bill is not None and step.action == 'factory_extract':
+                            role = step.parameters['role']
+                            available = self.entities[role].get('output', {}).get(item, 0)
+                            if type(available) is int and available > 0:
+                                quantity = min(self.collection_batch, available,
+                                               bill['component_input_deficit'])
+                                provenance = (prerequisite.materials or {}).get('output_pickup')
+                                if isinstance(provenance, dict):
+                                    prerequisite = replace(prerequisite, steps=(replace(
+                                        step, parameters={**step.parameters, 'quantity': quantity}),),
+                                        description=f"Collect {quantity} {item} for current {name} output-buffer component",
+                                        materials=prerequisite.materials)
+                    return prerequisite
                 receipt = f"buffer:{self.snapshot.tick}:{row['source_unit']}:{part}"
                 return self._plan(
                     COMMAND, "buffer_component", parameters={
@@ -338,6 +339,15 @@ class OutputBufferPlanner(ReadyWorkPlanner):
             recipe = self.catalog.recipes.get(item, {})
             if not recipe:
                 continue
+            # An unbuilt proposal cannot make already-paid furnace output
+            # depend on buying a chest, an arm, or its future fuel. Keep the
+            # ordinary pickup compiler and its exact parent-demand evidence.
+            ready = machine.get("output", {}).get(item, 0)
+            missing = math.ceil(amount - self.snapshot.inventory.get(item, 0))
+            if (row["state"] == "proposed" and not row.get("parts")
+                    and type(ready) in {int, float} and math.isfinite(ready)
+                    and ready >= min(self.collection_batch, missing)):
+                return super()._need(item, amount, path)
             if row["state"] == "proposed" and (
                 self.goal != "rocket_launch" or amount - self.snapshot.inventory.get(item, 0) < 10
                 or machine.get("products_finished", 0) < 20

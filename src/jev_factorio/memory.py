@@ -16,6 +16,15 @@ _BLOCKED_REEVALUATION_REASONS = frozenset({
 })
 
 
+def retain_latest_craft(rows: list[dict], *, events: bool = False) -> list[dict]:
+    """Keep the latest craft witness inside, never in addition to, the 64 slots."""
+    key, value = ("kind", "background_job_completed") if events else ("action", "factory_craft_job")
+    latest = next((i for i in range(len(rows)-1, -1, -1) if rows[i].get(key) == value), None)
+    if latest is None or latest >= len(rows)-64:
+        return rows[-64:]
+    return [rows[latest], *rows[-63:]]
+
+
 def _history_partition(history: object) -> tuple[list[dict], list[dict]]:
     if not isinstance(history, list) or any(not isinstance(row, dict) for row in history):
         raise ValueError("Invalid checkpoint history")
@@ -90,7 +99,7 @@ class CampaignMemory:
             validate_representation_budget_carry(self, administrative[0],
                 archive_index=getattr(self, "_blocked_recovery_archive_index", None))
         ordinary = [row for row in proposed if row.get("kind") != "paid_duplicate_selection_reconciled"]
-        self.history = ordinary[-64:] + administrative
+        self.history = retain_latest_craft(ordinary, events=True) + administrative
 
     def reserve(self, owner: str, costs: dict[str, float], inventory: dict[str, int]) -> None:
         costs = quantities(costs)
