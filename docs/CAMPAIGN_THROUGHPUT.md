@@ -136,6 +136,20 @@ RPC/helper/native aggregates. Counter regressions or missing telemetry make the
 corresponding rate unknown. A recorded interval must reach 1,800 seconds: setting
 a nominal half-hour duration alone does not ensure that timestamp span.
 
+Measurement eligibility requires the exact schema-1 campaign treatment emitted
+by the controller: `schema` plus the four boolean flags for lead-time supply,
+coverage-margin lookahead, profile observations and consolidated observations.
+Paired reports must use distinct valid treatments with exactly one flag changed,
+and each arm must have a distinct valid SHA-256 capture fingerprint over the
+raw JSONL bytes consumed during that report's parse. The digest is accumulated
+from the same stream read as the measurements, so a later replacement of the
+path cannot rebind a report to different bytes. Model-call
+records require a nonempty resolved model that agrees with the decision's
+`model_called` marker; resolved identities must remain stable within each
+capture. Deterministic no-call records and older captures without model identity fields remain
+supported. Source revisions must contain only a lowercase 40-hex commit and a
+lowercase 64-hex source fingerprint.
+
 A matched comparison also hashes the two retained **initial** save files:
 
 ```sh
