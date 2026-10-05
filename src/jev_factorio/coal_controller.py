@@ -67,6 +67,10 @@ class CoalSupplyMixin:
         self._coal_kit_evidence = {}
         self._coal_targets = coal.validate_targets(coal_targets)
         self._coal_fault = False
+        self._coal_protocol_fault = False
+        self._coal_protocol_rejected_observation = False
+        self._coal_protocol_defer_save = False
+        self._coal_protocol_error = "Coal-source protocol is invalid or differs from configured treatment"
         self._coal_evidence = {}
         coal.validate_transport_intents(self._coal_targets, options.get("solid_intents"))
         sink = options.get("research_log")
@@ -104,8 +108,60 @@ class CoalSupplyMixin:
         elif getattr(backend, "coal_supply_supported", False) is not True:
             raise ValueError("Backend does not support owned coal source observations")
 
+    def _save(self):
+        if self._coal_protocol_defer_save:
+            return
+        return super()._save()
+
+    def _coal_protocol_matches_treatment(self, snapshot):
+        """Validate the versioned envelope before binding protocol treatment.
+
+        Detailed source-row ownership remains with ``coal.sources`` during the
+        existing reconciliation phase; this boundary rejects only a malformed
+        or cross-wired protocol/admission envelope before it can be checkpointed.
+        """
+        data = snapshot.factory.get("coal_supply")
+        base_fields = {"protocol", "session_id", "tick", "actor_index", "surface_index",
+                       "force_index", "targets", "committed", "sources", "reason"}
+        if (not isinstance(data, dict) or type(data.get("protocol")) is not int
+                or data["protocol"] not in (1, 2)
+                or data["protocol"] != (2 if self._coal_economic_admission else 1)):
+            return False
+        protocol = data["protocol"]
+        if set(data) != (base_fields if protocol == 1 else base_fields | {"admission"}):
+            return False
+        if (data["session_id"] != snapshot.session_id
+                or type(data["tick"]) is not int or data["tick"] != snapshot.tick
+                or any(type(data[key]) is not int or data[key] < 1
+                       for key in ("actor_index", "surface_index", "force_index"))):
+            return False
+        if protocol == 2:
+            admission = data["admission"]
+            bound = {"session_id", "tick", "actor_index", "surface_index", "force_index"}
+            if (not isinstance(admission, dict)
+                    or set(admission) != bound | {"protocol", "qualified", "reason"}
+                    or type(admission["protocol"]) is not int or admission["protocol"] != 1
+                    or admission["session_id"] != data["session_id"]
+                    or any(type(admission[key]) is not int or admission[key] != data[key]
+                           for key in ("tick", "actor_index", "surface_index", "force_index"))
+                    or admission["qualified"] is not False
+                    or admission["reason"] != "electric_conversion_and_construction_cost_unknown"):
+                return False
+        return True
+
     def _observe_snapshot(self):
         snapshot = super()._observe_snapshot()
+        if not self._coal_protocol_matches_treatment(snapshot):
+            # Do not raise inside the observation phase: its diagnostic callback
+            # would attach a new error to a retained pending attempt. Defer all
+            # composed saves until _observe_solid rejects this same snapshot.
+            self._coal_fault = True
+            self._coal_protocol_fault = True
+            self._coal_protocol_rejected_observation = True
+            self._coal_protocol_defer_save = True
+            self.memory.status = "uncertain"
+            self.memory.reason = self._coal_protocol_error
+            return snapshot
         if not self.memory.coal_targets:
             self.memory.coal_targets = list(self._coal_targets)
             self.memory.coal_kit_policy = self._coal_kit_policy
@@ -122,9 +178,16 @@ class CoalSupplyMixin:
         return snapshot
 
     def _observe_solid(self, stage="observe"):
+        if self._coal_protocol_fault:
+            raise ValueError("Coal protocol fault is latched; reconstruct before continuing")
+        self._coal_protocol_rejected_observation = False
         # The solid layer owns the outer first-resume transaction. Coal-specific
         # validation and saves must finish inside that same publication barrier.
         snapshot = super()._observe_solid(stage)
+        if self._coal_protocol_rejected_observation:
+            if not self._solid_resume_observing:
+                self._coal_protocol_defer_save = False
+            raise ValueError(self._coal_protocol_error)
         try:
             rows = coal.sources(snapshot)
             data = snapshot.factory["coal_supply"]
