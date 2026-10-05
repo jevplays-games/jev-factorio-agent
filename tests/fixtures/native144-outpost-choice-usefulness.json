@@ -1,0 +1,1379 @@
+{
+  "captured_at": "2026-10-05T02:38:47Z",
+  "state": {
+    "active_goal": {
+      "description": "Verify a native base-game rocket-launch completion event",
+      "id": "rocket_launch",
+      "prerequisites": [
+        "bootstrap_mining"
+      ]
+    },
+    "candidate_evidence": {
+      "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}": {
+        "actor_ticks_estimate": 7548,
+        "buffer_build_start_evidence": null,
+        "buffer_component_prerequisite_start_evidence": null,
+        "buffer_fuel_start_evidence": null,
+        "compiler_order": 1,
+        "craft_dependency": null,
+        "craft_start_evidence": null,
+        "delivers_or_crafts": [],
+        "direct_alternative_parent_demand_start_evidence": null,
+        "estimate_basis": "native_observation_and_catalog_with_declared_policy_heuristics",
+        "fuel_prerequisite": null,
+        "fuel_transfer_start_evidence": null,
+        "gather_start_evidence": {
+          "fair_target_identity_observed": true,
+          "observed_tick": 7980324,
+          "resource_in_current_observation": true,
+          "resource_inventory_now": 0,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "target_inventory_after_this_step": 41,
+          "travel_is_lower_bound_not_arrival_proof": true
+        },
+        "input_route_kit_parent_purpose": null,
+        "local_target": {
+          "inventory_target": 41,
+          "item": "pipe",
+          "ultimate_goal": "rocket_launch"
+        },
+        "local_target_completion_evidence": null,
+        "material_costs": {},
+        "native_research_trigger_start_evidence": null,
+        "outpost_kit_prerequisite_start_evidence": null,
+        "output_pickup_start_evidence": null,
+        "paid_service_input_start_evidence": null,
+        "passive": false,
+        "placement_dependency": null,
+        "placement_start_evidence": null,
+        "processed_units": 41.0,
+        "processed_units_basis": "handling_volume_not_useful_production",
+        "raw_prerequisite": {
+          "basis": "current_planner_dependency_and_native_catalog_recipe",
+          "direct_product": "iron-plate",
+          "direct_recipe": "iron-plate",
+          "later_steps_require_fresh_native_preconditions": true,
+          "observed_tick": 7980324,
+          "planner_item_path": [
+            "pipe",
+            "iron-plate",
+            "iron-ore"
+          ]
+        },
+        "reasons": [],
+        "recipe_input_transfer_start_evidence": null,
+        "requires_investment": false,
+        "research_deadline_tick": null,
+        "research_science_transfer_start_evidence": null,
+        "shared_bill_craft": null,
+        "supplied_research_start_evidence": null,
+        "travel_tiles_lower_bound": 116.396,
+        "unknowns": [],
+        "urgency": 0,
+        "utility_lab_research_dependency": null,
+        "utility_power_prerequisite_start_evidence": null,
+        "work_scope": "lookahead",
+        "work_scope_provenance": {
+          "basis": "current_parent_demand_not_verified",
+          "compiled_scope": "lookahead",
+          "qualified_current_scope": null
+        }
+      },
+      "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}": {
+        "actor_ticks_estimate": 644,
+        "buffer_build_start_evidence": null,
+        "buffer_component_prerequisite_start_evidence": null,
+        "buffer_fuel_start_evidence": null,
+        "compiler_order": 0,
+        "craft_dependency": null,
+        "craft_start_evidence": null,
+        "delivers_or_crafts": [],
+        "direct_alternative_parent_demand_start_evidence": null,
+        "estimate_basis": "native_observation_and_catalog_with_declared_policy_heuristics",
+        "fuel_prerequisite": null,
+        "fuel_transfer_start_evidence": null,
+        "gather_start_evidence": {
+          "fair_target_identity_observed": true,
+          "observed_tick": 7980324,
+          "resource_in_current_observation": true,
+          "resource_inventory_now": 0,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "target_inventory_after_this_step": 1,
+          "travel_is_lower_bound_not_arrival_proof": true
+        },
+        "input_route_kit_parent_purpose": null,
+        "local_target": {
+          "inventory_target": 41,
+          "item": "pipe",
+          "ultimate_goal": "rocket_launch"
+        },
+        "local_target_completion_evidence": null,
+        "material_costs": {},
+        "native_research_trigger_start_evidence": null,
+        "outpost_kit_prerequisite_start_evidence": {
+          "action_start_facts": {
+            "fair_target_identity_observed": true,
+            "fair_target_surface_index": 1,
+            "inventory_now": 0,
+            "kind": "observed_raw_gather_start",
+            "native_harvest_requires_fresh_verification": true,
+            "native_target_session_bound": true,
+            "quantity": 1,
+            "resource": "wood",
+            "travel_is_lower_bound_not_arrival_proof": true
+          },
+          "admission_basis": "current_proposed_outpost_policy_heuristic",
+          "admission_is_not_native_payback_evidence": true,
+          "child_kit_item": "wooden-chest",
+          "child_kit_quantity": 1,
+          "child_planner_item_path": [
+            "wooden-chest",
+            "wood"
+          ],
+          "child_request_kind": "outpost_component",
+          "current_action": "factory_gather",
+          "current_action_item": "wood",
+          "does_not_establish_level_two_blocker_removal": true,
+          "native_action_outcome_requires_verification": true,
+          "native_step_allowed_now": true,
+          "observed_tick": 7980324,
+          "outpost_layout": "outpost:iron-ore:2",
+          "outpost_placement_arrival_flow_output_and_parent_completion_unverified": true,
+          "outpost_resource": "iron-ore",
+          "outpost_state": "proposed",
+          "parent_and_child_paths_are_separate": true,
+          "parent_inventory_now": 0,
+          "parent_planner_item_path": [
+            "pipe",
+            "iron-plate",
+            "iron-ore"
+          ],
+          "parent_request_amount": 20,
+          "parent_request_item": "iron-ore",
+          "parent_shortage_now": 20,
+          "parent_target_item": "pipe",
+          "schema": 1,
+          "useful_partial_benefit_level": 1
+        },
+        "output_pickup_start_evidence": null,
+        "paid_service_input_start_evidence": null,
+        "passive": false,
+        "placement_dependency": null,
+        "placement_start_evidence": null,
+        "processed_units": 1.0,
+        "processed_units_basis": "handling_volume_not_useful_production",
+        "raw_prerequisite": {
+          "basis": "current_planner_dependency_and_native_catalog_recipe",
+          "direct_product": "wooden-chest",
+          "direct_recipe": "wooden-chest",
+          "later_steps_require_fresh_native_preconditions": true,
+          "observed_tick": 7980324,
+          "planner_item_path": [
+            "wooden-chest",
+            "wood"
+          ]
+        },
+        "reasons": [],
+        "recipe_input_transfer_start_evidence": null,
+        "requires_investment": false,
+        "research_deadline_tick": null,
+        "research_science_transfer_start_evidence": null,
+        "shared_bill_craft": null,
+        "supplied_research_start_evidence": null,
+        "travel_tiles_lower_bound": 11.164,
+        "unknowns": [],
+        "urgency": 0,
+        "utility_lab_research_dependency": null,
+        "utility_power_prerequisite_start_evidence": null,
+        "work_scope": "immediate"
+      }
+    },
+    "candidate_plans": {
+      "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}": {
+        "description": "Next production batch: 41 pipe. Gather 41 observed iron-ore; inventory target 41",
+        "goal": "rocket_launch",
+        "id": "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}",
+        "materials": {
+          "batches": {
+            "iron-plate": 41,
+            "pipe": 41
+          },
+          "direct_alternative_to_proposed_outpost": {
+            "basis": "planner_policy_investment_has_no_native_payback_evidence",
+            "compiled_gather_target": {
+              "basis": "speculative_worker_current_raw_target",
+              "inventory_target": 41,
+              "quantity": 41,
+              "ready_work_raw_target": 41,
+              "resource": "iron-ore"
+            },
+            "investment_plan_id": "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}",
+            "observed_tick": 7980324,
+            "parent_purpose": {
+              "economics": {
+                "basis": "catalog-and-policy-estimate",
+                "objective": "unlock_basic_assembly",
+                "observed_tick": 7980324,
+                "technology": "automation"
+              },
+              "local_objective": {
+                "inventory_target": 41,
+                "item": "pipe",
+                "ultimate_goal": "rocket_launch"
+              },
+              "observed_tick": 7980324,
+              "proposed_outpost_request": {
+                "layout": null,
+                "observed_tick": 7980324,
+                "planner_item_path": [
+                  "pipe",
+                  "iron-plate",
+                  "iron-ore"
+                ],
+                "requested_amount": 20,
+                "resource": "iron-ore",
+                "schema": 1
+              },
+              "schema": 1,
+              "utility_power_prerequisite": {
+                "consumer_role": "utility:lab",
+                "consumer_unit": 2548,
+                "observed_tick": 7980324,
+                "planner_path": [
+                  "technology:automation"
+                ],
+                "research": "automation"
+              },
+              "work_intent": {
+                "observed_tick": 7980324,
+                "scope": "immediate"
+              }
+            },
+            "proposed_outpost_request": {
+              "layout": null,
+              "observed_tick": 7980324,
+              "planner_item_path": [
+                "pipe",
+                "iron-plate",
+                "iron-ore"
+              ],
+              "requested_amount": 20,
+              "resource": "iron-ore",
+              "schema": 1
+            },
+            "requested_amount": 20,
+            "resource": "iron-ore",
+            "schema": 2
+          },
+          "local_objective": {
+            "inventory_target": 41,
+            "item": "pipe",
+            "ultimate_goal": "rocket_launch"
+          },
+          "mining_outposts": {
+            "copper-ore": {
+              "flow": {},
+              "layout": "outpost:copper-ore:1",
+              "remaining": 170000,
+              "state": "proposed",
+              "topology": false
+            },
+            "iron-ore": {
+              "flow": {},
+              "layout": "outpost:iron-ore:2",
+              "remaining": 110000,
+              "state": "proposed",
+              "topology": false
+            }
+          },
+          "ore_transport": "bounded_manual_hauling",
+          "raw_prerequisite": {
+            "direct_product": "iron-plate",
+            "ingredient": "iron-ore",
+            "observed_tick": 7980324,
+            "planner_item_path": [
+              "pipe",
+              "iron-plate",
+              "iron-ore"
+            ],
+            "recipe": "iron-plate"
+          },
+          "remaining": {
+            "iron-ore": 0,
+            "iron-plate": 0,
+            "pipe": 0.0
+          },
+          "shortages": {
+            "iron-ore": 41
+          },
+          "work_intent": {
+            "observed_tick": 7980324,
+            "scope": "lookahead"
+          }
+        },
+        "steps": [
+          {
+            "action": "factory_gather",
+            "costs": null,
+            "effect": "inventory",
+            "item": "iron-ore",
+            "parameters": {
+              "quantity": 41,
+              "resource": "iron-ore"
+            },
+            "threshold": 41,
+            "timeout_ticks": 18000,
+            "verification": null
+          }
+        ]
+      },
+      "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}": {
+        "description": "Gather 1 observed wood; inventory target 1",
+        "goal": "rocket_launch",
+        "id": "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}",
+        "materials": {
+          "automation_sites": {
+            "recipe:copper-plate": {
+              "anchor": "cell-site:copper-ore:-42:-109:0:2",
+              "belt_count": 5,
+              "bill": {
+                "burner-inserter": 2,
+                "burner-mining-drill": 1,
+                "stone-furnace": 1,
+                "transport-belt": 5,
+                "wooden-chest": 1
+              },
+              "fallback": "batched_manual_supply",
+              "position": {
+                "x": -42,
+                "y": -109
+              },
+              "reason": "joint_layout_available",
+              "source_unit": 2546,
+              "state": "owned"
+            },
+            "recipe:iron-plate": {
+              "anchor": "cell-site:iron-ore:41:-111:0:1",
+              "belt_count": 5,
+              "bill": {
+                "burner-inserter": 2,
+                "burner-mining-drill": 1,
+                "stone-furnace": 1,
+                "transport-belt": 5,
+                "wooden-chest": 1
+              },
+              "fallback": "batched_manual_supply",
+              "position": {
+                "x": 41,
+                "y": -111
+              },
+              "reason": "joint_layout_available",
+              "source_unit": 2547,
+              "state": "owned"
+            }
+          },
+          "batches": {
+            "iron-plate": 41,
+            "pipe": 41
+          },
+          "economics": {
+            "basis": "catalog-and-policy-estimate",
+            "objective": "unlock_basic_assembly",
+            "observed_tick": 7980324,
+            "technology": "automation"
+          },
+          "local_objective": {
+            "inventory_target": 41,
+            "item": "pipe",
+            "ultimate_goal": "rocket_launch"
+          },
+          "mining_outposts": {
+            "copper-ore": {
+              "flow": {},
+              "layout": "outpost:copper-ore:1",
+              "remaining": 170000,
+              "state": "proposed",
+              "topology": false
+            },
+            "iron-ore": {
+              "flow": {},
+              "layout": "outpost:iron-ore:2",
+              "remaining": 110000,
+              "state": "proposed",
+              "topology": false
+            }
+          },
+          "ore_transport": "bounded_manual_hauling",
+          "outpost_kit_prerequisite": {
+            "admission": {
+              "basis": "current_planner_direct_route_and_minimum_runway_policy",
+              "classification": "existing_proposed_outpost_policy_heuristic",
+              "direct_input_route_absent": true,
+              "minimum_products_finished": 20,
+              "minimum_shortage": 10,
+              "native_outpost_payback_observed": false,
+              "paid_output_absent": true,
+              "products_finished": 98,
+              "shortage_now": 20,
+              "source_role": "recipe:iron-plate",
+              "source_unit": 2547,
+              "state_at_admission": "proposed"
+            },
+            "child_request": {
+              "item": "wooden-chest",
+              "kind": "outpost_component",
+              "quantity": 1
+            },
+            "observed_tick": 7980324,
+            "outpost_layout": "outpost:iron-ore:2",
+            "outpost_remaining": 110000,
+            "outpost_resource": "iron-ore",
+            "parent_request": {
+              "amount": 20,
+              "inventory_now": 0,
+              "item": "iron-ore",
+              "local_target_item": "pipe",
+              "planner_item_path": [
+                "pipe",
+                "iron-plate",
+                "iron-ore"
+              ]
+            },
+            "schema": 1
+          },
+          "proposed_outpost_request": {
+            "layout": null,
+            "observed_tick": 7980324,
+            "planner_item_path": [
+              "pipe",
+              "iron-plate",
+              "iron-ore"
+            ],
+            "requested_amount": 20,
+            "resource": "iron-ore",
+            "schema": 1
+          },
+          "raw_prerequisite": {
+            "direct_product": "wooden-chest",
+            "ingredient": "wood",
+            "observed_tick": 7980324,
+            "planner_item_path": [
+              "wooden-chest",
+              "wood"
+            ],
+            "recipe": "wooden-chest"
+          },
+          "remaining": {
+            "iron-ore": 0,
+            "iron-plate": 0,
+            "pipe": 0.0
+          },
+          "route_diagnostics": {
+            "recipe:copper-plate": {
+              "belt_budget_exhausted": false,
+              "cached": true,
+              "depleted_resources": 0,
+              "fallback": "batched_manual_supply",
+              "length_limited_paths": 0,
+              "max_belts": 64,
+              "mixed_resources": 0,
+              "next_survey_tick": 7980570,
+              "observed_tick": 7980324,
+              "path_attempts": 0,
+              "path_expansions": 0,
+              "path_probes": 0,
+              "placement_checks": 0,
+              "reason": "output_not_commissioned",
+              "receiver_count": 0,
+              "resource_count": 0,
+              "resource_result_limit_reached": false,
+              "resource_sample_limits": 0,
+              "sampled_resources": 0,
+              "schema": 1,
+              "search_budget_exhausted": false,
+              "source_position": {
+                "x": -42,
+                "y": -109
+              },
+              "source_unit": 2546,
+              "survey_radius": 40,
+              "survey_tick": 7980270
+            },
+            "recipe:iron-plate": {
+              "belt_budget_exhausted": false,
+              "cached": true,
+              "depleted_resources": 0,
+              "fallback": "batched_manual_supply",
+              "length_limited_paths": 0,
+              "max_belts": 64,
+              "mixed_resources": 0,
+              "next_survey_tick": 7980570,
+              "observed_tick": 7980324,
+              "path_attempts": 0,
+              "path_expansions": 0,
+              "path_probes": 0,
+              "placement_checks": 0,
+              "reason": "output_not_commissioned",
+              "receiver_count": 0,
+              "resource_count": 0,
+              "resource_result_limit_reached": false,
+              "resource_sample_limits": 0,
+              "sampled_resources": 0,
+              "schema": 1,
+              "search_budget_exhausted": false,
+              "source_position": {
+                "x": 41,
+                "y": -111
+              },
+              "source_unit": 2547,
+              "survey_radius": 40,
+              "survey_tick": 7980270
+            }
+          },
+          "shortages": {
+            "iron-ore": 41
+          },
+          "utility_power_prerequisite": {
+            "consumer_role": "utility:lab",
+            "consumer_unit": 2548,
+            "observed_tick": 7980324,
+            "planner_path": [
+              "technology:automation"
+            ],
+            "research": "automation"
+          },
+          "work_intent": {
+            "observed_tick": 7980324,
+            "scope": "immediate"
+          }
+        },
+        "steps": [
+          {
+            "action": "factory_gather",
+            "costs": null,
+            "effect": "inventory",
+            "item": "wood",
+            "parameters": {
+              "quantity": 1,
+              "resource": "wood"
+            },
+            "threshold": 1,
+            "timeout_ticks": 18000,
+            "verification": null
+          }
+        ]
+      }
+    },
+    "deterministic_ranking": [
+      "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}",
+      "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}"
+    ],
+    "execution_contract": "These are bounded tool plans, not keyboard commands or full-game strategies. Code filters plans for current resource, inventory, and placement preconditions and checks them again before dispatch. walk_to_coal and walk_to_iron move to an observed patch; mine_coal harvests five coal into inventory; place_burner_drill consumes one drill and one chest on iron; fuel_drill inserts five carried coal. factory_* steps execute the explicit parameters using native recipes, paid inventory transfers, machines, physical connections, and research. Native crafting waits for its real queue; native machines and labs must actually produce or research. Judge the supplied local_objective when present; otherwise judge active_goal. Estimates are not facts or execution permission. Each action needs a fresh observed postcondition before it counts as success.",
+    "facts": {
+      "alerts": [],
+      "craft_queue": [],
+      "drill_fuel": 0,
+      "drill_output_connected": true,
+      "drill_status": "no_fuel",
+      "factory": {
+        "connections": {},
+        "connector_ownership": {
+          "protocol": 1,
+          "routes": {},
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "tick": 7980324
+        },
+        "craft_job": {
+          "accepted": 1,
+          "baseline": {
+            "steam-engine": 0
+          },
+          "completed_tick": 7979117,
+          "finished": 1,
+          "force_index": 1,
+          "id": "a1d5e201223846c19cdea335689ab8e5",
+          "inputs": {
+            "iron-gear-wheel": 8,
+            "iron-plate": 10,
+            "pipe": 5
+          },
+          "last_progress_tick": 7979117,
+          "outputs": {
+            "steam-engine": 1
+          },
+          "paid": true,
+          "player_index": 1,
+          "queue_valid": true,
+          "recipe": "steam-engine",
+          "requested": 1,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "started_tick": 7979087,
+          "status": "completed",
+          "surface_index": 1,
+          "unit_number": 2543
+        },
+        "craft_job_actor": {
+          "force_index": 1,
+          "player_index": 1,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "surface_index": 1,
+          "unit_number": 2543
+        },
+        "craft_jobs_protocol": 1,
+        "crafting_queue": 0,
+        "entities": {
+          "recipe:copper-plate": {
+            "crafting": false,
+            "crafting_progress": 0,
+            "energy": 100,
+            "fluid_ports": {},
+            "fluids": {},
+            "fuel": {
+              "coal": 3
+            },
+            "health": 200,
+            "input": {},
+            "max_health": 200,
+            "name": "stone-furnace",
+            "output": {},
+            "position": {
+              "x": -42,
+              "y": -109
+            },
+            "products_finished": 25,
+            "recipe": "",
+            "status": 18,
+            "unit_number": 2546
+          },
+          "recipe:iron-plate": {
+            "crafting": false,
+            "crafting_progress": 0,
+            "energy": 100,
+            "fluid_ports": {},
+            "fluids": {},
+            "fuel": {
+              "coal": 2
+            },
+            "health": 200,
+            "input": {},
+            "max_health": 200,
+            "name": "stone-furnace",
+            "output": {},
+            "position": {
+              "x": 41,
+              "y": -111
+            },
+            "products_finished": 98,
+            "recipe": "",
+            "status": 18,
+            "unit_number": 2547
+          },
+          "utility:boiler": {
+            "energy": 0,
+            "fluid_ports": [
+              {
+                "fluid": "water",
+                "id": 15
+              },
+              {
+                "fluid": "steam"
+              }
+            ],
+            "fluids": {},
+            "fuel": {},
+            "health": 200,
+            "input": {},
+            "max_health": 200,
+            "name": "boiler",
+            "output": {},
+            "position": {
+              "x": 34.5,
+              "y": 43
+            },
+            "status": 53,
+            "unit_number": 2550
+          },
+          "utility:engine": {
+            "energy": 0,
+            "fluid_ports": [
+              {
+                "fluid": "steam",
+                "id": 16
+              }
+            ],
+            "fluids": {},
+            "fuel": {},
+            "health": 400,
+            "input": {},
+            "max_health": 400,
+            "name": "steam-engine",
+            "output": {},
+            "position": {
+              "x": 44.5,
+              "y": 43.5
+            },
+            "status": 24,
+            "unit_number": 2551
+          },
+          "utility:lab": {
+            "energy": 0,
+            "fluid_ports": {},
+            "fluids": {},
+            "fuel": {},
+            "health": 150,
+            "input": {
+              "automation-science-pack": 10
+            },
+            "max_health": 150,
+            "name": "lab",
+            "output": {},
+            "position": {
+              "x": 24.5,
+              "y": 32.5
+            },
+            "status": 54,
+            "unit_number": 2548
+          },
+          "utility:water": {
+            "energy": 2976579765,
+            "fluid_ports": [
+              {
+                "fluid": "water"
+              }
+            ],
+            "fluids": {},
+            "fuel": {},
+            "health": 150,
+            "input": {},
+            "max_health": 150,
+            "name": "offshore-pump",
+            "output": {},
+            "position": {
+              "x": 24.5,
+              "y": 42.5
+            },
+            "status": 1,
+            "unit_number": 2549
+          }
+        },
+        "exploration_radius": 8,
+        "fair_resource_targets": {
+          "coal": {
+            "name": "coal",
+            "position": {
+              "x": 62.5,
+              "y": -25.5
+            },
+            "surface_index": 1
+          },
+          "copper-ore": {
+            "name": "copper-ore",
+            "position": {
+              "x": -49.5,
+              "y": -84.5
+            },
+            "surface_index": 1
+          },
+          "iron-ore": {
+            "name": "iron-ore",
+            "position": {
+              "x": 47.5,
+              "y": -81.5
+            },
+            "surface_index": 1
+          },
+          "stone": {
+            "name": "stone",
+            "position": {
+              "x": 9.5,
+              "y": -83.5
+            },
+            "surface_index": 1
+          },
+          "wood": {
+            "name": "dead-grey-trunk",
+            "position": {
+              "x": 55.4375,
+              "y": 33.0625
+            },
+            "surface_index": 1
+          }
+        },
+        "force_entity_counts": {
+          "boiler": 1,
+          "burner-mining-drill": 1,
+          "character": 1,
+          "lab": 1,
+          "offshore-pump": 1,
+          "steam-engine": 1,
+          "stone-furnace": 2,
+          "wooden-chest": 1
+        },
+        "input_routes": {
+          "diagnostics": {
+            "recipe:copper-plate": {
+              "belt_budget_exhausted": false,
+              "cached": true,
+              "depleted_resources": 0,
+              "fallback": "batched_manual_supply",
+              "length_limited_paths": 0,
+              "max_belts": 64,
+              "mixed_resources": 0,
+              "next_survey_tick": 7980570,
+              "observed_tick": 7980324,
+              "path_attempts": 0,
+              "path_expansions": 0,
+              "path_probes": 0,
+              "placement_checks": 0,
+              "reason": "output_not_commissioned",
+              "receiver_count": 0,
+              "resource_count": 0,
+              "resource_result_limit_reached": false,
+              "resource_sample_limits": 0,
+              "sampled_resources": 0,
+              "schema": 1,
+              "search_budget_exhausted": false,
+              "source_position": {
+                "x": -42,
+                "y": -109
+              },
+              "source_unit": 2546,
+              "survey_radius": 40,
+              "survey_tick": 7980270
+            },
+            "recipe:iron-plate": {
+              "belt_budget_exhausted": false,
+              "cached": true,
+              "depleted_resources": 0,
+              "fallback": "batched_manual_supply",
+              "length_limited_paths": 0,
+              "max_belts": 64,
+              "mixed_resources": 0,
+              "next_survey_tick": 7980570,
+              "observed_tick": 7980324,
+              "path_attempts": 0,
+              "path_expansions": 0,
+              "path_probes": 0,
+              "placement_checks": 0,
+              "reason": "output_not_commissioned",
+              "receiver_count": 0,
+              "resource_count": 0,
+              "resource_result_limit_reached": false,
+              "resource_sample_limits": 0,
+              "sampled_resources": 0,
+              "schema": 1,
+              "search_budget_exhausted": false,
+              "source_position": {
+                "x": 41,
+                "y": -111
+              },
+              "source_unit": 2547,
+              "survey_radius": 40,
+              "survey_tick": 7980270
+            }
+          },
+          "protocol": 1,
+          "sources": {}
+        },
+        "inventory_insertable": {
+          "coal": 4000
+        },
+        "launch_readiness": {
+          "actor_unit": 2543,
+          "attempts": {},
+          "fault": false,
+          "fish": {},
+          "force_index": 1,
+          "pad": {},
+          "pad_site": {},
+          "receipts": {},
+          "schema": 1,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "silo": {},
+          "supported": true,
+          "surface_index": 1,
+          "tick": 7980324,
+          "version": "2.0.77"
+        },
+        "mining_outposts": {
+          "diagnostics": {
+            "copper-ore": "available",
+            "iron-ore": "available"
+          },
+          "protocol": 1,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "sources": {
+            "copper-ore": {
+              "flow": {},
+              "force_index": 1,
+              "layout": "outpost:copper-ore:1",
+              "parts": {},
+              "remaining": 170000,
+              "resource": "copper-ore",
+              "state": "proposed",
+              "steps": [
+                {
+                  "direction": 0,
+                  "name": "wooden-chest",
+                  "part": "chest",
+                  "position": {
+                    "x": -44.5,
+                    "y": -104.5
+                  }
+                },
+                {
+                  "direction": 0,
+                  "name": "burner-mining-drill",
+                  "part": "drill",
+                  "position": {
+                    "x": -44,
+                    "y": -103
+                  }
+                }
+              ],
+              "surface_index": 1,
+              "topology": false
+            },
+            "iron-ore": {
+              "flow": {},
+              "force_index": 1,
+              "layout": "outpost:iron-ore:2",
+              "parts": {},
+              "remaining": 110000,
+              "resource": "iron-ore",
+              "state": "proposed",
+              "steps": [
+                {
+                  "direction": 0,
+                  "name": "wooden-chest",
+                  "part": "chest",
+                  "position": {
+                    "x": 45.5,
+                    "y": -109.5
+                  }
+                },
+                {
+                  "direction": 0,
+                  "name": "burner-mining-drill",
+                  "part": "drill",
+                  "position": {
+                    "x": 46,
+                    "y": -108
+                  }
+                }
+              ],
+              "surface_index": 1,
+              "topology": false
+            }
+          },
+          "tick": 7980324
+        },
+        "native_transfer_receipt_count": 108,
+        "observation_anchor_diagnostics": {
+          "oil": {
+            "radius": 512,
+            "saturated": false
+          },
+          "selection": "bounded_witness_not_global_nearest",
+          "water": {
+            "radius": 256,
+            "saturated": true
+          }
+        },
+        "output_buffers": {
+          "protocol": 1,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "sources": {
+            "recipe:copper-plate": {
+              "chest_role": "output-chest:2546",
+              "flow": {},
+              "held": 0,
+              "item": "copper-plate",
+              "layout": "output:2546:joint",
+              "parts": {},
+              "source": "recipe:copper-plate",
+              "source_unit": 2546,
+              "state": "proposed",
+              "topology": false
+            },
+            "recipe:iron-plate": {
+              "chest_role": "output-chest:2547",
+              "flow": {},
+              "held": 0,
+              "item": "iron-plate",
+              "layout": "output:2547:joint",
+              "parts": {},
+              "source": "recipe:iron-plate",
+              "source_unit": 2547,
+              "state": "proposed",
+              "topology": false
+            }
+          },
+          "tick": 7980324
+        },
+        "player_bound": true,
+        "player_connected": true,
+        "produced": {
+          "automation-science-pack": 10,
+          "boiler": 1,
+          "coal": 20,
+          "copper-cable": 30,
+          "copper-ore": 25,
+          "copper-plate": 25,
+          "electronic-circuit": 10,
+          "iron-gear-wheel": 32,
+          "iron-ore": 131,
+          "iron-plate": 98,
+          "lab": 1,
+          "offshore-pump": 1,
+          "pipe": 12,
+          "steam-engine": 1,
+          "stone": 15,
+          "stone-furnace": 3,
+          "transport-belt": 4
+        },
+        "production_sites": {
+          "protocol": 1,
+          "sources": {
+            "recipe:copper-plate": {
+              "anchor": "cell-site:copper-ore:-42:-109:0:2",
+              "belt_count": 5,
+              "bill": {
+                "burner-inserter": 2,
+                "burner-mining-drill": 1,
+                "stone-furnace": 1,
+                "transport-belt": 5,
+                "wooden-chest": 1
+              },
+              "fallback": "batched_manual_supply",
+              "position": {
+                "x": -42,
+                "y": -109
+              },
+              "reason": "joint_layout_available",
+              "source_unit": 2546,
+              "state": "owned"
+            },
+            "recipe:iron-plate": {
+              "anchor": "cell-site:iron-ore:41:-111:0:1",
+              "belt_count": 5,
+              "bill": {
+                "burner-inserter": 2,
+                "burner-mining-drill": 1,
+                "stone-furnace": 1,
+                "transport-belt": 5,
+                "wooden-chest": 1
+              },
+              "fallback": "batched_manual_supply",
+              "position": {
+                "x": 41,
+                "y": -111
+              },
+              "reason": "joint_layout_available",
+              "source_unit": 2547,
+              "state": "owned"
+            }
+          }
+        },
+        "research": "",
+        "research_progress": 0,
+        "researched": [
+          "automation-science-pack",
+          "electronics",
+          "steam-power"
+        ],
+        "rocket_baseline": 0,
+        "rockets_launched": 0,
+        "tick": 7980324
+      },
+      "game_version": "2.0.77",
+      "inventory": {},
+      "iron_ore_collected": 33,
+      "nearby_resources": {
+        "coal": 63.00589228126369,
+        "copper-ore": 151.87597826732903,
+        "crude-oil": 349.8417614967633,
+        "iron-ore": 116.39628011520902,
+        "stone": 123.39887165066868,
+        "water": 17.369386493431573,
+        "wood": 11.164443824400887
+      },
+      "placed_entities": [
+        "burner-mining-drill",
+        "wooden-chest"
+      ],
+      "player_position": [
+        44.4,
+        34.9
+      ],
+      "power_satisfaction": 1.0,
+      "production_rates": null,
+      "researched": [
+        "automation-science-pack",
+        "electronics",
+        "steam-power"
+      ],
+      "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+      "tick": 7980324,
+      "victory": false,
+      "victory_source": null,
+      "world_kind": "fle"
+    },
+    "history": [
+      {
+        "action": "factory_extract",
+        "kind": "step_verified",
+        "plan": "factory:factory_extract:recipe:iron-plate",
+        "tick": 7978714
+      },
+      {
+        "kind": "plan_committed",
+        "plan": "factory:factory_extract:recipe:iron-plate",
+        "source": "jev",
+        "tick": 7978774
+      },
+      {
+        "action": "factory_extract",
+        "kind": "step_verified",
+        "plan": "factory:factory_extract:recipe:iron-plate",
+        "tick": 7978927
+      },
+      {
+        "kind": "plan_committed",
+        "plan": "factory:factory_craft:steam-engine",
+        "source": "jev",
+        "tick": 7978977
+      },
+      {
+        "inputs_paid": {
+          "iron-gear-wheel": 8,
+          "iron-plate": 10,
+          "pipe": 5
+        },
+        "job": "a1d5e201223846c19cdea335689ab8e5",
+        "kind": "background_job_admitted",
+        "outputs_locked": {
+          "steam-engine": 1
+        },
+        "plan": "factory:factory_craft:steam-engine",
+        "tick": 7979115
+      },
+      {
+        "job": "a1d5e201223846c19cdea335689ab8e5",
+        "kind": "background_job_completed",
+        "outputs": {
+          "steam-engine": 1
+        },
+        "plan": "factory:factory_craft:steam-engine",
+        "tick": 7979163
+      },
+      {
+        "kind": "plan_committed",
+        "plan": "factory:factory_place:utility:engine",
+        "source": "jev",
+        "tick": 7979163
+      },
+      {
+        "action": "factory_place",
+        "kind": "step_verified",
+        "plan": "factory:factory_place:utility:engine",
+        "tick": 7980270
+      }
+    ],
+    "judgment_contract": {
+      "benefit": "ordinal_ranking_with_negative_evidence_check",
+      "eligibility": "explicit_useful_progress_choice",
+      "schema": 2
+    },
+    "local_objective": {
+      "instruction": "Prevent observed starvation, remove the next production blocker, or do useful independent work while production runs. A single useful action need not complete the ultimate goal. Immediate prerequisites precede discretionary lookahead at equal urgency; moving more items is not evidence of more useful production.",
+      "kind": "ready_production",
+      "primary_target": {
+        "inventory_target": 41,
+        "item": "pipe",
+        "ultimate_goal": "rocket_launch"
+      },
+      "success_authority": "unchanged native step and goal predicates, never model scores",
+      "ultimate_goal": "rocket_launch"
+    },
+    "production_scheduling": {
+      "guidance": "Prefer useful work while machines run; batch pickups to evidenced current demand and ready stock. A small current prerequisite does not justify waiting for speculative output.",
+      "objective": "Advance the next production batch identified in plan descriptions",
+      "ultimate_goal": "rocket_launch"
+    },
+    "selection_contract": {
+      "heuristics_are_not_native_timing_measurements": true,
+      "observed_tick": 7980324,
+      "schema": 1
+    }
+  },
+  "questions": {
+    "candidate": {
+      "criteria": {
+        "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}": "Next production batch: 41 pipe. Gather 41 observed iron-ore; inventory target 41",
+        "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}": "Gather 1 observed wood; inventory target 1",
+        "observe": "Gather another observation without mutating the factory"
+      },
+      "instructions": "Choose the best supplied candidate plan for `local_objective` using `facts`, `candidate_evidence` when present, and `history`. Select observe only when evidence needed to start is missing. For a gather candidate, `gather_start_evidence` when present summarizes the current observed resource and fair target; an estimated travel distance is not proof of arrival. Uncertain later crafting, research, or travel outcome is checked after this bounded step and does not by itself require another observation. Compare observe by the specific start fact it could resolve now: when the current gather has an observed resource and fair target and no start fact is missing, repeating the same observation alone does not establish a future travel or crafting outcome. Keep observe available for a genuinely missing or disputed start fact. For a handcraft, `craft_start_evidence` describes current inputs and actor readiness; expected output still needs native verification. Report confidence in choosing the best next action from this observed frontier, not confidence in completing the ultimate goal. Do not assume other questions' answers are available. This candidate is a current, native-guarded child-kit step for a separately traced outpost prerequisite under the outer local target. A proposed outpost's admission reflects the existing planner's direct-route and minimum-runway policy heuristic, not measured payback. Judge this bounded child step from its current start evidence; its own outcome still requires normal native verification. Do not require proof of arrival, outpost flow/output, or completion of the outer target. When several candidates are comparably useful and have sufficient current start evidence, use `deterministic_ranking` as the scheduling tie-breaker: it orders work by passive status, observed urgency, immediate versus lookahead scope, then estimated actor cost per handled demand unit and compiler order. Choosing the earlier supported candidate does not assert that the other useful candidate is wrong or that future production is guaranteed. The order is a declared scheduling heuristic, never proof of usefulness, readiness or success. Reject an unsupported candidate regardless of its rank, and override the order when current facts establish a stronger useful contribution or a missing start fact. Judge confidence in this bounded scheduling choice under those preferences; do not assume answers to the separate candidate questions.",
+      "type": "choice"
+    },
+    "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}/benefit": {
+      "criteria": [
+        "No demonstrated contribution to the bounded production objective",
+        "Makes useful partial progress through useful inputs, a current planner-linked intermediate craft, an immediate planner-linked research prerequisite backed by same-tick evidence, or evidenced bounded capacity, but does not establish receipt-conditional closure of an observed local-target shortfall for a craft or fresh-inventory-conditional closure of one for a direct gather, and does not remove a separately evidenced current blocker or due starvation",
+        "Same-tick qualified evidence shows the action would close the current local-target shortfall only after its native receipt verifies for a craft or fresh native postcondition verifies for a direct gather, or separate same-tick evidence shows it directly removes a specific observed blocker or due starvation"
+      ],
+      "instructions": "How directly do the steps in `candidate_plans[\"factory:factory_gather:iron-ore:target:41:site:{\\\"name\\\":\\\"iron-ore\\\",\\\"position\\\":{\\\"x\\\":47.5,\\\"y\\\":-81.5},\\\"surface_index\\\":1}\"]` advance `local_objective` given `facts`, current `candidate_evidence`, and `execution_contract`? Do not demand a full-game plan from one bounded local production action. A current `raw_prerequisite` is evidence that gathering supplies an input to the named native recipe, not that the later craft already happened.",
+      "type": "score"
+    },
+    "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}/disruption": {
+      "criteria": [
+        "Only moves, gathers resources, waits, fuels an existing machine, or handcrafts from carried inputs without changing existing entities",
+        "Places new machinery or connectors, such as pipes, poles or belts, without removing any existing entity",
+        "Stops, removes, or rebuilds existing factory infrastructure"
+      ],
+      "instructions": "How disruptive are the steps in `candidate_plans[\"factory:factory_gather:iron-ore:target:41:site:{\\\"name\\\":\\\"iron-ore\\\",\\\"position\\\":{\\\"x\\\":47.5,\\\"y\\\":-81.5},\\\"surface_index\\\":1}\"]` to the existing factory in `facts`, under `execution_contract`?",
+      "type": "score"
+    },
+    "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}/needs_observation": {
+      "instructions": "Is a fact required to start the next step of `candidate_plans[\"factory:factory_gather:iron-ore:target:41:site:{\\\"name\\\":\\\"iron-ore\\\",\\\"position\\\":{\\\"x\\\":47.5,\\\"y\\\":-81.5},\\\"surface_index\\\":1}\"]` missing from `facts`, given `execution_contract`? Consider only resource location, carried materials, and the entities used by that step. Unknown later-game research or victory is not required for gathering an observed raw resource or fueling a drill. For a gather, use current `gather_start_evidence` when present; do not treat the unverified travel outcome as a missing start fact. Future action outcomes will be verified after execution, not assumed now.",
+      "type": "noul"
+    },
+    "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}/useful_progress": {
+      "criteria": {
+        "unsupported": "Useful progress is unsupported or contradicted by current evidence",
+        "useful": "Current evidence supports useful progress toward the supplied objective"
+      },
+      "instructions": "Would the next bounded action in `candidate_plans[\"factory:factory_gather:iron-ore:target:41:site:{\\\"name\\\":\\\"iron-ore\\\",\\\"position\\\":{\\\"x\\\":47.5,\\\"y\\\":-81.5},\\\"surface_index\\\":1}\"]` make useful progress toward `local_objective` if its native receipt and fresh postcondition verify? Judge independently using `facts`, this plan's current `candidate_evidence`, and `execution_contract`; other questions' answers are unavailable. Useful progress includes an evidenced prerequisite or intermediate, not only completing the target. Distinguish whether any useful progress is supported from its magnitude (partial progress versus removing a blocker). Use unsupported for missing, stale, mismatched or contrary dependency evidence. A planner proposal or future unverified result alone is not proof. Report confidence in this usefulness choice, not in completing the game. This judgment does not authorize execution or waive native checks.",
+      "type": "choice"
+    },
+    "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}/benefit": {
+      "criteria": [
+        "No demonstrated contribution to the bounded production objective",
+        "Makes useful partial progress through useful inputs, a current planner-linked intermediate craft, an immediate planner-linked research prerequisite backed by same-tick evidence, or evidenced bounded capacity, but does not establish receipt-conditional closure of an observed local-target shortfall for a craft or fresh-inventory-conditional closure of one for a direct gather, and does not remove a separately evidenced current blocker or due starvation",
+        "Same-tick qualified evidence shows the action would close the current local-target shortfall only after its native receipt verifies for a craft or fresh native postcondition verifies for a direct gather, or separate same-tick evidence shows it directly removes a specific observed blocker or due starvation"
+      ],
+      "instructions": "How directly do the steps in `candidate_plans[\"factory:factory_gather:wood:target:1:site:{\\\"name\\\":\\\"dead-grey-trunk\\\",\\\"position\\\":{\\\"x\\\":55.4375,\\\"y\\\":33.0625},\\\"surface_index\\\":1}\"]` advance `local_objective` given `facts`, current `candidate_evidence`, and `execution_contract`? Do not demand a full-game plan from one bounded local production action. A current `raw_prerequisite` is evidence that gathering supplies an input to the named native recipe, not that the later craft already happened.",
+      "type": "score"
+    },
+    "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}/disruption": {
+      "criteria": [
+        "Only moves, gathers resources, waits, fuels an existing machine, or handcrafts from carried inputs without changing existing entities",
+        "Places new machinery or connectors, such as pipes, poles or belts, without removing any existing entity",
+        "Stops, removes, or rebuilds existing factory infrastructure"
+      ],
+      "instructions": "How disruptive are the steps in `candidate_plans[\"factory:factory_gather:wood:target:1:site:{\\\"name\\\":\\\"dead-grey-trunk\\\",\\\"position\\\":{\\\"x\\\":55.4375,\\\"y\\\":33.0625},\\\"surface_index\\\":1}\"]` to the existing factory in `facts`, under `execution_contract`?",
+      "type": "score"
+    },
+    "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}/needs_observation": {
+      "instructions": "Is a fact required to start the next step of `candidate_plans[\"factory:factory_gather:wood:target:1:site:{\\\"name\\\":\\\"dead-grey-trunk\\\",\\\"position\\\":{\\\"x\\\":55.4375,\\\"y\\\":33.0625},\\\"surface_index\\\":1}\"]` missing from `facts`, given `execution_contract`? Consider only resource location, carried materials, and the entities used by that step. Unknown later-game research or victory is not required for gathering an observed raw resource or fueling a drill. For a gather, use current `gather_start_evidence` when present; do not treat the unverified travel outcome as a missing start fact. Future action outcomes will be verified after execution, not assumed now.",
+      "type": "noul"
+    },
+    "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}/useful_progress": {
+      "criteria": {
+        "unsupported": "Useful progress is unsupported or contradicted by current evidence",
+        "useful": "Current evidence supports useful progress toward the supplied objective"
+      },
+      "instructions": "Would the next bounded action in `candidate_plans[\"factory:factory_gather:wood:target:1:site:{\\\"name\\\":\\\"dead-grey-trunk\\\",\\\"position\\\":{\\\"x\\\":55.4375,\\\"y\\\":33.0625},\\\"surface_index\\\":1}\"]` make useful progress toward `local_objective` if its native receipt and fresh postcondition verify? Judge independently using `facts`, this plan's current `candidate_evidence`, and `execution_contract`; other questions' answers are unavailable. Useful progress includes an evidenced prerequisite or intermediate, not only completing the target. Distinguish whether any useful progress is supported from its magnitude (partial progress versus removing a blocker). Use unsupported for missing, stale, mismatched or contrary dependency evidence. A planner proposal or future unverified result alone is not proof. Report confidence in this usefulness choice, not in completing the game. This judgment does not authorize execution or waive native checks.",
+      "type": "choice"
+    }
+  },
+  "answers": {
+    "candidate": {
+      "choice": "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}",
+      "confidence": 0.82,
+      "probabilities": {
+        "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}": 0.11,
+        "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}": 0.87,
+        "observe": 0.02
+      },
+      "type": "choice"
+    },
+    "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}/benefit": {
+      "confidence": 0.68,
+      "legend": {
+        "0": "No demonstrated contribution to the bounded production objective",
+        "1": "Makes useful partial progress through useful inputs, a current planner-linked intermediate craft, an immediate planner-linked research prerequisite backed by same-tick evidence, or evidenced bounded capacity, but does not establish receipt-conditional closure of an observed local-target shortfall for a craft or fresh-inventory-conditional closure of one for a direct gather, and does not remove a separately evidenced current blocker or due starvation",
+        "2": "Same-tick qualified evidence shows the action would close the current local-target shortfall only after its native receipt verifies for a craft or fresh native postcondition verifies for a direct gather, or separate same-tick evidence shows it directly removes a specific observed blocker or due starvation"
+      },
+      "probabilities": {
+        "0": 0.09,
+        "1": 0.78,
+        "2": 0.13
+      },
+      "score": 1.04,
+      "type": "score"
+    },
+    "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}/disruption": {
+      "confidence": 1.0,
+      "legend": {
+        "0": "Only moves, gathers resources, waits, fuels an existing machine, or handcrafts from carried inputs without changing existing entities",
+        "1": "Places new machinery or connectors, such as pipes, poles or belts, without removing any existing entity",
+        "2": "Stops, removes, or rebuilds existing factory infrastructure"
+      },
+      "probabilities": {
+        "0": 1.0,
+        "1": 0.0,
+        "2": 0.0
+      },
+      "score": 0.0,
+      "type": "score"
+    },
+    "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}/needs_observation": {
+      "noul": 0.28,
+      "type": "noul"
+    },
+    "factory:factory_gather:iron-ore:target:41:site:{\"name\":\"iron-ore\",\"position\":{\"x\":47.5,\"y\":-81.5},\"surface_index\":1}/useful_progress": {
+      "choice": "unsupported",
+      "confidence": 0.07,
+      "probabilities": {
+        "unsupported": 0.53,
+        "useful": 0.47
+      },
+      "type": "choice"
+    },
+    "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}/benefit": {
+      "confidence": 0.55,
+      "legend": {
+        "0": "No demonstrated contribution to the bounded production objective",
+        "1": "Makes useful partial progress through useful inputs, a current planner-linked intermediate craft, an immediate planner-linked research prerequisite backed by same-tick evidence, or evidenced bounded capacity, but does not establish receipt-conditional closure of an observed local-target shortfall for a craft or fresh-inventory-conditional closure of one for a direct gather, and does not remove a separately evidenced current blocker or due starvation",
+        "2": "Same-tick qualified evidence shows the action would close the current local-target shortfall only after its native receipt verifies for a craft or fresh native postcondition verifies for a direct gather, or separate same-tick evidence shows it directly removes a specific observed blocker or due starvation"
+      },
+      "probabilities": {
+        "0": 0.11,
+        "1": 0.7,
+        "2": 0.19
+      },
+      "score": 1.09,
+      "type": "score"
+    },
+    "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}/disruption": {
+      "confidence": 0.99,
+      "legend": {
+        "0": "Only moves, gathers resources, waits, fuels an existing machine, or handcrafts from carried inputs without changing existing entities",
+        "1": "Places new machinery or connectors, such as pipes, poles or belts, without removing any existing entity",
+        "2": "Stops, removes, or rebuilds existing factory infrastructure"
+      },
+      "probabilities": {
+        "0": 0.99,
+        "1": 0.01,
+        "2": 0.0
+      },
+      "score": 0.01,
+      "type": "score"
+    },
+    "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}/needs_observation": {
+      "noul": 0.2,
+      "type": "noul"
+    },
+    "factory:factory_gather:wood:target:1:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":55.4375,\"y\":33.0625},\"surface_index\":1}/useful_progress": {
+      "choice": "unsupported",
+      "confidence": 0.35,
+      "probabilities": {
+        "unsupported": 0.68,
+        "useful": 0.32
+      },
+      "type": "choice"
+    }
+  }
+}
