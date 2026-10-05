@@ -30,9 +30,10 @@ entire 51 GiB increase; monitor host space as the guest subsequently uses it.
 | Root partition UUID | `7F734A28-61B6-4579-8D77-F289137C0D31` |
 | Root partition start | `2203648` sectors of 512 bytes |
 
-This is a prepared procedure. Merge and preflight alone do not establish that
-the expansion has been applied. Retain the actual operation records and readback
-with the incident evidence.
+Merge and preflight alone do not establish that the expansion has been applied.
+Retain the actual operation records and readback with the incident evidence.
+The completed operation recorded below must not be replayed against a disk that
+has already grown.
 
 ## Apply and verify
 
@@ -67,3 +68,27 @@ or ownership record is part of this storage operation.
 Capacity remains finite and write rates vary. Continue measuring free space and
 autosave freshness during the soak. Increased headroom does not prove multi-day
 reliability and does not replace a separately reviewed evidence-archival policy.
+
+## Applied operation: 2026-10-05 18:51 UTC
+
+After PR [#439](https://github.com/jevplays-games/jev-factorio-agent/pull/439)
+merged as `274b9cc77043e4f88bda1ee8e807d31a4caf64d8`, fresh identity, space and
+autosave checks passed. Host and guest read back a 96 GiB device. `growpart`
+expanded the root partition from 92,168,159 to 199,122,911 sectors while preserving
+its start, UUID and the complete EFI partition. Online `resize2fs` succeeded.
+
+Readback measured 100,156,600,320 bytes of filesystem capacity (93.278 GiB) and
+63,793,852,416 bytes free (59.413 GiB), with about 403 GiB free on the host. The
+same campaign, source, owner and child remained live; a recent autosave passed
+ZIP integrity verification. No VM, controller or game restart was performed,
+and no retained evidence was deleted.
+
+The private host operation directory
+`/home/completetrain/jev-storage-headroom-20261005` retains the original domain
+definition, guest layout, exclusive intent and block-device results. The guest
+directory `/root/jev-storage-headroom-20261005` retains the original partition
+dump, one-use worker, partition and filesystem intents, command outcomes and
+final result. Read these records before any partial-failure reconciliation;
+never replay the successful mutations. The campaign's separate strict-JEV hold
+persisted, so this operation establishes storage capacity and process continuity,
+not fresh gameplay progress.

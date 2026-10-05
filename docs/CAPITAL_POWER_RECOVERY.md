@@ -67,3 +67,15 @@ snapshot still cannot establish it. A separate live read-only API probe at tick
 11277273 returned wood headroom 7199 and matching primary coal headroom 3595.
 That probe validates the query against Factorio 2.0.77, not historical capacity,
 successful model selection, production deployment or a multi-day soak.
+
+## Production readback
+
+PR [#437](https://github.com/jevplays-games/jev-factorio-agent/pull/437) merged as
+`d5ccc9abb025057938b57bb15c3445abc43f28ca` and was deployed as V23 through a
+reconciled boundary. Installation verification at 18:36 UTC confirmed the pinned
+source, single owner, preserved history and valid autosaves. At tick 11401189 the
+wood action carried its native power witness and passed JEV's usefulness gate.
+JEV's choice confidence remained below the configured floor, so no action was
+dispatched. See the [dated deployment outcome](CONTINUOUS_RECOVERY_20261005.md#later-deployment-a-healthy-process-can-still-be-held).
+This verifies the repaired evidence path, not resumed production or multi-day
+reliability.
