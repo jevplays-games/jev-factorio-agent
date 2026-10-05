@@ -19,7 +19,7 @@ import tempfile
 from types import SimpleNamespace
 
 from . import (input_routes, mining_outposts, solid_routes, coal_supply, treatment,
-               downstream_recipe_witness)
+               downstream_recipe_witness, output_buffers)
 from .acceptance_io import MAX_JSON, MAX_LOG, canonical, load_json, records, sha256, stable_read, write_new
 from .acceptance_boundaries import (final_successor_issues, project_history_issues,
                                     successor_history_issues)
@@ -27,7 +27,7 @@ from .backends.solid_routes import validate_intents
 from .campaign_progress import SCIENCE
 from .iteration_timing import NAMES, validate_timing
 from .latency_report import distribution
-from .memory import load_checkpoint
+from .memory import load_checkpoint, load_checkpoint_data
 from .solid_funding_evidence import funding_history_issues
 from .planning import capital
 from .telemetry import validate_phase
@@ -341,6 +341,75 @@ def _record_feature_mismatch(record, configuration):
         elif record.get('coal_supply') is True:
             return True
     return False
+
+
+def _final_output_ownership_issues(final: dict, session: str, last_tick: int,
+                                   record: dict) -> set[str]:
+    """Bind paid output owners to the complete final captured observation.
+
+    Ordinary owners come from the output checkpoint extension; successor
+    output owners are composed from its typed successor receipts. The producer
+    record's top-level buffer evidence and the final snapshot must be the same
+    observation, and every paid component must still be present on its exact
+    native unit at this boundary.
+    """
+    issues: set[str] = set()
+    snapshot_data = record.get('after_state', {})
+    factory = snapshot_data.get('factory', {}) if isinstance(snapshot_data, dict) else {}
+    try:
+        snapshot = SimpleNamespace(session_id=session, tick=last_tick, factory=factory)
+        observed = output_buffers.sources(snapshot)
+        typed_final = load_checkpoint_data(final, session, 'rocket_launch')
+        retained = output_buffers.expected_commitments(typed_final)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return {'invalid_final_composed_observation'}
+
+    envelope = factory.get('output_buffers')
+    try:
+        if canonical(record.get('buffer_evidence')) != canonical(envelope):
+            issues.add('final_output_evidence_log_mismatch')
+    except (TypeError, ValueError):
+        issues.add('final_output_evidence_log_mismatch')
+
+    supported_sources = output_buffers.SOURCES | output_buffers.SUCCESSOR_SOURCES
+    for source, row in observed.items():
+        try:
+            if (source not in supported_sources or not isinstance(row, dict)
+                    or row.get('source') != source
+                    or row.get('item') != source.split(':', 1)[1]
+                    or not output_buffers.current(row, snapshot)):
+                issues.add('invalid_final_composed_observation')
+                continue
+            parts = row.get('parts')
+            owner = {'source_unit': row.get('source_unit'), 'layout': row.get('layout'),
+                     'parts': parts}
+            output_buffers.validate_commitments(
+                {source: owner}, successors=source in output_buffers.SUCCESSOR_SOURCES)
+            for part, paid in parts.items():
+                parameters = {'source': source, 'layout': row['layout'], 'part': part,
+                              'receipt': paid['receipt']}
+                if not output_buffers.component_complete(parameters, snapshot):
+                    issues.add('invalid_final_composed_observation')
+            if row.get('state') == 'ready' and not output_buffers.flow_complete(
+                    source, row['layout'], snapshot):
+                issues.add('invalid_final_composed_observation')
+        except (ValueError, KeyError, TypeError, AttributeError):
+            issues.add('invalid_final_composed_observation')
+            continue
+
+        saved = retained.get(source)
+        if (row.get('parts') or row.get('state') != 'proposed') and saved is None:
+            issues.add('observed_composed_commitment_missing')
+        if saved is not None and (
+                saved.get('source_unit') != row.get('source_unit')
+                or saved.get('layout') != row.get('layout')
+                or canonical(saved.get('parts')) != canonical(row.get('parts'))):
+            issues.add('final_composed_ownership_not_observed')
+
+    for source in retained:
+        if source not in observed:
+            issues.add('final_composed_ownership_not_observed')
+    return issues
 
 
 class _CoalOwnershipMismatch(ValueError):
@@ -1279,6 +1348,8 @@ def analyze_rows(rows: list[dict], trial: dict, initial: dict, final: dict) -> d
             reject(not isinstance(observed, dict) or key not in observed
                    or not _retains_prefix(saved, observed[key]),
                    'final_composed_ownership_not_observed')
+    if trial['configuration']['furnace_output_buffers']:
+        issues.update(_final_output_ownership_issues(final, session, last_tick, rows[-1]))
     observed_successor_sources = {
         source for record in rows for label in ('state', 'after_state')
         for source in record[label].get('factory', {}).get('successors', {}).get('sources', {})

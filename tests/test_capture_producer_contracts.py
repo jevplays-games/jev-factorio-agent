@@ -271,7 +271,17 @@ def test_analyzer_checks_outpost_emitter_flag_and_required_evidence():
         row["acceptance_configuration"].update(furnace_output_buffers=True,
                                                furnace_input_belts=True,
                                                mining_outposts=True)
-        row.update(furnace_output_buffers=True, buffer_evidence={},
+        for label in ("state", "after_state"):
+            state = row[label]
+            state["factory"]["output_buffers"] = {
+                "protocol": 1,
+                "session_id": state["session_id"],
+                "tick": state["tick"],
+                "sources": {},
+            }
+        row.update(furnace_output_buffers=True,
+                   buffer_evidence=deepcopy(
+                       row["after_state"]["factory"]["output_buffers"]),
                    furnace_input_belts=True, input_route_evidence={},
                    input_validation_failure={}, mining_outposts=True,
                    mining_outpost_evidence={})

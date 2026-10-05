@@ -17,10 +17,22 @@ def configure_output_buffers(args, enabled):
     for record in rows:
         record['acceptance_configuration'] = deepcopy(trial['configuration'])
         if enabled:
-            record.update(furnace_output_buffers=True, buffer_evidence={})
+            record.update(furnace_output_buffers=True)
+            for label in ('state', 'after_state'):
+                state = record[label]
+                state['factory']['output_buffers'] = {
+                    'protocol': 1,
+                    'session_id': state['session_id'],
+                    'tick': state['tick'],
+                    'sources': {},
+                }
+            record['buffer_evidence'] = deepcopy(
+                record['after_state']['factory']['output_buffers'])
         else:
             record.pop('furnace_output_buffers', None)
             record.pop('buffer_evidence', None)
+            for label in ('state', 'after_state'):
+                record[label]['factory'].pop('output_buffers', None)
     for checkpoint in (initial, final):
         if enabled:
             checkpoint.update(output_buffers_schema=1, output_commitments={})
@@ -251,14 +263,32 @@ def test_analyze_rows_accepts_declared_output_buffer_composition():
 def test_output_owner_prefix_is_retained_inside_composed_checkpoints():
     args = evidence()
     configure_output_buffers(args, True)
-    owner = {'recipe:iron-plate': {
-        'source_unit': 50000,
-        'layout': 'output-layout:fixture',
-        'parts': {'chest': {
-            'role': 'fixture:output-chest', 'unit_number': 50001,
-            'receipt': 'paid:fixture:output-chest', 'paid': 1,
-        }},
+    from test_output_buffer_integration import setup as output_setup
+
+    source_state, _, route = output_setup(True)
+    route = deepcopy(route)
+    entities = deepcopy(source_state.factory['entities'])
+    for paid in route['parts'].values():
+        paid['unit_number'] += 18000
+        entities[paid['role']]['unit_number'] = paid['unit_number']
+    source = route['source']
+    owner = {source: {
+        'source_unit': route['source_unit'],
+        'layout': route['layout'],
+        'parts': deepcopy(route['parts']),
     }}
+    for record in args[0]:
+        for label in ('state', 'after_state'):
+            state = record[label]
+            state['factory']['entities'].update(deepcopy(entities))
+            state['factory']['output_buffers'] = {
+                'protocol': 1,
+                'session_id': state['session_id'],
+                'tick': state['tick'],
+                'sources': {source: deepcopy(route)},
+            }
+        record['buffer_evidence'] = deepcopy(
+            record['after_state']['factory']['output_buffers'])
     args[2]['output_commitments'] = deepcopy(owner)
     args[3]['output_commitments'] = deepcopy(owner)
     valid = report.analyze_rows(*args)
@@ -393,6 +423,7 @@ def test_checkpoint_extensions_must_match_declared_composition():
 
 def test_valid_successor_composed_checkpoint_can_be_analyzed():
     args = evidence()
+    configure_output_buffers(args, True)
     for checkpoint in args[2:]:
         checkpoint.update(background_schema=2, background_job=None, background_attempt=None,
                           output_buffers_schema=1, output_commitments={},
@@ -404,7 +435,7 @@ def test_valid_successor_composed_checkpoint_can_be_analyzed():
         record['acceptance_configuration'] = deepcopy(args[1]['configuration'])
         record.update(background_work=True, background_schema=2,
                       background_job=None, background_attempt=None,
-                      furnace_output_buffers=True, buffer_evidence={},
+                      furnace_output_buffers=True,
                       furnace_input_belts=True, input_route_evidence={},
                       input_validation_failure={}, ore_side_successors=True,
                       successor_evidence={}, successor_projects={})
