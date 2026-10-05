@@ -23,6 +23,63 @@ class InvalidJudgment(ValueError):
     """Malformed or out-of-domain answers must not authorize an action."""
 
 
+def _scheduling_tie_break_hint(context: dict) -> str:
+    """Explain a current compiler order without making it eligibility evidence."""
+    from .planning.decision_support import ranking_key
+
+    plans = context.get('candidate_plans')
+    rows = context.get('candidate_evidence')
+    order = context.get('deterministic_ranking')
+    facts = context.get('facts')
+    contract = context.get('selection_contract')
+    if (not isinstance(plans, dict) or len(plans) < 2
+            or not isinstance(rows, dict) or not isinstance(order, list)
+            or any(type(key) is not str for key in order)
+            or len(order) != len(plans) or set(order) != set(plans)
+            or not isinstance(facts, dict) or type(facts.get('tick')) is not int
+            or not isinstance(contract, dict)
+            or type(contract.get('schema')) is not int or contract['schema'] != 1
+            or type(contract.get('observed_tick')) is not int
+            or contract['observed_tick'] != facts['tick']
+            or contract.get('heuristics_are_not_native_timing_measurements') is not True):
+        return ''
+    for key in order:
+        row = rows.get(key)
+        if (not isinstance(row, dict) or type(row.get('passive')) is not bool
+                or type(row.get('urgency')) is not int
+                or type(row.get('work_scope')) is not str
+                or row['work_scope'] not in {'immediate', 'lookahead'}
+                or type(row.get('compiler_order')) is not int
+                or row.get('unknowns') != []):
+            return ''
+        for name in ('actor_ticks_estimate', 'processed_units', 'current_prerequisite_units'):
+            value = row.get(name)
+            if name == 'current_prerequisite_units' and name not in row:
+                continue
+            if type(value) not in (int, float) or value < 0:
+                return ''
+            try:
+                if not math.isfinite(value):
+                    return ''
+            except OverflowError:
+                return ''
+    if order != sorted(plans, key=lambda key: ranking_key(rows[key])):
+        return ''
+    return (
+        ' When several candidates are comparably useful and have sufficient current '
+        'start evidence, use `deterministic_ranking` as the scheduling tie-breaker: '
+        'it orders work by passive status, observed urgency, immediate versus lookahead '
+        'scope, then estimated actor cost per handled demand unit and compiler order. '
+        'Choosing the earlier supported candidate does not assert that the other useful '
+        'candidate is wrong or that future production is guaranteed. The order is a '
+        'declared scheduling heuristic, never proof of usefulness, readiness or success. '
+        'Reject an unsupported candidate regardless of its rank, and override the order '
+        'when current facts establish a stronger useful contribution or a missing start fact. '
+        'Judge confidence in this bounded scheduling choice under those preferences; '
+        'do not assume answers to the separate candidate questions.'
+    )
+
+
 def _qualified_supplied_research(plan, facts, row):
     proof = row.get('supplied_research_start_evidence')
     if not isinstance(proof, dict) or len(plan.steps) != 1:
@@ -1610,7 +1667,8 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                                  "Do not assume other questions' answers are available."
                                  + choice_priority_hint + bill_craft_hint
                                  + craft_choice_hint + utility_lab_choice_hint
-                                 + outpost_kit_choice_hint + research_trigger_choice_hint),
+                                 + outpost_kit_choice_hint + research_trigger_choice_hint
+                                 + _scheduling_tie_break_hint(context)),
                 "criteria": {**{p.id: p.description for p in selected},
                              "observe": "Gather another observation without mutating the factory"},
             }
