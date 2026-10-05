@@ -2990,6 +2990,23 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     'start evidence. Missing, stale, mismatched or contrary current ownership, inputs, '
                     'fuel or recipe dependencies means unsupported. Later output/full completion remain '
                     'unverified; this judgment waives no native checks.')
+            from .planning.craft_demand import qualified_craft_demand
+            if qualified_craft_demand(plan, facts, row):
+                questions[plan.id + '/useful_progress']['instructions'] = (
+                    f'For {pointer}, inspect craft_recipe_demand and the independent '
+                    'facts.factory.recipe_dependency_catalog. Native recipe quantities, '
+                    'bounded batches and current carried inventory establish the selected '
+                    'branch demand and the paid craft inputs. Would the expected product '
+                    'advance remaining_product_deficit IF its native receipt and fresh '
+                    'postcondition verify? For an intermediate, recipe_dependency_chain '
+                    'connects the product to this row local_target; for a direct target '
+                    'the current inventory shortfall supplies that demand. This covers '
+                    'only the selected branch, not the entire target bill. Allocation-ledger '
+                    'remaining is not carried inventory. Lifetime produced counts are not '
+                    'current carried stock. Missing, stale, mismatched or contrary current '
+                    'recipe, inventory or actor facts mean unsupported. Future receipt and '
+                    'downstream output absence alone are not contrary start evidence. '
+                    'Judge independently; execution and completion still require native checks.')
             if _qualified_output_pickup_chain(plan, facts, row):
                 questions[plan.id + '/useful_progress']['instructions'] = (
                     f'For {pointer}, read output_pickup_start_evidence, its '

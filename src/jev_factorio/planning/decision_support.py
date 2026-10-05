@@ -3730,6 +3730,10 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
         service_output_start = _paid_service_output_start_evidence(snapshot, catalog, plan)
         if service_output_start is not None:
             result[plan.id]['paid_service_output_start_evidence'] = service_output_start
+        from .craft_demand import craft_demand
+        current_craft_demand = craft_demand(snapshot, catalog, plan)
+        if current_craft_demand is not None:
+            result[plan.id]['craft_recipe_demand'] = current_craft_demand
         if bootstrap_pickup_start is not None:
             result[plan.id]['bootstrap_output_pickup_start_evidence'] = bootstrap_pickup_start
         construction = machine_construction_prerequisite(
