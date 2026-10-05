@@ -36,6 +36,8 @@ def _attempt_counts(records: list[dict]) -> dict:
             raise ValueError("Unsupported evaluation schema")
         if version == 1:
             legacy = True
+            if record.get("background_attempt") is not None:
+                raise ValueError("Legacy evaluation schema has unsupported background attempt")
             continue
         if "attempt" not in record or not isinstance(record.get("attempt_outcomes"), list):
             raise ValueError("Missing version 2 attempt evidence")
@@ -44,6 +46,12 @@ def _attempt_counts(records: list[dict]) -> dict:
         evidence = [(a, True) for a in record["attempt_outcomes"]]
         if record["attempt"] is not None:
             evidence.append((record["attempt"], False))
+        background_attempt = record.get("background_attempt")
+        if background_attempt is not None:
+            background_schema = record.get("background_schema")
+            if type(background_schema) is not int or background_schema not in {2, 3}:
+                raise ValueError("Unsupported background attempt schema")
+            evidence.append((background_attempt, False))
         for attempt, complete in evidence:
             validate_attempt(attempt, finished=complete)
             key = attempt["id"]
@@ -78,15 +86,45 @@ def _attempt_counts(records: list[dict]) -> dict:
 
 
 def _production_delta(records: list[dict]) -> dict | None:
-    before = records[0].get("state", {}).get("factory", {}).get("produced")
-    after = records[-1].get("after_state", {}).get("factory", {}).get("produced")
-    if not isinstance(before, dict) or not isinstance(after, dict):
+    """Return an endpoint delta only when every captured counter snapshot is usable.
+
+    Missing maps make the measurement unknown. Missing item keys in an available
+    sparse map mean zero, and malformed counter values are rejected.
+    """
+    def counters(record: dict, field: str) -> dict | None:
+        state = record.get(field)
+        factory = state.get("factory") if isinstance(state, dict) else None
+        if not isinstance(factory, dict) or "produced" not in factory or factory["produced"] is None:
+            return None
+        produced = factory["produced"]
+        if not isinstance(produced, dict):
+            raise ValueError("Invalid production counter map")
+        for value in produced.values():
+            if type(value) not in {int, float}:
+                raise ValueError("Invalid production counter")
+            try:
+                valid = math.isfinite(value) and value >= 0
+            except OverflowError:
+                valid = False
+            if not valid:
+                raise ValueError("Invalid production counter")
+        return produced
+
+    snapshots, missing_snapshot = [], False
+    for record in records:
+        before = counters(record, "state")
+        after = counters(record, "after_state")
+        snapshots.extend((before, after))
+        missing_snapshot |= before is None or after is None
+    if missing_snapshot:
         return None
-    if any(type(value) not in {int, float} or not math.isfinite(value) or value < 0
-           for value in [*before.values(), *after.values()]):
-        raise ValueError("Invalid production counter")
+    for before, after in zip(snapshots, snapshots[1:]):
+        keys = before.keys() | after.keys()
+        if any(after.get(key, 0) < before.get(key, 0) for key in keys):
+            return None
+    before, after = snapshots[0], snapshots[-1]
     delta = {key: after.get(key, 0) - before.get(key, 0) for key in before.keys() | after.keys()}
-    return None if any(value < 0 for value in delta.values()) else delta
+    return delta
 
 
 def _summarize_legacy(path: Path) -> dict:
