@@ -297,10 +297,13 @@ def test_persistent_idle_bound_effective_value_is_forwarded_and_recorded(
     from jev_factorio.jev_client import MockJevClient
 
     checkpoint = tmp_path / "checkpoint.json"
-    checkpoint.write_text(json.dumps({
-        "session_id": "fle:idle-bound-config-test", "status": "running",
-        "reason": None,
-    }), encoding="utf-8")
+    checkpoint_memory = CampaignMemory(
+        "fle:idle-bound-config-test", "rocket_launch", status="running")
+    checkpoint_memory.save(checkpoint)
+    checkpoint_capture = checkpoint.read_bytes()
+    restored = CampaignMemory.load(
+        checkpoint, checkpoint_memory.session_id, checkpoint_memory.target)
+    assert restored == checkpoint_memory
     monkeypatch.setattr(provenance, "gameplay_context", lambda: {
         "code_revision": {"commit": "a" * 40, "source_sha256": "b" * 64}})
     monkeypatch.setattr(operational_safety, "storage_ready", lambda _roots: True)
@@ -310,6 +313,8 @@ def test_persistent_idle_bound_effective_value_is_forwarded_and_recorded(
     captured = {}
 
     class Loop:
+        memory_type = CampaignMemory
+
         def __init__(self, _backend, **options):
             captured["controller_idle_limit"] = options.get("persistent_idle_observations")
             self.jev = options.get("jev")
@@ -326,6 +331,7 @@ def test_persistent_idle_bound_effective_value_is_forwarded_and_recorded(
 
     assert captured["run"] == {"until_complete": True}
     assert captured["controller_idle_limit"] == expected
+    assert checkpoint.read_bytes() == checkpoint_capture
     manifest = json.loads((run_dir / "manifest.json").read_bytes())
     assert manifest["configuration"]["persist_recoverable_blocks"] is True
     assert manifest["configuration"]["persistent_idle_observations"] == expected
@@ -438,11 +444,17 @@ def test_reconcile_only_requires_full_native_resume_preflight(monkeypatch, argum
 
 
 def test_reconcile_only_cli_observes_without_running_controller(tmp_path, monkeypatch, capsys):
-    from jev_factorio.background import BackgroundWorkLoop
+    from jev_factorio.background import BackgroundMemory, BackgroundWorkLoop
     from jev_factorio import operational_safety
 
     checkpoint = tmp_path / "checkpoint.json"
-    checkpoint.write_text(json.dumps({"session_id": "synthetic-preflight-only"}))
+    checkpoint_memory = BackgroundMemory(
+        "fle:reconcile-only-test", "rocket_launch", status="running")
+    checkpoint_memory.save(checkpoint)
+    checkpoint_capture = checkpoint.read_bytes()
+    restored = BackgroundMemory.load(
+        checkpoint, checkpoint_memory.session_id, checkpoint_memory.target)
+    assert restored == checkpoint_memory
     calls = []
 
     def initialize(self, backend, jev=None, **options):
@@ -463,6 +475,7 @@ def test_reconcile_only_cli_observes_without_running_controller(tmp_path, monkey
            "--factory-scheduling", "ready-work", "--background-work", "--reconcile-only",
            "--run-dir", tmp_path / "run")
     assert [call[0] for call in calls] == ["initialize", "reconcile"]
+    assert checkpoint.read_bytes() == checkpoint_capture
     printed = json.loads(capsys.readouterr().out.strip())
     assert printed == {"reconciliation": {
         "status": "running", "tick": 42, "background_state": "verified_completed",
