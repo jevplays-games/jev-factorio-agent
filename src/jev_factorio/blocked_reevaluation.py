@@ -54,7 +54,12 @@ _CONTRACT_PATHS = (
     "src/jev_factorio/planning/solid_routes.py",
     "src/jev_factorio/planning/successors.py",
 )
-_BLOCKED_REASONS = {"Candidate evidence insufficient", "low choice confidence"}
+_BLOCKED_REASONS = {
+    "Candidate evidence insufficient", "low choice confidence",
+    # A reviewed planner contract change may repair this exact idle failure.
+    # This does not make it eligible for unchanged automatic polling/retries.
+    "Current native boiler identity and coal stock are required",
+}
 
 
 def _git(root: Path, *args: str) -> bytes:

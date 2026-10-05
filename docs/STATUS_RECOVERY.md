@@ -2,6 +2,8 @@
 
 For the replacement October 4 Train campaign, start with the concrete
 [continuous-runtime operations runbook](CONTINUOUS_RUNTIME_OPERATIONS.md).
+For an empty-boiler stop after utility connections, use the
+[sparse inventory and completed-connector recovery note](EMPTY_BOILER_RESUME_20261005.md).
 
 A status question about an expected ongoing campaign includes authorization to
 repair an unexpected stop. Complete diagnosis, safe recovery, and verification

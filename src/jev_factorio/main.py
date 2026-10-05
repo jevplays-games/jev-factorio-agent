@@ -27,7 +27,7 @@ class _ReconcileOnlyDecisionClient:
 
 
 def make_backend(name: str, resume: bool = False, adopt_session: bool = False,
-                 setup_timing=None, connector_witness_path=None):
+                 setup_timing=None, connector_witness_path=None, connector_binding=None):
     if name == "mock":
         return MockBackend()
     if name == "play_api":
@@ -37,13 +37,15 @@ def make_backend(name: str, resume: bool = False, adopt_session: bool = False,
     if name == "fle":
         from .backends.fle import FleBackend
         b = FleBackend()
+        attachment = ({'connector_binding': connector_binding}
+                      if connector_binding is not None else {})
         if setup_timing is None:
             b.start(resume=resume, adopt_session=adopt_session,
-                    connector_witness_path=connector_witness_path)
+                    connector_witness_path=connector_witness_path, **attachment)
         else:
             b.start(resume=resume, adopt_session=adopt_session,
                     setup_timing=setup_timing,
-                    connector_witness_path=connector_witness_path)
+                    connector_witness_path=connector_witness_path, **attachment)
         return b
     raise SystemExit(f"unknown backend: {name}")
 
@@ -728,15 +730,20 @@ def cli() -> None:
                     p.error("Checkpoint changed after composed preflight; backend not started")
             connector_witness = (Path(args.checkpoint).with_name(
                 'native-connector-observer-v1.witness.jsonl') if args.checkpoint else None)
+            attachment = {}
+            if args.backend == 'fle' and selected_resume_checkpoint_capture is not None:
+                binding = json.loads(selected_resume_checkpoint_capture).get('connector_ownership')
+                if isinstance(binding, dict) and binding.get('routes'):
+                    attachment['connector_binding'] = binding
             if setup_timing:
                 backend = make_backend(args.backend, resume=args.resume,
                                        adopt_session=args.adopt_session,
                                        setup_timing=setup_timing,
-                                       connector_witness_path=connector_witness)
+                                       connector_witness_path=connector_witness, **attachment)
             else:
                 backend = make_backend(args.backend, resume=args.resume,
                                        adopt_session=args.adopt_session,
-                                       connector_witness_path=connector_witness)
+                                       connector_witness_path=connector_witness, **attachment)
             if setup_timing:
                 setup_timing.mark('backend_ready')
             if args.backend == "fle" and args.profile_observations:

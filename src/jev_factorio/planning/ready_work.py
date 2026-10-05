@@ -50,7 +50,9 @@ class ReadyWorkPlanner(EconomicProduction, FactoryPlanner):
         machine = self.entities.get(role, {})
         if role == 'utility:boiler' and self.snapshot.world_kind == 'fle':
             fuel = machine.get('fuel')
-            coal = fuel.get('coal') if isinstance(fuel, dict) else None
+            # Native inventory maps omit item names whose count is zero.
+            # An absent map still means unavailable telemetry.
+            coal = fuel.get('coal', 0) if isinstance(fuel, dict) else None
             unit = machine.get('unit_number')
             if (machine.get('name') != 'boiler' or type(unit) is not int or unit <= 0
                     or type(coal) is not int or coal < 0):

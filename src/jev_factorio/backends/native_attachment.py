@@ -496,6 +496,7 @@ def prepare_install_command(script: str, attachment=None) -> str:
 
 
 def readback(client, *, receipt_path=None, connector_witness_path=None,
+             checkpoint_binding=None,
              allow_legacy_manual_cycle_repair=False,
              allow_unqualified_connector_bridge=False):
     result = decode_native(client.send_command('/sc ' + PROBE))
@@ -647,7 +648,8 @@ def readback(client, *, receipt_path=None, connector_witness_path=None,
                 raise RuntimeError('Native Lua source differs from installed manifest')
         if supported_direct:
             from .native_current_attachment import qualify_current_connector_snapshot
-            return qualify_current_connector_snapshot(client, result)
+            return qualify_current_connector_snapshot(
+                client, result, checkpoint_binding=checkpoint_binding)
         if (result['modules']['connector_ownership']
                 and not (profile == LEGACY_MANUAL_CYCLE_PROFILE
                          and allow_legacy_manual_cycle_repair)
