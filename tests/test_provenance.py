@@ -93,6 +93,12 @@ def test_ignored_secrets_and_untracked_runtime_do_not_change_revision(repo):
     assert source_revision(root, exclude_untracked=(runtime,)) != before
 
 
+def test_broad_runtime_exclusions_fail_closed(repo):
+    root, _ = repo
+    assert source_revision(root, exclude_untracked=(root,)) is None
+    assert source_revision(root, exclude_untracked_prefixes=(root,)) is None
+
+
 def test_symlink_targets_are_not_read(repo):
     root, _ = repo
     (root / "link").symlink_to("/a/nonexistent/secret")

@@ -247,6 +247,16 @@ def _feature_snapshot(state: dict):
     return SimpleNamespace(tick=state['tick'], session_id=state['session_id'], factory=state['factory'])
 
 
+def _recorded_input_schema_failure(row: dict, snapshot, label: str) -> bool:
+    """Retain only the controller's exact uncertain protocol-0 diagnostic."""
+    data = snapshot.factory.get('input_routes')
+    return (label == 'after_state' and row.get('status') == 'uncertain'
+            and row.get('input_validation_failure') == {
+                'stage': 'route_schema', 'exception_class': 'ValueError'}
+            and isinstance(data, dict) and set(data) == {'protocol'}
+            and type(data['protocol']) is int and data['protocol'] == 0)
+
+
 def _native_output_rows(snapshot, successor_enabled: bool) -> dict:
     rows = output_buffer_contract.sources(snapshot)
     allowed = output_buffer_contract.SOURCES | (
@@ -390,8 +400,18 @@ def checked_feature_ownership(initial: dict, final: dict, rows: list[dict],
                     raise ValueError('Disabled output-buffer observation is present')
                 output_rows = {}
             if configuration['furnace_input_belts']:
-                input_rows = input_route_contract.sources(snapshot)
-                production_site_contract.sources(snapshot)
+                try:
+                    input_rows = input_route_contract.sources(snapshot)
+                except ValueError:
+                    if not _recorded_input_schema_failure(row, snapshot, label):
+                        raise
+                    # InputRouteMixin preserves the raw rejected observation,
+                    # marks the record uncertain, and emits this exact bounded
+                    # diagnostic. Keep that incomplete evidence in the capture;
+                    # it cannot establish or advance any paid owner.
+                    input_rows = {}
+                if input_rows or not _recorded_input_schema_failure(row, snapshot, label):
+                    production_site_contract.sources(snapshot)
                 for route in input_rows.values():
                     if not input_route_contract.current(route, snapshot):
                         raise ValueError('Input-route native entity differs from its receipt')
@@ -509,10 +529,18 @@ def checked_feature_ownership(initial: dict, final: dict, rows: list[dict],
         if canonical(final.get('output_commitments')) != canonical(expected):
             raise ValueError('Final checkpoint output owners differ from final native observation')
     if configuration['furnace_input_belts']:
+        final_row = rows[-1]
+        final_snapshot = _feature_snapshot(final_row['after_state'])
+        try:
+            final_input_rows = input_route_contract.sources(final_snapshot)
+        except ValueError:
+            if (not _recorded_input_schema_failure(final_row, final_snapshot, 'after_state')
+                    or retained_input or final.get('input_commitments')):
+                raise
+            final_input_rows = {}
         expected = {source: {'layout': route['layout'], 'source_unit': route['source_unit'],
                              'parts': deepcopy(route['parts'])}
-                    for source, route in input_route_contract.sources(
-                        _feature_snapshot(rows[-1]['after_state'])).items()
+                    for source, route in final_input_rows.items()
                     if route['state'] != 'proposed'}
         if canonical(final.get('input_commitments')) != canonical(expected):
             raise ValueError('Final checkpoint input owners differ from final native observation')

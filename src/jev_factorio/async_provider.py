@@ -1,9 +1,10 @@
 """Bounded, explicit async HTTP transport for one logical Jev provider client.
 
-This module owns only in-memory request admission and an HTTPX connection pool.
-It does not retry, persist request identity, cancel remote work, or mutate a
-game. Callers must treat a transport-entered cancellation/timeout as an
-ambiguous provider outcome and keep their existing durable gates.
+Ordinary calls use only in-memory admission and the HTTPX connection pool. An
+explicit provider decision lease adds durable pre-send and validated-response
+hooks without changing default client/controller factories. Neither path retries,
+cancels remote work, or mutates a game. A transport-entered cancellation/timeout
+remains ambiguous unless the lease already contains the exact validated response.
 """
 from __future__ import annotations
 
@@ -350,13 +351,18 @@ class AsyncProviderClient:
 
     async def post_json(self, *, identity: RequestIdentity, url: str,
                         headers: Mapping[str, str], payload: dict[str, Any],
-                        deadline: float | None = None) -> tuple[dict[str, Any], str]:
+                        deadline: float | None = None, decision_lease=None,
+                        response_builder=None):
         if not isinstance(identity, RequestIdentity):
             raise TypeError("identity must be a RequestIdentity")
         request_payload = snapshot_json(payload)
         if not isinstance(request_payload, dict):
             raise ValueError("provider request payload must be a JSON object")
         request_sha256 = request_payload_sha256(request_payload)
+        if decision_lease is not None:
+            if response_builder is None:
+                raise TypeError("A WAL-bound request requires an adapter response validator")
+            decision_lease.assert_transport_payload(identity, request_payload, request_sha256)
         if deadline is None:
             deadline = time.monotonic() + self.timeout
         if (not isinstance(deadline, (int, float)) or isinstance(deadline, bool)
@@ -370,11 +376,27 @@ class AsyncProviderClient:
             try:
                 await self._acquire(identity, float(deadline))
             except asyncio.CancelledError as error:
-                raise AsyncProviderCancelled(identity, NOT_SENT) from error
+                failure = AsyncProviderCancelled(identity, NOT_SENT)
+                if decision_lease is not None:
+                    decision_lease.record_failure(failure, NOT_SENT)
+                raise failure from error
+            except AsyncProviderLocalError as error:
+                if decision_lease is not None:
+                    decision_lease.record_failure(error, NOT_SENT)
+                raise
             acquired = True
             remaining = float(deadline) - time.monotonic()
             if remaining <= 0:
-                raise AsyncProviderDeadlineExceeded("provider request deadline expired", identity)
+                failure = AsyncProviderDeadlineExceeded(
+                    "provider request deadline expired", identity)
+                if decision_lease is not None:
+                    decision_lease.record_failure(failure, NOT_SENT)
+                raise failure
+
+            # The WAL write is the last synchronous operation before HTTPX
+            # entry. If it fails, the provider coroutine is never constructed.
+            if decision_lease is not None:
+                decision_lease.mark_may_have_been_sent()
 
             try:
                 # Entering HTTPX is the conservative ambiguity boundary. HTTPX
@@ -386,31 +408,69 @@ class AsyncProviderClient:
                     timeout=remaining,
                 )
             except asyncio.CancelledError as error:
-                raise AsyncProviderCancelled(identity, MAY_HAVE_BEEN_SENT) from error
+                failure = AsyncProviderCancelled(identity, MAY_HAVE_BEEN_SENT)
+                if decision_lease is not None:
+                    decision_lease.record_failure(failure, MAY_HAVE_BEEN_SENT)
+                raise failure from error
             # Once HTTPX is entered, even a connect/pool failure can happen
             # after a redirect response from an earlier POST hop. Without
             # tracking each redirect response boundary, classify every
             # transport exception conservatively as possibly sent.
             except httpx.TimeoutException as error:
-                raise AsyncProviderTimeout(identity, MAY_HAVE_BEEN_SENT) from error
+                failure = AsyncProviderTimeout(identity, MAY_HAVE_BEEN_SENT)
+                if decision_lease is not None:
+                    decision_lease.record_failure(failure, MAY_HAVE_BEEN_SENT)
+                raise failure from error
             except asyncio.TimeoutError as error:
-                raise AsyncProviderTimeout(identity, MAY_HAVE_BEEN_SENT) from error
+                failure = AsyncProviderTimeout(identity, MAY_HAVE_BEEN_SENT)
+                if decision_lease is not None:
+                    decision_lease.record_failure(failure, MAY_HAVE_BEEN_SENT)
+                raise failure from error
             except httpx.ConnectError as error:
-                raise AsyncProviderConnectionError(identity, MAY_HAVE_BEEN_SENT) from error
+                failure = AsyncProviderConnectionError(identity, MAY_HAVE_BEEN_SENT)
+                if decision_lease is not None:
+                    decision_lease.record_failure(failure, MAY_HAVE_BEEN_SENT)
+                raise failure from error
             except httpx.TransportError as error:
-                raise AsyncProviderConnectionError(identity, MAY_HAVE_BEEN_SENT) from error
+                failure = AsyncProviderConnectionError(identity, MAY_HAVE_BEEN_SENT)
+                if decision_lease is not None:
+                    decision_lease.record_failure(failure, MAY_HAVE_BEEN_SENT)
+                raise failure from error
 
             delivery_phase = RESPONSE_RECEIVED
             if time.monotonic() > float(deadline):
-                raise AsyncProviderTimeout(identity, MAY_HAVE_BEEN_SENT)
+                failure = AsyncProviderTimeout(identity, MAY_HAVE_BEEN_SENT)
+                if decision_lease is not None:
+                    decision_lease.record_failure(failure, MAY_HAVE_BEEN_SENT)
+                raise failure
             if response.is_error:
-                raise AsyncProviderHTTPError(response.status_code, response.headers, identity)
+                failure = AsyncProviderHTTPError(
+                    response.status_code, response.headers, identity)
+                if decision_lease is not None:
+                    decision_lease.record_failure(failure, RESPONSE_RECEIVED)
+                raise failure
             try:
                 body = response.json()
             except (ValueError, TypeError) as error:
-                raise AsyncProviderPayloadError(identity) from error
+                failure = AsyncProviderPayloadError(identity)
+                if decision_lease is not None:
+                    decision_lease.record_failure(failure, RESPONSE_RECEIVED)
+                raise failure from error
             if not isinstance(body, dict):
-                raise AsyncProviderPayloadError(identity)
+                failure = AsyncProviderPayloadError(identity)
+                if decision_lease is not None:
+                    decision_lease.record_failure(failure, RESPONSE_RECEIVED)
+                raise failure
+            if decision_lease is not None:
+                try:
+                    result = response_builder(body, request_sha256)
+                except BaseException as error:
+                    decision_lease.record_failure(error, RESPONSE_RECEIVED)
+                    raise
+                # Persist validated immutable answers before _release can
+                # raise deferred cancellation and before health clears flight.
+                decision_lease.save_response(result)
+                return result
             return body, request_sha256
         except BaseException:
             operation_failed = True

@@ -1,5 +1,6 @@
 """Provenance and crash-boundary tests; no live game, model, or GitHub calls."""
 import json
+import hashlib
 from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
@@ -193,7 +194,13 @@ def run_repair(instance, monkeypatch, kind, *, accepted=True, after=A, returncod
     def launch(command, phase, prompt=None):
         instance.process = FakeProcess(returncode)
     monkeypatch.setattr(instance, "launch", launch)
-    monkeypatch.setattr(instance, "validate_repair", lambda *args: accepted)
+    def validate(*args):
+        if accepted:
+            instance._validated_repair_source = after if kind == "code" else None
+            instance._validated_repair_checkpoint_digest = hashlib.sha256(
+                instance.config.checkpoint.read_bytes()).hexdigest()
+        return accepted
+    monkeypatch.setattr(instance, "validate_repair", validate)
     monkeypatch.setattr(instance, "snapshot_revision", lambda: after)
     answer = instance.repair("blocked")
     return answer, before, events(instance)[-1]
@@ -214,9 +221,11 @@ def test_operational_repair_keeps_segment_and_is_explicit(supervisor, monkeypatc
 
 def test_code_repair_rotates_segment_after_verified_change(supervisor, monkeypatch):
     answer, before, row = run_repair(supervisor, monkeypatch, "code", after=B)
-    assert answer and row["intervention_type"] == "code_repair"
+    assert answer and row["event"] == "code_revision_changed"
+    assert row["repair_finished"] is True and row["intervention_type"] == "code_repair"
     assert row["segment_id"] == "seg-000002"
-    assert any(r["event"] == "code_revision_changed" and r["accepted"] for r in events(supervisor))
+    assert sum(r.get("accepted") is True and r.get("intervention_type") == "code_repair"
+               for r in events(supervisor)) == 1
 
 
 def test_rejected_repair_changes_are_still_audited(supervisor, monkeypatch):
