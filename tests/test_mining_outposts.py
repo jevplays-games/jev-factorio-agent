@@ -1218,25 +1218,40 @@ def test_restart_command_preserves_outpost_flag_and_original_deadline(tmp_path, 
     from jev_factorio.supervisor import Supervisor, SupervisorConfig
     from test_supervisor import FakeClock, FakeProcess
     clock = FakeClock()
+    state, data = state_fixture()
+    backend = Backend(state, data)
+    producer = make_loop(backend)
     config = SupervisorConfig(state_dir=tmp_path/'supervisor', checkpoint=tmp_path/'state.json',
         session_id='fresh', started_at=1000, repair_command=['unused'], cwd=tmp_path,
         factory_scheduling='ready-work', furnace_output_buffers=True, furnace_input_belts=True,
         mining_outposts=True)
     config.state_dir.mkdir()
-    config.checkpoint.write_text(json.dumps({'session_id': 'fresh', 'target': 'rocket_launch',
-        'status': 'running', 'pending': None}))
+    memory = producer.memory_type('fresh', 'rocket_launch', active_goal='rocket_launch',
+                                  last_tick=state.tick)
+    memory.save(config.checkpoint)
+    original_checkpoint = config.checkpoint.read_bytes()
+    composed = load_checkpoint(config.checkpoint, 'fresh', 'rocket_launch')
+    assert (composed.output_buffers_schema, composed.input_routes_schema,
+            composed.outposts_schema) == (1, 1, 1)
+    assert composed.output_commitments == {} and composed.input_commitments == {}
+    assert composed.outpost_commitments == {}
     instance = Supervisor(config, clock=clock, sleep=clock.sleep, popen=lambda *a, **k: FakeProcess())
     monkeypatch.setattr(instance, 'source_identity', lambda: ('head', 'source'))
     instance.initialize()
+    assert config.checkpoint.read_bytes() == original_checkpoint
+    assert backend.calls == []
     cutoff = instance.state['cutoff']
     for _ in range(2):
         command = instance.gameplay_command()
         assert '--mining-outposts' in command and '--resume' in command and '--resume-controller' in command
         instance.initialize()
         assert instance.state['cutoff'] == cutoff
+        assert config.checkpoint.read_bytes() == original_checkpoint
+        assert backend.calls == []
     config.mining_outposts = False
-    with pytest.raises(ValueError, match='configuration cannot be changed'):
+    with pytest.raises(ValueError, match='configuration cannot be changed|launch composition preflight'):
         instance.initialize()
+    assert backend.calls == []
 
 
 def test_supervisor_requires_outpost_capability_dependencies(tmp_path):
