@@ -72,6 +72,16 @@ def atomic_json(path: Path, value: dict) -> None:
         os.close(directory)
 
 
+def _validate_runtime_exclusions(cwd: Path, state_dir: Path, checkpoint: Path) -> tuple[Path, ...]:
+    """Require provenance exclusions to be strict descendants of the checkout."""
+    root = cwd.resolve()
+    resolved = (root, state_dir.resolve(), checkpoint.resolve())
+    for exclusion in resolved[1:]:
+        if exclusion == root or root.is_relative_to(exclusion):
+            raise ValueError("Supervisor runtime exclusion must be narrower than the checkout")
+    return resolved
+
+
 @dataclass
 class SupervisorConfig:
     state_dir: Path
@@ -151,6 +161,12 @@ class SupervisorConfig:
             isinstance(part, str) and part for part in self.repair_command
         ):
             raise ValueError("A session ID and nonempty repair argv are required")
+        try:
+            _validate_runtime_exclusions(self.cwd, self.state_dir, self.checkpoint)
+        except (OSError, RuntimeError, ValueError) as error:
+            if isinstance(error, ValueError) and "runtime exclusion" in str(error):
+                raise
+            raise ValueError("Supervisor runtime exclusion paths cannot be resolved safely") from error
 
 
 class Supervisor:
@@ -166,6 +182,9 @@ class Supervisor:
         self.output = None
         self.stop_requested = False
         self.audit_failed = False
+        self._verified_code_revision: dict | None = None
+        self._validated_repair_source: dict | None = None
+        self._validated_repair_checkpoint_digest: str | None = None
 
     @property
     def state_path(self) -> Path:
@@ -272,12 +291,23 @@ class Supervisor:
     def snapshot_revision(self, *, manual: bool = False) -> dict | None:
         if self.stop_requested or (not manual and self.remaining() <= 0):
             return None
-        return source_revision(
+        try:
+            exclusions_before = _validate_runtime_exclusions(
+                self.config.cwd, self.config.state_dir, self.config.checkpoint)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        revision = source_revision(
             self.config.cwd, timeout=10 if manual else min(10, self.remaining()),
             exclude_untracked=(self.config.state_dir, self.config.checkpoint),
             exclude_untracked_prefixes=(self.config.checkpoint.with_name(
                 self.config.checkpoint.name + "."),),
         )
+        try:
+            exclusions_after = _validate_runtime_exclusions(
+                self.config.cwd, self.config.state_dir, self.config.checkpoint)
+        except (OSError, RuntimeError, ValueError):
+            return None
+        return revision if exclusions_after == exclusions_before else None
 
     def record_revision(self, revision: dict | None, cause: str, **fields) -> bool:
         before = self.state.get("code_revision")
@@ -375,8 +405,23 @@ class Supervisor:
         atomic_json(self.state_path, self.state)
 
     def checkpoint(self) -> dict:
-        with self.config.checkpoint.open() as stream:
-            checkpoint = json.load(stream)
+        path = self.config.checkpoint
+
+        def identity(stat_result):
+            return (stat_result.st_dev, stat_result.st_ino, stat_result.st_size,
+                    stat_result.st_mtime_ns, stat_result.st_ctime_ns, stat_result.st_mode)
+
+        path_before = path.stat()
+        with path.open("rb") as stream:
+            descriptor_before = os.fstat(stream.fileno())
+            raw = stream.read()
+            descriptor_after = os.fstat(stream.fileno())
+        path_after = path.stat()
+        if (identity(path_before) != identity(descriptor_before)
+                or identity(descriptor_before) != identity(descriptor_after)
+                or identity(descriptor_after) != identity(path_after)):
+            raise ValueError("Checkpoint changed during read")
+        checkpoint = json.loads(raw.decode("utf-8"))
         if not isinstance(checkpoint, dict):
             raise ValueError("Checkpoint must be a JSON object")
         if checkpoint.get("session_id") != self.config.session_id:
@@ -385,6 +430,7 @@ class Supervisor:
             raise ValueError("Checkpoint target must be rocket_launch")
         if checkpoint.get("status") not in {"running", "blocked", "uncertain", "completed"}:
             raise ValueError("Checkpoint status is invalid")
+        self._last_checkpoint_digest = hashlib.sha256(raw).hexdigest()
         return checkpoint
 
     @staticmethod
@@ -1482,7 +1528,18 @@ Only report repaired when every acceptance requirement is verified.
         return True
 
     def verify_code(self, result: dict) -> bool:
+        # This token is private, short-lived evidence for validate_repair. A
+        # failed or second verifier invocation must never reuse an older pass.
+        self._verified_code_revision = None
         commit = result["commit"]
+        # Small policy-only test doubles intentionally have no checkout path;
+        # a real SupervisorConfig always does and must prove a complete source
+        # fingerprint at both sides of the hosted/test gate.
+        source_binding = (isinstance(self.config, SupervisorConfig)
+                          or getattr(self.config, "cwd", None) is not None)
+        source_before = self.snapshot_revision(manual=True) if source_binding else None
+        if source_binding and (source_before is None or source_before.get("commit") != commit):
+            return False
         code, head = self.capture(["git", "rev-parse", "HEAD"])
         if code != 0 or head != commit:
             return False
@@ -1577,10 +1634,20 @@ Only report repaired when every acceptance requirement is verified.
             return False
         status_code, worktree = self.capture(["git", "status", "--porcelain"])
         head_code, head = self.capture(["git", "rev-parse", "HEAD"])
-        return status_code == head_code == 0 and not worktree and head == commit
+        if status_code != head_code or status_code != 0 or worktree or head != commit:
+            return False
+        if source_binding:
+            source_after = self.snapshot_revision(manual=True)
+            if source_after is None or source_after != source_before:
+                return False
+            self._verified_code_revision = source_after
+        return True
 
     def validate_repair(self, path: Path, previous: dict,
                         source_before: tuple[str, str] | None = None) -> bool:
+        self._validated_repair_source = None
+        self._validated_repair_checkpoint_digest = None
+        self._verified_code_revision = None
         try:
             result = json.loads(path.read_text())
             expected = {"run_id": self.state.get("run_id"),
@@ -1600,6 +1667,7 @@ Only report repaired when every acceptance requirement is verified.
             ):
                 return False
             current = self.checkpoint()
+            checkpoint_digest = self._last_checkpoint_digest
             if current["status"] not in {"running", "completed"}:
                 return False
             if current["status"] == "completed" and self.has_unresolved_work(current):
@@ -1628,9 +1696,12 @@ Only report repaired when every acceptance requirement is verified.
                    for key, count in previous.get("failures", {}).items()):
                 return False
             if result.get("kind") == "operational":
-                return (result.get("operational_verified") is True
-                        and source_before is not None
-                        and self.source_identity() == tuple(source_before))
+                valid = (result.get("operational_verified") is True
+                         and source_before is not None
+                         and self.source_identity() == tuple(source_before))
+                if valid:
+                    self._validated_repair_checkpoint_digest = checkpoint_digest
+                return valid
             if result.get("kind") != "code" or not all(result.get(key) is True for key in (
                 "tests_passed", "checks_passed", "exact_head_reviewed", "merged", "remotes_synced"
             )):
@@ -1638,7 +1709,14 @@ Only report repaired when every acceptance requirement is verified.
             commit = result.get("commit", "")
             if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
                 return False
-            return self.verify_code(result)
+            if not self.verify_code(result):
+                return False
+            verified_source = self._verified_code_revision
+            if not isinstance(verified_source, dict) or verified_source.get("commit") != commit:
+                return False
+            self._validated_repair_source = dict(verified_source)
+            self._validated_repair_checkpoint_digest = checkpoint_digest
+            return True
         except (OSError, ValueError, TypeError, AttributeError, KeyError):
             return False
 
@@ -1726,6 +1804,8 @@ Only report repaired when every acceptance requirement is verified.
             raw_result, report = b"", {}
         quota_blocked = repair_quota_exhausted(repair_log, repair_offset)
         validation_started_at = self.clock()
+        self._validated_repair_source = None
+        self._validated_repair_checkpoint_digest = None
         accepted = (not quota_blocked and returncode == 0
                     and self.validate_repair(result, previous, source_before))
         validation_seconds = self.clock() - validation_started_at
@@ -1736,6 +1816,8 @@ Only report repaired when every acceptance requirement is verified.
                 accepted = result.read_bytes() == raw_result
             except OSError:
                 accepted = False
+        validated_source = self._validated_repair_source
+        validated_checkpoint_digest = self._validated_repair_checkpoint_digest
         revision = self.snapshot_revision()
         declared = report.get("kind")
         if not isinstance(declared, str) or declared not in {"code", "operational"}:
@@ -1743,30 +1825,86 @@ Only report repaired when every acceptance requirement is verified.
         if (accepted and declared == "operational" and incident.get("code_revision") is not None
                 and revision is not None and incident["code_revision"] != revision):
             accepted = False
-        if accepted and declared == "code" and (revision is None or revision["commit"] != report.get("commit")):
-            accepted = False
+        if accepted and declared == "code":
+            accepted = (revision is not None and validated_source is not None
+                        and revision == validated_source
+                        and revision.get("commit") == report.get("commit"))
+        final_checkpoint = None
+        if accepted:
+            try:
+                final_checkpoint = self.checkpoint()
+                accepted = (validated_checkpoint_digest is not None
+                            and self._last_checkpoint_digest == validated_checkpoint_digest)
+                if accepted and declared == "code":
+                    # The first final checkpoint read can overlap a source
+                    # change, so take the validated source fingerprint again
+                    # after that read. Then read the checkpoint once more: a
+                    # replacement during source hashing must also invalidate
+                    # the pair of witnesses before attribution is committed.
+                    final_revision = self.snapshot_revision()
+                    revision = final_revision
+                    accepted = (validated_source is not None
+                                and final_revision == validated_source
+                                and final_revision.get("commit") == report.get("commit"))
+                    if accepted:
+                        final_checkpoint = self.checkpoint()
+                        accepted = (self._last_checkpoint_digest
+                                    == validated_checkpoint_digest)
+            except (OSError, ValueError, TypeError, AttributeError):
+                accepted = False
         accepted = bool(accepted and not self.stop_requested)
         intervention = ("code_repair" if accepted and declared == "code" else
                         "operational_recovery" if accepted else "repair_attempt")
-        if not self.record_revision(revision, "repair_attempt", attempt=attempt,
-                                    incident_id=incident["incident_id"], accepted=accepted,
-                                    actor_type="repair_agent", intervention_type=intervention):
-            return False
         updates = {"repair_attempt_open": False}
         if quota_blocked:
             updates.update(repair_account_blocked=True, phase="blocked")
         if accepted:
             updates.update(repair_required=False, incident=None,
-                           last_valid_checkpoint=self.checkpoint(), phase="ready")
-        durable = self.transition("repair_finished", updates, attempt=attempt,
-            incident_id=incident["incident_id"], returncode=returncode, accepted=accepted,
-            declared_kind=declared, intervention_type=intervention, actor_type="repair_agent",
-            source_before=attempt_source_before, source_after=revision,
-            result_file=result.name, result_sha256=hashlib.sha256(raw_result).hexdigest() if raw_result else None,
-            validation_seconds=validation_seconds,
-            repair_seconds=self.clock() - repair_started_at,
-            repair_account_blocked=quota_blocked,
-            correlation_complete=all(key in report for key in ("run_id", "incident_id", "attempt")))
+                           last_valid_checkpoint=final_checkpoint, phase="ready")
+        result_fields = {
+            "attempt": attempt, "incident_id": incident["incident_id"],
+            "returncode": returncode, "accepted": accepted,
+            "declared_kind": declared, "intervention_type": intervention,
+            "actor_type": "repair_agent", "attempt_source_before": attempt_source_before,
+            "source_before": attempt_source_before, "source_after": revision,
+            "result_file": result.name,
+            "result_sha256": hashlib.sha256(raw_result).hexdigest() if raw_result else None,
+            "validation_seconds": validation_seconds,
+            "repair_seconds": self.clock() - repair_started_at,
+            "repair_account_blocked": quota_blocked,
+            "correlation_complete": all(key in report for key in ("run_id", "incident_id", "attempt")),
+            "repair_finished": True,
+        }
+        if accepted:
+            # Commit revision attribution and closing the repair gate in one
+            # state/outbox transition. A crash or audit fault can therefore
+            # leave either the prior open incident, or one replayable accepted
+            # completion; never an accepted revision beside an open repair.
+            before = self.state.get("code_revision")
+            initialized = self.state.get("revision_initialized", False)
+            revision_changed = not initialized or revision != before
+            if revision_changed:
+                segment = self.state["segment"] + int(initialized)
+                event_kind = ("segment_started" if not initialized else
+                              "code_revision_changed" if before is not None and revision is not None else
+                              "source_provenance_changed")
+                updates.update(segment=segment, segment_id=f"seg-{segment:06d}",
+                               code_revision=revision, revision_initialized=True)
+                result_fields.update(
+                    cause="repair_attempt", source_before=before,
+                    change_known=before is not None and revision is not None and before != revision,
+                    from_segment_id=self.state["segment_id"] if initialized else None,
+                )
+            else:
+                event_kind = "repair_finished"
+                result_fields["source_before"] = attempt_source_before
+            durable = self.transition(event_kind, updates, **result_fields)
+        else:
+            if not self.record_revision(revision, "repair_attempt", attempt=attempt,
+                                        incident_id=incident["incident_id"], accepted=False,
+                                        actor_type="repair_agent", intervention_type="repair_attempt"):
+                return False
+            durable = self.transition("repair_finished", updates, **result_fields)
         return accepted and durable
 
     def run(self, manual_intervention: dict | None = None) -> int:

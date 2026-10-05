@@ -68,10 +68,21 @@ New supervisor events retain the legacy `at` and `event` fields and add:
 - UTC `utc`, process-local `monotonic_ns`, and `writer_pid`. Order by sequence;
   do not subtract monotonic values across machines or reboot boundaries.
 
-Important events are `incident_started`, `repair_required`, `repair_started`,
+Important event names include `incident_started`, `repair_required`, `repair_started`,
 `repair_finished`, `repair_interrupted`, `process_prepared`, `process_started`,
 `segment_started`, `code_revision_changed`, `source_provenance_changed`, and
 `manual_intervention`.
+
+When an accepted code repair also creates a source-revision boundary, one durable
+outbox row records both facts: its `event` is `segment_started`,
+`code_revision_changed`, or `source_provenance_changed`, and it also carries
+`repair_finished: true`, `accepted: true`, and
+`intervention_type: code_repair`. Rejected attempts and accepted repairs without
+a source-revision boundary use `event: repair_finished`. Consumers should use
+the explicit `repair_finished` field to identify completion rather than assume
+that every completion row has `event: repair_finished`. Older journal rows with
+`event: repair_finished` remain valid under their original schema even if they
+do not carry the explicit marker; do not retroactively require it.
 
 An incident ID survives rejected attempts and supervisor restarts. Attempts have
 a persisted counter and reference their incident. A restarted, unfinished attempt
