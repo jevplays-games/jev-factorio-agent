@@ -20,6 +20,11 @@ those fields before explaining that the present start decision concerns the
 first pickup. Later refueling still requires a fresh check and its own receipt;
 no future transfer, science production, or goal completion is claimed.
 
+Emit the additional field only when its proof qualifies. Full-suite replay caught
+an initial empty-field addition that pushed near-limit historical packets over
+their byte budget and pruned alternatives. Omitting the absent field preserves
+those frontiers without increasing limits or removing existing evidence.
+
 ## Efficient recovery check
 
 1. Retain the blocked checkpoint, failed response, full offered plan and native

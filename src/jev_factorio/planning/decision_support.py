@@ -3674,7 +3674,6 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
             'utility_power_prerequisite_start_evidence': utility_power_start,
             'recipe_input_transfer_start_evidence': recipe_input_transfer_start,
             'paid_service_input_start_evidence': _paid_service_input_start_evidence(snapshot, catalog, plan),
-            'paid_service_output_start_evidence': _paid_service_output_start_evidence(snapshot, catalog, plan),
             'native_research_trigger_start_evidence': native_research_trigger_start,
             'supplied_research_start_evidence': supplied_research_start,
             'research_science_transfer_start_evidence': science_transfer_start,
@@ -3687,6 +3686,9 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
                                       'factory_buffer_build', 'factory_input_build', 'factory_solid_build'} for s in plan.steps),
             'estimate_basis': 'native_observation_and_catalog_with_declared_policy_heuristics',
         }
+        service_output_start = _paid_service_output_start_evidence(snapshot, catalog, plan)
+        if service_output_start is not None:
+            result[plan.id]['paid_service_output_start_evidence'] = service_output_start
         if bootstrap_pickup_start is not None:
             result[plan.id]['bootstrap_output_pickup_start_evidence'] = bootstrap_pickup_start
         construction = machine_construction_prerequisite(

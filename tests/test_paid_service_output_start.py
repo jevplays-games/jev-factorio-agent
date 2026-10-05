@@ -66,6 +66,13 @@ def test_output_pickup_proof_survives_same_cell_fuel_service_wrapping():
     assert select_plan(Rejected(),context,[plan]).plan_id is None
 
 
+def test_unqualified_output_proof_does_not_inflate_existing_candidate_packets():
+    catalog,state,plan,_,_,_=input_case()
+    row=candidate_evidence(state,catalog,[plan])[plan.id]
+    assert row['paid_service_input_start_evidence'] is not None
+    assert 'paid_service_output_start_evidence' not in row
+
+
 @pytest.mark.parametrize('change',['coherence','atomic','admission','output','coal','owner','receipt','tick','reverse','marker','paid_stock','path'])
 def test_stale_or_crosswired_service_does_not_receive_output_proof(change):
     state,catalog,plan = case()
