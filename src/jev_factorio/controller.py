@@ -1220,16 +1220,28 @@ class HierarchicalLoop(AgentLoop):
         insertion as an error.  It proves that a bounded amount was paid, but it
         is deliberately not a successful step: the controller must fail this
         plan and replan from the observed world instead of retrying it.  This
-        gate is intentionally limited to the original ambiguous FLE attempt,
-        its live machine identity, and its exact receipt. A zero receipt is
-        admissible only when all source material reserved by the pending plan is
-        still observed, proving that the failed transfer left no durable effect.
+        gate is limited to the original FLE attempt, its live machine identity,
+        and its exact receipt. A prepared write-ahead row also qualifies when a
+        durable transfer-RPC phase records that dispatch reached the native RPC
+        boundary; the phase can remain started, returned, or failed if the
+        process stops before the outer dispatcher changes the pending row. A
+        zero receipt is admissible only when all source material reserved by
+        the pending plan is still observed, proving that the failed transfer
+        left no durable effect.
         """
         pending, attempt = self.memory.pending or {}, self.memory.attempt
         parameters = step.parameters or {}
+        phases = attempt.get("dispatch_phases") if isinstance(attempt, dict) else None
+        rpc_phase = phases.get("transfer_rpc") if isinstance(phases, dict) else None
+        rpc_entered = (
+            isinstance(rpc_phase, dict)
+            and rpc_phase.get("stage") == "transfer_rpc"
+            and rpc_phase.get("status") in {"started", "returned", "failed"}
+        )
+        dispatch = pending.get("dispatch")
         if not (
             snapshot.world_kind == "fle"
-            and pending.get("dispatch") == "ambiguous"
+            and (dispatch == "ambiguous" or (dispatch == "prepared" and rpc_entered))
             and step.action in {"factory_insert", "factory_extract"}
             and step.effect == "transfer"
             and isinstance(attempt, dict)
@@ -1263,7 +1275,8 @@ class HierarchicalLoop(AgentLoop):
             and receipt.get("extracting") is (step.action == "factory_extract")
             and receipt.get("unit_number") == expected_unit
             and type(quantity) is int and 0 <= quantity < requested
-            and type(receipt_tick) is int and receipt_tick >= attempt.get("started_tick", -1)
+            and type(receipt_tick) is int
+            and attempt.get("started_tick", -1) <= receipt_tick <= snapshot.tick
         ):
             return None
         if quantity == 0:
