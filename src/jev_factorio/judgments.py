@@ -1478,6 +1478,16 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
         if "candidate_evidence" in context:
             context["candidate_evidence"] = {p.id: state["candidate_evidence"][p.id]
                                              for p in selected if p.id in state["candidate_evidence"]}
+            # A cross-candidate comparison must not survive removal of its peer
+            # by the request budget. Copy only the changed row, not input state.
+            for key, row in list(context['candidate_evidence'].items()):
+                overlap = row.get('independent_gather_overlap')
+                if isinstance(overlap, dict) and any(
+                        overlap.get(name) not in context['candidate_plans']
+                        for name in ('craft_plan_id', 'gather_plan_id')):
+                    context['candidate_evidence'][key] = {
+                        name: value for name, value in row.items()
+                        if name != 'independent_gather_overlap'}
         if "deterministic_ranking" in context:
             context["deterministic_ranking"] = [key for key in state["deterministic_ranking"]
                                                 if key in context["candidate_plans"]]

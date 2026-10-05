@@ -3820,6 +3820,8 @@ def defer_gather_until_bill_craft(plans, support: dict, snapshot, memory):
 
 def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
     evidence = candidate_evidence(snapshot, catalog, plans)
+    from .craft_overlap import add_craft_overlap_evidence
+    add_craft_overlap_evidence(snapshot, plans, evidence)
     primary = (plans[0].materials or {}).get('local_objective') if plans else None
     if primary is None and goal == 'stockpile_fuel':
         primary = {'item': 'coal', 'inventory_target': 5, 'ultimate_goal': goal}
