@@ -299,10 +299,10 @@ def cli() -> None:
                     allow_source_change=(args.reevaluate_blocked_once
                                          or compatible_authorization is not None),
                     owner_context=owner_context)
+            from .memory import _BLOCKED_REEVALUATION_REASONS
             if (args.reevaluate_blocked_once
                     and (checkpoint_data.get("status") != "blocked"
-                         or checkpoint_data.get("reason") not in {
-                             "Candidate evidence insufficient", "low choice confidence"})):
+                         or checkpoint_data.get("reason") not in _BLOCKED_REEVALUATION_REASONS)):
                 raise ValueError("source authorization only applies to an eligible blocked checkpoint")
         except (OSError, UnicodeError, ValueError, TypeError) as error:
             p.error(f"Persistent recovery source/checkpoint preflight failed: {error}")

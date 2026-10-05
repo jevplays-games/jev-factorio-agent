@@ -453,3 +453,47 @@ def test_compatible_source_authorization_stays_bound_to_migrated_capture(
     assert installed.background_job == original_job
     assert installed.background_attempt == original_attempt
     assert installed.background_step == original_step
+
+
+@pytest.mark.parametrize("fault", [None, "unknown_reason", "wrong_digest", "missing_source"])
+def test_persistent_boiler_recovery_full_cli_preserves_checkpoint(
+        tmp_path, monkeypatch, fault):
+    from jev_factorio import blocked_persistence, blocked_reevaluation, jev_client, provenance
+    from jev_factorio.background import BackgroundWorkLoop
+    from jev_factorio.buffer_controller import buffered_loop_type
+    from jev_factorio.input_controller import input_loop_type
+    from jev_factorio.outpost_controller import outpost_loop_type
+
+    kind = outpost_loop_type(input_loop_type(buffered_loop_type(BackgroundWorkLoop)))
+    memory = kind.memory_type("cli-preflight-session", "rocket_launch",
+                              active_goal="rocket_launch", last_tick=300)
+    old = {"commit": "1" * 40, "source_sha256": "a" * 64}
+    current = {"commit": "2" * 40, "source_sha256": "c" * 64}
+    blocked_persistence.record_attempt(memory, old, "d" * 64, None, 290)
+    blocked_persistence.finish_attempt(memory, old, "d" * 64, "selected")
+    memory.status = "blocked"
+    memory.reason = ("unknown failure" if fault == "unknown_reason" else
+                     "Current native boiler identity and coal stock are required")
+    path = tmp_path / "controller.json"
+    memory.save(path)
+    before = path.read_bytes()
+    source = {"blocked_source_revision": old["commit"], "source_head": current["commit"],
+              "previous_contract_sha256": "a" * 64, "decision_contract_sha256": "b" * 64}
+    monkeypatch.setattr(blocked_reevaluation, "validate_source_revision", lambda revision: source)
+    monkeypatch.setattr(provenance, "gameplay_context", lambda: {
+        "run_id": "cli-test", "code_revision": current})
+    # No model evaluation or native connection is permitted by this preflight.
+    monkeypatch.setattr(jev_client, "make_client", lambda **kwargs: object())
+    flags = ["--background-work", "--furnace-output-buffers", "--furnace-input-belts",
+             "--mining-outposts", "--campaign-diagnostics", "--profile-observations",
+             "--consolidated-observations", "--persist-recoverable-blocks",
+             "--persistent-idle-observations", "0", "--reevaluate-blocked-once",
+             "--exact-checkpoint-sha256", ("0" * 64 if fault == "wrong_digest" else
+                                         hashlib.sha256(before).hexdigest())]
+    if fault != "missing_source":
+        flags += ["--blocked-source-revision", old["commit"]]
+    result, attempts = _invoke_cli(monkeypatch, path, flags, policy="jev",
+                                   limit_args=["--until-complete"])
+    assert result == ("backend-boundary" if fault is None else 2)
+    assert len(attempts) == (1 if fault is None else 0)
+    assert path.read_bytes() == before
