@@ -1023,12 +1023,30 @@ Only report repaired when every acceptance requirement is verified.
         # A new extension is accepted only when the existing loader explicitly
         # records its empty idle-boundary migration. These events enable only
         # empty metadata; the owner equality check above rejects paid units,
-        # receipts, funding, or native bindings that differ.
+        # receipts, funding, or native bindings that differ. Use the raw
+        # histories here: loading the old checkpoint through the union schema
+        # can synthesize its own migration receipt in memory, so normalized
+        # history alone cannot prove that the candidate recorded a new one.
+        old_history = previous.get("history", [])
+        new_history = current.get("history", [])
+        if not isinstance(old_history, list) or not isinstance(new_history, list):
+            return False
         authorized_families: set[str] = set()
         for family, (kind, reason) in _OWNERSHIP_MIGRATIONS.items():
-            if any(isinstance(row, dict) and set(row) == {"kind", "tick", "reason"}
-                   and row == {"kind": kind, "tick": old_memory.last_tick, "reason": reason}
-                   for row in current.get("history", [])):
+            # A migration marker already present in the old checkpoint is
+            # historical evidence, not authorization to enable the family
+            # again. Duplicates and malformed same-kind markers also fail
+            # closed instead of allowing any matching row to stand in for the
+            # exact newly recorded event.
+            if any(isinstance(row, dict) and row.get("kind") == kind for row in old_history):
+                continue
+            candidate_events = [row for row in new_history
+                                if isinstance(row, dict) and row.get("kind") == kind]
+            expected_event = {"kind": kind, "tick": old_memory.last_tick, "reason": reason}
+            if (len(candidate_events) == 1
+                    and set(candidate_events[0]) == {"kind", "tick", "reason"}
+                    and type(candidate_events[0].get("tick")) is int
+                    and candidate_events[0] == expected_event):
                 if family == "output":
                     authorized_families.add("output")
                 elif family == "outpost":
