@@ -165,7 +165,8 @@ def frontier(loop, snapshot):
         return original, blocker
     state = loop.memory.capital_investment
     loop._capital_deadline_snapshot = snapshot
-    if loop._execution_barrier(snapshot) or loop.memory.status != 'running':
+    if (loop._execution_barrier(snapshot)
+            or (loop.memory.status != 'running' and not loop._persistent_block_active())):
         return original, blocker
     if (state and snapshot.tick >= state['deadline_tick']
             and not _unresolved_work(loop.memory, snapshot)):
@@ -198,16 +199,23 @@ def frontier(loop, snapshot):
         return safe or [Plan('capital:crafting-wait', 'rocket_launch',
                             'Protect the committed kit while native crafting continues',
                             (Step('factory_wait', 'crafting_idle', timeout_ticks=1800),))], blocker
-    if state is None and not safe and original:
-        # Reject optional intent before urgency shortcuts, but retain ordinary
-        # acquisition so an exhausted investment cannot stop the controller.
+    rejected_capital = any((p.materials or {}).get(capital.MARKER)
+                           and not admissible(p) for p in original)
+    if state is None and original and (not safe or rejected_capital):
+        # Recompile the ordinary primary after rejecting an investment, even
+        # when an old lookahead alternative survived. Keep those alternatives;
+        # they must not hide the current production need indefinitely.
         planner = current_planner()
         planner._economic_acquiring = True
         try:
-            safe = [p for p in planner.candidates() if feasible(p)]
+            ordinary = [p for p in planner.candidates() if feasible(p)]
             tracked = getattr(loop, '_tracked_plan', None)
             if tracked:
-                safe = [tracked(p, snapshot) for p in safe]
+                ordinary = [tracked(p, snapshot) for p in ordinary]
+            retained = {}
+            for candidate in [*ordinary, *safe]:
+                retained.setdefault(candidate.id, candidate)
+            safe = list(retained.values())
         finally:
             planner._economic_acquiring = False
     # Preserve native binding and urgent power/burner maintenance.

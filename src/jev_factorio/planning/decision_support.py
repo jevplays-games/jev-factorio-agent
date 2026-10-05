@@ -4097,6 +4097,23 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
                 'same-tick parent demand remains a separate conditional purpose; '
                 'a raw ingredient is recipe input progress, not a completed kit, '
                 'route flow, science output, or ultimate-goal completion.')
+    capital = (plans[0].materials or {}).get('capital_investment') if plans else None
+    if isinstance(capital, dict) and capital.get('stage') == 'kit':
+        from .capital import validate_spec
+        try:
+            validate_spec(capital['spec'], catalog, snapshot.researched or [])
+            if (capital.get('observed_tick') == snapshot.tick
+                    and primary == {'item': capital['spec']['machine'],
+                                    'inventory_target': 1, 'ultimate_goal': goal}):
+                instruction = (
+                    'Evaluate the bounded construction-kit action for the proposed machine. '
+                    'Its eventual production purpose and payback are separate planner '
+                    'estimates, not native evidence of completed production. A recipe '
+                    'input or pickup can advance the kit without completing the machine; '
+                    'judge independently whether that contribution is useful. Placement, '
+                    'power, configuration and output still need native verification.')
+        except (KeyError, TypeError, ValueError, AttributeError):
+            pass
     lab_dependency = (first_evidence.get('utility_lab_research_dependency')
                       if isinstance(first_evidence, dict) else None)
     if isinstance(lab_dependency, dict):

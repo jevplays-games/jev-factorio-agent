@@ -233,3 +233,78 @@ def test_idle_frontier_expires_once_after_deadline_without_touching_paid_entity(
     assert loop.memory.history[:len(prior_history)] == prior_history
     assert [entry["reason"] for entry in loop.memory.history[len(prior_history):]
             if entry["kind"] == "capital_abandoned"] == ["bounded_investment_deadline"]
+
+
+@pytest.mark.parametrize('persistent', [False, True])
+def test_idle_policy_hold_observes_capital_deadline_without_reset_or_dispatch(persistent):
+    data, state = scenario()
+    backend = Backend(data, state)
+    loop = make_loop(backend)
+    plan = offer(data, state)
+    intent = deepcopy(seed_commit(loop, state, plan))
+    loop.persist_recoverable_blocks = persistent
+    loop.memory.status = 'blocked'
+    loop.memory.reason = 'Candidate evidence insufficient'
+    loop.memory.failures['unrelated-plan'] = 1
+    before_history = deepcopy(loop.memory.history)
+    before_outcomes = deepcopy(loop.memory.attempt_outcomes)
+    loop._compile_candidates = lambda snapshot: ([offer(data, snapshot)], '')
+    backend.advance(ticks=intent['deadline_tick'] - state.tick)
+    plans, _ = capital_controller.frontier(loop, state)
+    assert backend.calls == []
+    assert loop.memory.status == 'blocked'
+    assert loop.memory.reason == 'Candidate evidence insufficient'
+    assert loop.memory.attempt_outcomes == before_outcomes
+    assert loop.memory.history[:len(before_history)] == before_history
+    assert loop.memory.failures['unrelated-plan'] == 1
+    if not persistent:
+        assert loop.memory.capital_investment == intent
+        assert loop.memory.history == before_history
+        return
+    assert loop.memory.capital_investment is None
+    assert loop.memory.failures[intent['spec']['key']] == 2
+    assert not any((p.materials or {}).get(capital.MARKER, {}).get('spec', {}).get('key')
+                   == intent['spec']['key'] for p in plans)
+    assert sum(e['kind'] == 'capital_abandoned' for e in loop.memory.history) == 1
+    capital_controller.frontier(loop, state)
+    assert sum(e['kind'] == 'capital_abandoned' for e in loop.memory.history) == 1
+
+
+def test_inconsistent_background_hold_cannot_abandon_capital():
+    data, state = scenario()
+    backend = Backend(data, state)
+    loop = make_loop(backend)
+    intent = deepcopy(seed_commit(loop, state, offer(data, state)))
+    loop.persist_recoverable_blocks = True
+    loop.memory.status = 'blocked'
+    loop.memory.reason = 'Candidate evidence insufficient'
+    loop.memory.background_job = {'id': 'unresolved-native-work'}
+    loop.memory.background_attempt = None
+    loop._compile_candidates = lambda snapshot: ([offer(data, snapshot)], '')
+    backend.advance(ticks=intent['deadline_tick'] - state.tick)
+    capital_controller.frontier(loop, state)
+    assert loop.memory.capital_investment == intent
+    assert backend.calls == []
+
+
+
+def test_expired_capital_restores_ordinary_primary_beside_surviving_lookahead():
+    from test_capital_investments import wait
+    data, state = scenario()
+    backend = Backend(data, state)
+    loop = make_loop(backend)
+    plan = offer(data, state)
+    intent = deepcopy(seed_commit(loop, state, plan))
+    loop.persist_recoverable_blocks = True
+    loop.memory.status = 'blocked'
+    loop.memory.reason = 'low choice confidence'
+    lookahead = wait(data, state)
+    loop._compile_candidates = lambda snapshot: ([offer(data, snapshot), lookahead], '')
+    backend.advance(ticks=intent['deadline_tick'] - state.tick)
+    plans, _ = capital_controller.frontier(loop, state)
+    assert lookahead.id in {p.id for p in plans}
+    assert any(p.id != lookahead.id and capital.MARKER not in (p.materials or {}) for p in plans)
+    assert len({p.id for p in plans}) == len(plans)
+    assert loop.memory.failures[intent['spec']['key']] == 2
+    assert loop.memory.capital_investment is None
+    assert backend.calls == []

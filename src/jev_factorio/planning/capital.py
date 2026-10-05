@@ -170,11 +170,16 @@ def continuation(planner, spec):
     """
     validate_spec(spec, planner.catalog, planner.researched)
     old = getattr(planner, '_economic_acquiring', False)
+    old_focus = getattr(planner, 'focus', None)
     planner._economic_acquiring = True
     try:
         recipe = planner.catalog.recipes[spec['recipe']]
         machine = planner.entities.get(spec['role'])
         if machine is None:
+            # Kit recipes begin at the machine, not at its eventual product.
+            # Preserve that immediate target while composing native child actions.
+            if hasattr(planner, 'focus'):
+                planner.focus = (spec['machine'], 1)
             plan = planner._machine(spec['role'], spec['machine'], ())
             stage = 'build' if plan.steps[0].action == 'factory_place' and (
                 plan.steps[0].parameters['role'] == spec['role']) else 'kit'
@@ -191,6 +196,8 @@ def continuation(planner, spec):
                                      spec['role'], timeout=7200, identity=spec['key'])
     finally:
         planner._economic_acquiring = old
+        if hasattr(planner, 'focus'):
+            planner.focus = old_focus
     return replace(plan, id=spec['key'] + ':' + stage + ':' + plan.id,
                    description=f"Invest in {spec['item']} ({stage}): " + plan.description,
                    materials={**(plan.materials or {}), MARKER: {'spec': deepcopy(spec), 'stage': stage, 'observed_tick': planner.snapshot.tick},
