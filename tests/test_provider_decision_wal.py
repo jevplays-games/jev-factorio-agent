@@ -239,6 +239,40 @@ def test_response_error_records_received_phase_without_saving_raw_error_body(tmp
     assert "raw response body" not in text
 
 
+def test_retry_after_is_stored_only_as_bounded_source_clock_projection(tmp_path):
+    path, wal = create(tmp_path)
+    binding = identity()
+    original = request()
+    wal.reserve(binding, original)
+    wal.mark_may_have_been_sent(binding, original)
+    failed = wal.record_error(
+        binding, original, "rate_limit", RESPONSE_RECEIVED,
+        http_status=429,
+        cooldown={"received_at": 1000.0, "retry_after_seconds": 12.0},
+    )
+    assert failed.http_status == 429
+    assert dict(failed.cooldown) == {
+        "received_at": 1000.0, "retry_after_seconds": 12.0}
+    reopened = ProviderDecisionWAL(path).inspect(binding, original)
+    assert reopened == failed
+    text = path.read_text(encoding="utf-8")
+    assert "Retry-After" not in text
+    assert "raw response" not in text
+    with pytest.raises(ValueError, match="outside its bound"):
+        wal.record_error(
+            binding, original, "rate_limit", RESPONSE_RECEIVED,
+            http_status=429,
+            cooldown={"received_at": 1000.0, "retry_after_seconds": 3601.0},
+        )
+    with pytest.raises(ValueError, match="HTTP status"):
+        wal.record_error(
+            identity(observation_id="observation-new", decision_id="decision-new",
+                     request_id="request-new"),
+            request(candidate_ids=["new"]), "rate_limit", MAY_HAVE_BEEN_SENT,
+            http_status=429,
+        )
+
+
 def test_uncertain_atomic_write_failure_does_not_enter_provider_transport(tmp_path, monkeypatch):
     path, wal = create(tmp_path)
     binding = identity()

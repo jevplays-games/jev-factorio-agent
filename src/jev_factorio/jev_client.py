@@ -8,10 +8,13 @@ Gateway:     Vercel AI Gateway, model id "typesafe-ai/jev",
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import math
 import os
 import time
 from collections.abc import Mapping
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -21,6 +24,8 @@ from .async_provider import (
     AsyncProviderPayloadError,
     AsyncProviderQueueFull,
     AsyncProviderResult,
+    NOT_SENT,
+    RESPONSE_RECEIVED,
     RequestIdentity,
     make_result,
     request_payload_sha256,
@@ -30,6 +35,33 @@ from .provider_health import ProviderPayloadError
 
 API_URL = "https://api.typesafe.ai/v1/systemone"
 GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/systemone"  # confirm path against Gateway docs
+
+
+def _decision_provider_id(provider: str, endpoint: str) -> str:
+    """Fingerprint only the non-secret endpoint; credentials never enter WAL."""
+    if type(endpoint) is not str or not endpoint:
+        raise ValueError("Provider endpoint is not configured")
+    parsed = urlsplit(endpoint)
+    if parsed.username is not None or parsed.password is not None or parsed.query:
+        raise ValueError("Decision leases do not accept credential-bearing endpoints")
+    safe_endpoint = urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(),
+                                parsed.path, "", ""))
+    value = json.dumps([provider, safe_endpoint], ensure_ascii=False,
+                       separators=(",", ":"))
+    return provider + ":sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _validated_async_result(identity, answers, usage, requested_model,
+                            resolved_model, payload_sha256, questions, quantum):
+    if not isinstance(answers, dict):
+        raise AsyncProviderPayloadError(identity)
+    from .judgments import InvalidJudgment, validate_answers
+    try:
+        validate_answers(questions, answers, quantum=quantum)
+    except InvalidJudgment as error:
+        raise AsyncProviderPayloadError(identity, "Provider answer schema rejected") from error
+    return make_result(identity, answers, usage, requested_model,
+                       resolved_model, payload_sha256)
 
 
 class JevClient:
@@ -172,16 +204,37 @@ class AsyncJevClient(AsyncProviderClient):
         self.base_url = base_url
         self.model = model
 
+    def decision_provider_id(self) -> str:
+        return _decision_provider_id("typesafe", self.base_url)
+
+    def prepare_decision_payload(self, state: dict, questions: dict) -> dict:
+        return snapshot_json({"state": state, "model": self.model,
+                              "questions": questions})
+
     async def evaluate(self, state: dict, questions: dict, *, identity: RequestIdentity,
-                       deadline: float | None = None) -> AsyncProviderResult:
+                       deadline: float | None = None,
+                       decision_lease=None) -> AsyncProviderResult:
         requested_model = self.model
-        body, payload_sha256 = await self.post_json(
+        payload = self.prepare_decision_payload(state, questions)
+
+        def build_result(body, payload_sha256):
+            return _validated_async_result(
+                identity, body.get("answers"), body.get("usage"), requested_model,
+                body.get("model"), payload_sha256, questions, self.answer_quantum,
+            )
+
+        posted = await self.post_json(
             identity=identity,
             url=self.base_url,
             headers={"Authorization": f"Bearer {self.api_key}"},
-            payload={"state": state, "model": requested_model, "questions": questions},
+            payload=payload,
             deadline=deadline,
+            decision_lease=decision_lease,
+            response_builder=build_result if decision_lease is not None else None,
         )
+        if decision_lease is not None:
+            return posted
+        body, payload_sha256 = posted
         answers = body.get("answers")
         if not isinstance(answers, dict):
             raise AsyncProviderPayloadError(identity)
@@ -203,19 +256,46 @@ class AsyncCloudflareJevClient(AsyncProviderClient):
         self.url = (f"https://api.cloudflare.com/client/v4/accounts/"
                     f"{account_id}/ai/run")
 
+    def decision_provider_id(self) -> str:
+        return _decision_provider_id("cloudflare", self.url)
+
+    def prepare_decision_payload(self, state: dict, questions: dict) -> dict:
+        return snapshot_json({"model": self.model,
+                              "input": {"state": state, "questions": questions}})
+
     async def evaluate(self, state: dict, questions: dict, *, identity: RequestIdentity,
-                       deadline: float | None = None) -> AsyncProviderResult:
+                       deadline: float | None = None,
+                       decision_lease=None) -> AsyncProviderResult:
         requested_model = self.model
-        body, payload_sha256 = await self.post_json(
+        payload = self.prepare_decision_payload(state, questions)
+
+        def build_result(body, payload_sha256):
+            result = body.get("result")
+            if body.get("success") is not True or not isinstance(result, dict):
+                raise AsyncProviderPayloadError(
+                    identity, "Provider rejected application request")
+            return _validated_async_result(
+                identity, result.get("answers"), result.get("usage"), requested_model,
+                result.get("model"), payload_sha256, questions,
+                getattr(self, "answer_quantum", 0),
+            )
+
+        posted = await self.post_json(
             identity=identity,
             url=self.url,
             headers={"Authorization": f"Bearer {self.api_token}"},
-            payload={"model": requested_model, "input": {"state": state, "questions": questions}},
+            payload=payload,
             deadline=deadline,
+            decision_lease=decision_lease,
+            response_builder=build_result if decision_lease is not None else None,
         )
+        if decision_lease is not None:
+            return posted
+        body, payload_sha256 = posted
         result = body.get("result")
         if body.get("success") is not True or not isinstance(result, dict):
-            raise AsyncProviderPayloadError(identity, "Provider rejected application request")
+            raise AsyncProviderPayloadError(
+                identity, "Provider rejected application request")
         answers = result.get("answers")
         if not isinstance(answers, dict):
             raise AsyncProviderPayloadError(identity)
@@ -229,19 +309,45 @@ class AsyncMockJevClient:
     is_mock = True
     model = MockJevClient.model
 
+    def decision_provider_id(self) -> str:
+        return "mock:sha256:" + hashlib.sha256(b"jev-factorio-mock-v1").hexdigest()
+
+    def prepare_decision_payload(self, state: dict, questions: dict) -> dict:
+        return snapshot_json({"state": state, "model": self.model,
+                              "questions": questions})
+
     async def evaluate(self, state: dict, questions: dict, *, identity: RequestIdentity,
-                       deadline: float | None = None) -> AsyncProviderResult:
+                       deadline: float | None = None,
+                       decision_lease=None) -> AsyncProviderResult:
         if deadline is not None:
             if (not isinstance(deadline, (int, float)) or isinstance(deadline, bool)
                     or not math.isfinite(deadline)):
                 raise ValueError("deadline must be an absolute finite monotonic timestamp")
             if deadline <= time.monotonic():
-                raise AsyncProviderDeadlineExceeded("provider request deadline expired", identity)
-        request = {"state": state, "model": self.model, "questions": questions}
-        snapshot = snapshot_json(request)
+                error = AsyncProviderDeadlineExceeded(
+                    "provider request deadline expired", identity)
+                if decision_lease is not None:
+                    decision_lease.record_failure(error, NOT_SENT)
+                raise error
+        snapshot = self.prepare_decision_payload(state, questions)
+        if decision_lease is not None:
+            decision_lease.mark_may_have_been_sent()
         answers = MockJevClient().evaluate(snapshot["state"], snapshot["questions"])
-        return make_result(identity, answers, None, self.model, self.model,
-                           request_payload_sha256(snapshot))
+        if decision_lease is None:
+            return make_result(identity, answers, None, self.model, self.model,
+                               request_payload_sha256(snapshot))
+        try:
+            result = _validated_async_result(
+                identity, answers, None, self.model, self.model,
+                request_payload_sha256(snapshot), questions, 0,
+            )
+        except AsyncProviderPayloadError as error:
+            if decision_lease is not None:
+                decision_lease.record_failure(error, RESPONSE_RECEIVED)
+            raise
+        if decision_lease is not None:
+            decision_lease.save_response(result)
+        return result
 
     async def aclose(self) -> None:
         return None
@@ -268,8 +374,32 @@ class AsyncTracedClient:
     def __getattr__(self, name):
         return getattr(self._client, name)
 
+    def prepare_decision_trace_binding(self, identity: RequestIdentity):
+        trace = self._trace
+        if not trace.enabled:
+            return None
+        if trace._failed:
+            from .research_log import ResearchLogError
+
+            raise ResearchLogError("Causal trace has failed")
+        self._require_context(identity)
+        if trace._async_provider_call is not None:
+            from .research_log import ResearchLogError
+
+            raise ResearchLogError("Causal trace already has an async provider call")
+        # This deterministic model-call identity survives restart and is kept
+        # separate from the trace's transient event counter.
+        return {
+            "session_id": identity.session_id,
+            "actor_id": identity.actor_id,
+            "observation_id": identity.observation_id,
+            "decision_id": identity.decision_id,
+            "model_call_id": "model-request:" + identity.request_id,
+        }
+
     async def evaluate(self, state: dict, questions: dict, *, identity: RequestIdentity,
-                       deadline: float | None = None) -> AsyncProviderResult:
+                       deadline: float | None = None,
+                       decision_lease=None) -> AsyncProviderResult:
         if not isinstance(identity, RequestIdentity):
             raise TypeError("identity must be a RequestIdentity")
         if (deadline is not None
@@ -282,7 +412,8 @@ class AsyncTracedClient:
         state, questions = request["state"], request["questions"]
         trace = self._trace
         if not trace.enabled:
-            result = await self._evaluate(state, questions, identity, deadline)
+            result = await self._evaluate(
+                state, questions, identity, deadline, decision_lease)
             if (not isinstance(result, AsyncProviderResult)
                     or result.identity != identity):
                 raise AsyncProviderPayloadError(
@@ -304,7 +435,10 @@ class AsyncTracedClient:
             reservation = trace._reserve_async_provider_call()
             model_call_id = None
             try:
-                trace.model_call_id = trace.identity("model")
+                if decision_lease is not None and decision_lease.trace_binding is not None:
+                    trace.model_call_id = decision_lease.trace_binding["model_call_id"]
+                else:
+                    trace.model_call_id = trace.identity("model")
                 model_call_id = trace.model_call_id
                 provider_identity = self._identity_payload(identity)
                 requested_model = getattr(self._client, "model", None)
@@ -323,7 +457,8 @@ class AsyncTracedClient:
                     raise ResearchLogError(
                         "Causal context changed before an async provider request")
                 try:
-                    result = await self._evaluate(state, questions, identity, deadline)
+                    result = await self._evaluate(
+                        state, questions, identity, deadline, decision_lease)
                     if not self._context_matches(identity, model_call_id):
                         from .research_log import ResearchLogError
 
@@ -359,11 +494,17 @@ class AsyncTracedClient:
             finally:
                 trace._release_async_provider_call(reservation)
 
-    async def _evaluate(self, state, questions, identity, deadline):
+    async def _evaluate(self, state, questions, identity, deadline, decision_lease=None):
         async_method = getattr(self._client, "evaluate_async", None)
         if callable(async_method):
-            return await async_method(state, questions, identity=identity, deadline=deadline)
-        return await self._client.evaluate(state, questions, identity=identity, deadline=deadline)
+            kwargs = {"identity": identity, "deadline": deadline}
+            if decision_lease is not None:
+                kwargs["decision_lease"] = decision_lease
+            return await async_method(state, questions, **kwargs)
+        kwargs = {"identity": identity, "deadline": deadline}
+        if decision_lease is not None:
+            kwargs["decision_lease"] = decision_lease
+        return await self._client.evaluate(state, questions, **kwargs)
 
     def _require_context(self, identity: RequestIdentity) -> None:
         trace = self._trace

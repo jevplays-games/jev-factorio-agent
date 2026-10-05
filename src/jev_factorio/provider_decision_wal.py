@@ -1,10 +1,13 @@
-"""Unused, bounded write-ahead ledger for future provider-decision replay.
+"""Bounded opt-in write-ahead ledger for async provider decision recovery.
 
-This module is deliberately not wired into the synchronous or asynchronous
-controller. It records a request fingerprint and a small, validated answer
-projection; it never stores request bodies, headers, raw provider responses,
-game-action attempts, or arbitrary exception text. Credential-like result field
-names are rejected, and callers must pass only secret-free answer values.
+The explicit lease path binds provider transport and health accounting to this
+ledger, but the normal client/controller factories remain unchanged. It records
+request fingerprints and a small validated answer projection; it never stores
+request bodies, headers, raw provider responses, game-action attempts, or
+arbitrary exception text. Credential-like field names are rejected, and callers
+must pass only secret-free answer values. A saved answer is not an action or a
+selected plan and remains unconsumed until a future controller integration
+durably selects one.
 """
 from __future__ import annotations
 
@@ -228,6 +231,8 @@ class DecisionRecord:
     result: Any
     error_category: str | None
     event_count: int
+    cooldown: Any = None
+    http_status: int | None = None
 
 
 def _freeze(value: Any) -> Any:
@@ -494,6 +499,31 @@ def _validate_result(value: Any, identity: ProviderDecisionIdentity) -> tuple[di
     return detached, hashlib.sha256(encoded).hexdigest()
 
 
+def _validate_cooldown(value: Any, *, category: str, phase: str) -> dict | None:
+    """Accept only a parsed Retry-After projection, never response headers."""
+    if value is None:
+        return None
+    if (type(value) is not dict or set(value) != {"received_at", "retry_after_seconds"}
+            or phase != RESPONSE_RECEIVED or category == "local_admission"):
+        raise ValueError("Invalid provider cooldown projection")
+    received_at = value["received_at"]
+    seconds = value["retry_after_seconds"]
+    if (type(received_at) not in (int, float) or not math.isfinite(received_at)
+            or received_at < 0 or received_at > 253402300799
+            or type(seconds) not in (int, float) or not math.isfinite(seconds)
+            or seconds < 0 or seconds > 3600):
+        raise ValueError("Provider cooldown projection is outside its bound")
+    return {"received_at": float(received_at), "retry_after_seconds": float(seconds)}
+
+
+def _validate_http_status(value: Any, *, phase: str) -> int | None:
+    if value is None:
+        return None
+    if type(value) is not int or not 100 <= value <= 599 or phase != RESPONSE_RECEIVED:
+        raise ValueError("Invalid provider HTTP status projection")
+    return value
+
+
 def _validate_document(document: Any) -> dict:
     if type(document) is not dict or set(document) != {
         "schema", "last_sequence", "records", "ledger_sha256",
@@ -552,9 +582,20 @@ def _validate_document(document: Any) -> dict:
                 "dispatch_authorized": {"sequence", "kind", "phase", "previous_event_sha256", "event_sha256"},
                 "response_saved": {"sequence", "kind", "phase", "previous_event_sha256", "result_sha256", "event_sha256"},
                 "consumed": {"sequence", "kind", "phase", "previous_event_sha256", "result_sha256", "event_sha256"},
-                "failed": {"sequence", "kind", "phase", "previous_event_sha256", "error_category", "event_sha256"},
+                "failed": {
+                    frozenset({"sequence", "kind", "phase", "previous_event_sha256",
+                               "error_category", "event_sha256"}),
+                    frozenset({"sequence", "kind", "phase", "previous_event_sha256",
+                               "error_category", "cooldown", "event_sha256"}),
+                    frozenset({"sequence", "kind", "phase", "previous_event_sha256",
+                               "error_category", "http_status", "event_sha256"}),
+                    frozenset({"sequence", "kind", "phase", "previous_event_sha256",
+                               "error_category", "cooldown", "http_status", "event_sha256"}),
+                },
             }.get(kind)
-            if fields is None or set(event) != fields:
+            if fields is None or (
+                    frozenset(event) not in fields if kind == "failed"
+                    else set(event) != fields):
                 raise WALIntegrityError("Unknown or malformed provider decision transition")
             sequence = event["sequence"]
             if (type(sequence) is not int or sequence < 1 or sequence in sequences
@@ -610,6 +651,19 @@ def _validate_document(document: Any) -> dict:
                     raise WALIntegrityError("Invalid provider failure category")
                 if phase != NOT_SENT and error_category == "local_admission":
                     raise WALIntegrityError("Local admission failure cannot follow send admission")
+                try:
+                    cooldown = _validate_cooldown(
+                        event.get("cooldown"), category=error_category, phase=phase,
+                    )
+                    http_status = _validate_http_status(
+                        event.get("http_status"), phase=phase,
+                    )
+                except (TypeError, ValueError, OverflowError) as error:
+                    raise WALIntegrityError("Invalid provider error projection") from error
+                if ("cooldown" in event) != (cooldown is not None):
+                    raise WALIntegrityError("Provider cooldown projection is incomplete")
+                if ("http_status" in event) != (http_status is not None):
+                    raise WALIntegrityError("Provider HTTP status projection is incomplete")
             elif index > 0:
                 raise WALIntegrityError("Illegal provider decision transition")
             previous_hash = event_hash
@@ -655,7 +709,7 @@ def _validate_document(document: Any) -> dict:
 
 
 class ProviderDecisionWAL:
-    """Atomic, bounded provider request/result ledger; intentionally not wired.
+    """Atomic, bounded provider request/result ledger for explicit leases.
 
     One transition is atomically replaced and fsynced while holding a
     fail-fast process lock. No API deletes or compacts records. A MAY_HAVE_BEEN_SENT
@@ -766,11 +820,15 @@ class ProviderDecisionWAL:
         result_hash = None
         result = None
         error_category = None
+        cooldown = None
+        http_status = None
         for event in record["events"]:
             if event["kind"] == "response_saved":
                 result_hash = event["result_sha256"]
             elif event["kind"] == "failed":
                 error_category = event["error_category"]
+                cooldown = _freeze(event.get("cooldown"))
+                http_status = event.get("http_status")
         if state in {"response_received", "consumed"}:
             result = _freeze(record["result"])
         return DecisionRecord(
@@ -782,6 +840,8 @@ class ProviderDecisionWAL:
             result=result,
             error_category=error_category,
             event_count=len(record["events"]),
+            cooldown=cooldown,
+            http_status=http_status,
         )
 
     def reserve(self, identity: ProviderDecisionIdentity, request: dict) -> DecisionRecord:
@@ -887,13 +947,17 @@ class ProviderDecisionWAL:
             return self._view(record)
 
     def record_error(self, identity: ProviderDecisionIdentity, request: dict,
-                     category: str, phase: str) -> DecisionRecord:
+                     category: str, phase: str, *,
+                     cooldown: dict | None = None,
+                     http_status: int | None = None) -> DecisionRecord:
         """Persist only a safe error category; never serialize exception text/body."""
         if type(category) is not str or category not in _ERROR_CATEGORIES:
             raise ValueError("Unsupported provider error category")
         if (type(phase) is not str
                 or phase not in {NOT_SENT, MAY_HAVE_BEEN_SENT, RESPONSE_RECEIVED}):
             raise ValueError("Unsupported provider delivery phase")
+        safe_cooldown = _validate_cooldown(cooldown, category=category, phase=phase)
+        safe_status = _validate_http_status(http_status, phase=phase)
         request_hash = _request_sha256(request)
         with _writer_lock(self.path):
             document = _read_document(self.path)
@@ -901,7 +965,9 @@ class ProviderDecisionWAL:
             view = self._view(record)
             if view.state in {"failed", "ambiguous"}:
                 latest = record["events"][-1]
-                if latest["phase"] == phase and latest["error_category"] == category:
+                if (latest["phase"] == phase and latest["error_category"] == category
+                        and latest.get("cooldown") == safe_cooldown
+                        and latest.get("http_status") == safe_status):
                     return view
                 raise WALIdentityConflict("A different provider error is already durable")
             if view.state == "reserved":
@@ -918,6 +984,8 @@ class ProviderDecisionWAL:
                 raise WALInvalidTransition("Provider error does not match the durable send phase")
             self._append_event(
                 document, record, "failed", phase, error_category=category,
+                **({"cooldown": safe_cooldown} if safe_cooldown is not None else {}),
+                **({"http_status": safe_status} if safe_status is not None else {}),
             )
             record["error_category"] = category
             _seal_record(record)
