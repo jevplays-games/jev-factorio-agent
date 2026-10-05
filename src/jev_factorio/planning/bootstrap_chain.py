@@ -138,10 +138,17 @@ def catalog_projection(snapshot, catalog, plans):
                     'sources': {source: deepcopy(observed_routes[source])}}
         marker = ((plan.materials or {}).get('bootstrap_output_pickup')
                   or (plan.materials or {}).get('recipe_input_transfer')
-                  or (plan.materials or {}).get('output_pickup'))
+                  or (plan.materials or {}).get('output_pickup')
+                  or (plan.materials or {}).get('craft_dependency'))
         if not isinstance(marker, dict):continue
         path = marker.get('planner_item_path')
         if not isinstance(path, list):continue
+        if 'craft_dependency' in (plan.materials or {}):
+            craft_recipe = catalog.recipes.get(marker.get('recipe'))
+            if craft_recipe is not None:
+                recipes[craft_recipe['name']] = deepcopy(craft_recipe)
+                category = craft_recipe['category']
+                hand[category] = bool(catalog.hand_categories.get(category))
         if 'output_pickup' in (plan.materials or {}):
             role = marker.get('source_role', '')
             source_recipe = catalog.recipes.get(role.removeprefix('recipe:'))
