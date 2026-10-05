@@ -35,3 +35,56 @@ low overall confidence, model abstention, unsupported progress, missing start
 evidence and uncertain disruption. Production recovery must use reviewed signed
 source and a fresh exact-checkpoint admission through the existing owner. It
 must retain the previous failed requests and verify native progress afterward.
+
+## Production result and missing overlap evidence
+
+PR #357 was merged as `62b4436` and deployed through the existing owner with
+one exact-checkpoint admission. Its real production request at tick 7484808
+included the scheduling explanation, but JEV reported 0.44 confidence (craft
+probability 0.63). The unchanged 0.45 gate rejected it. No native action followed.
+The earlier 0.62 diagnostic was therefore insufficient evidence of recovery.
+The rejected attempt and consumed admission remain part of the campaign history.
+
+The request also omitted an explicit comparison of action ordering. A
+receipt-tracked background craft can start before an independent gather; the
+native queue may then run during that later gathering. Gathering first leaves
+the craft unstarted throughout the gather. The new `independent_gather_overlap`
+evidence explains this conditional opportunity only for two current immediate
+prerequisites of the same local target, with current craft-start witnesses,
+available inputs, a receipt identity, an observed gather target, no gather costs,
+and no conflict with the craft's locked outputs. Unknown travel, urgency, stale
+evidence, different targets or missing readiness suppress the comparison.
+Inputs are explicitly available, not yet paid. Native admission, a fresh
+observation, a later JEV decision and the output receipt remain necessary.
+No elapsed-time saving or completed production is asserted. Both alternatives,
+observe, ranking and every judgment gate remain unchanged. If the request budget
+removes the gather, it also removes the comparison without mutating input state.
+
+A single changed-evidence diagnostic reused the exact tick-7484808 request,
+including all questions and both candidates; its only addition was this evidence
+field. The request was 35,326 bytes. JEV selected crafting with 0.71 confidence,
+0.81 choice probability and 0.86 usefulness probability. Exact retained-answer
+replay passed the unchanged selector. This is still diagnostic evidence, not a
+live action or multi-day reliability result. The focused suite passed 344 tests.
+
+## Fast recurrence triage
+
+1. Read the existing owner, child PID, checkpoint reason, latest useful tick and
+   service state together. A live process and advancing game tick do not prove
+   useful controller progress. Preserve the campaign identity and ownership lock.
+2. Capture the last actual model request and answer, including offered candidates,
+   request-budget pruning and each rejected gate. Compare those with the deployed
+   source and current native observation before attributing a stop to infrastructure.
+3. Keep the OBS Program status accurate. Preview selection is insufficient;
+   read back Program and stream state and inspect its screenshot.
+4. For a semantic block, repair missing, independently checked evidence. Validate
+   the changed request against the retained one and run one diagnostic per distinct
+   repair. Retain a rejected answer; do not repeat unchanged requests until one
+   happens to pass, lower confidence floors or discard failure history.
+5. Test unchanged vetoes and evidence rejection cases, publish signed source,
+   complete CI and merge, then deploy the merged tree through the existing owner.
+   A consumed maintenance admission cannot be replayed. Preserve the exact stopped
+   checkpoint, source lineage, receipts and all unresolved ownership.
+6. Verify fresh native postconditions and subsequent useful decisions. If the live
+   request rejects the repair, record that outcome and restore the blocked display.
+   A passing offline diagnostic, service restart or successful merge is not recovery.
