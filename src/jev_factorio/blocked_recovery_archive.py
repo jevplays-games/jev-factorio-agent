@@ -467,10 +467,21 @@ def archive_full_tail(checkpoint: Path, memory) -> VerifiedAttemptArchive:
         raise ValueError("Blocked-recovery archive rotation requires a full active tail")
     if (memory.status not in {"running", "blocked"} or memory.active_plan is not None
             or memory.pending is not None or memory.attempt is not None
-            or memory.transfer_recovery is not None
-            or getattr(memory, "background_job", None) is not None
-            or getattr(memory, "background_attempt", None) is not None):
+            or memory.transfer_recovery is not None):
         raise ValueError("Blocked-recovery archive rotation requires a quiescent decision boundary")
+    if any(getattr(memory, key, None) is not None for key in
+           ("background_job", "background_attempt", "background_step")):
+        # A paid background craft is independent of the provider-call ledger.
+        # Reuse the full checkpoint validator before carrying it unchanged
+        # through the pointer commit; never discard or replay its receipt.
+        from .background import BackgroundMemory
+        from .checkpoint_io import checkpoint_data
+        if not isinstance(memory, BackgroundMemory):
+            raise ValueError("Archive rotation requires validated background ownership")
+        type(memory).from_bytes(_canonical(checkpoint_data(memory)),
+                                memory.session_id, memory.target)
+        if memory.background_job is None or memory.background_job.get("failed"):
+            raise ValueError("Archive rotation cannot carry failed background work")
     prior_index = build_index(checkpoint, memory)
     prior_index.close()
     directory = _ensure_directory(checkpoint)
