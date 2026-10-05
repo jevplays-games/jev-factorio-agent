@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import subprocess
+import zlib
 
 from .paid_selection_reconciliation import RECONCILIATION_SIGNERS_SHA256
 
@@ -45,6 +46,76 @@ def _decode(value, maximum):
     return raw
 
 
+def _strict_json(raw):
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            _require(key not in result)
+            result[key] = value
+        return result
+    try:
+        return json.loads(raw, object_pairs_hook=pairs,
+                          parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+    except (ValueError, UnicodeError, RecursionError) as error:
+        raise ValueError('Invalid retained epoch evidence JSON') from error
+
+
+def _retained_history_evidence(evidence, edge, body, owner):
+    """Authenticate a complete original journal row and its launch/result links.
+
+    The enclosing enrolled signature attests the operator's captured source
+    proof. These exact byte preimages replace only the rolling history cache;
+    the current durable consumed row remains mandatory.
+    """
+    from .compatible_recovery import _digest
+    _require(type(evidence) is dict and set(evidence) == {
+        'record_sha256', 'record_zlib_base64', 'prepared_base64', 'result_base64'})
+    compressed = _decode(evidence['record_zlib_base64'], 128 * 1024)
+    try:
+        decoder = zlib.decompressobj()
+        raw = decoder.decompress(compressed, 512 * 1024 + 1)
+    except zlib.error as error:
+        raise ValueError('Invalid retained epoch compression') from error
+    _require(len(raw) <= 512 * 1024 and decoder.eof and not decoder.unused_data
+             and not decoder.unconsumed_tail)
+    _require(hashlib.sha256(raw).hexdigest() == _digest(evidence['record_sha256']))
+    prepared_raw = _decode(evidence['prepared_base64'], 16384)
+    result_raw = _decode(evidence['result_base64'], 16384)
+    _require(hashlib.sha256(prepared_raw).hexdigest() == edge['prepared_sha256']
+             and hashlib.sha256(result_raw).hexdigest() == edge['result_sha256'])
+    record, prepared, result = map(_strict_json, (raw, prepared_raw, result_raw))
+    _require(all(type(value) is dict for value in (record, prepared, result)))
+    provenance = prepared.get('provenance')
+    _require(type(provenance) is dict and record.get('run_id') == owner['run_id']
+             and provenance.get('run_id') == owner['run_id']
+             and type(record.get('execution_id')) is str and record['execution_id']
+             and record['execution_id'] == provenance.get('execution_id')
+             and record.get('code_revision') == provenance.get('code_revision') == edge['current_source']
+             and record.get('session_id') == body['session_id']
+             and record.get('target') == body['target']
+             and record.get('controller') == 'hierarchical' and record.get('policy') == 'jev'
+             and type(record.get('schema_version')) is int and record['schema_version'] == 2
+             and type(record.get('tick')) is int and record['tick'] >= edge['row']['tick'])
+    history = record.get('history')
+    _require(type(history) is list and all(type(event) is dict for event in history))
+    matches = [event for event in history if event.get('kind') == edge['history']['kind']
+               and event.get('source_head') == edge['current_source']['commit']]
+    _require(len(matches) == 1 and _canonical(matches[0]) == _canonical(edge['history']))
+    argv = prepared.get('argv')
+    _require(type(argv) is list and all(type(value) is str for value in argv)
+             and argv.count('--reevaluate-blocked-once') == 1)
+    for flag, expected in (('--blocked-source-revision', edge['previous_source']['commit']),
+                           ('--exact-checkpoint-sha256', edge['row']['checkpoint_sha256'])):
+        _require(argv.count(flag) == 1)
+        position = argv.index(flag) + 1
+        _require(position < len(argv) and argv[position] == expected)
+    _require(result.get('prepared_sha256') == edge['prepared_sha256']
+             and _digest(prepared.get('script_sha256')) == result.get('script_sha256')
+             and type(result.get('exit_code')) is int)
+    _digest(result.get('checkpoint_sha256'))
+    return len(raw)
+
+
 def _verify_signature(raw, signature, signers):
     _require(hashlib.sha256(signers).hexdigest() == RECONCILIATION_SIGNERS_SHA256)
     descriptors = []
@@ -75,7 +146,8 @@ def validate_epoch_witness(witness, memory, record, previous, previous_contract,
     """Authenticate one complete signed bridge and its unchanged consumed rows.
 
     Ordinary history can roll away later; the signed event preimages remain.
-    A live authorizer requires them before appending the durable record.
+    A live v1 authorizer requires them in the current history. V2 also binds
+    complete retained gameplay and launcher records when that cache rolled.
     """
     from .blocked_persistence import _source
     from .compatible_recovery import _digest
@@ -83,10 +155,11 @@ def validate_epoch_witness(witness, memory, record, previous, previous_contract,
              {"body", "signature_base64", "signers_base64"})
     body = witness["body"]
     _require(type(body) is dict and set(body) == _FIELDS
-             and body["schema"] == "jev.compatible-epoch-boundary.v1"
+             and body["schema"] in {"jev.compatible-epoch-boundary.v1", "jev.compatible-epoch-boundary.v2"}
              and body["session_id"] == memory.session_id and body["target"] == memory.target)
     raw = _canonical(body)
-    _require(len(raw) <= 128 * 1024)
+    retained_history = body['schema'] == 'jev.compatible-epoch-boundary.v2'
+    _require(len(raw) <= (1024 * 1024 if retained_history else 128 * 1024))
     for key in ("terminal_checkpoint_sha256", "authorization_sha256", "prior_lineage_sha256",
                 "previous_contract_sha256", "current_contract_sha256"):
         _digest(body[key])
@@ -111,8 +184,10 @@ def validate_epoch_witness(witness, memory, record, previous, previous_contract,
     _require(type(ledger) is list and all(type(row) is dict for row in ledger)
              and type(memory.history) is list
              and all(type(event) is dict for event in memory.history))
+    decoded_history_bytes = 0
     for edge in edges:
-        _require(type(edge) is dict and set(edge) == _EDGE)
+        _require(type(edge) is dict and set(edge) ==
+                 (_EDGE | {'history_evidence'} if retained_history else _EDGE))
         old, new = _source(edge["previous_source"]), _source(edge["current_source"])
         _digest(old["source_sha256"])
         _digest(new["source_sha256"])
@@ -148,7 +223,11 @@ def validate_epoch_witness(witness, memory, record, previous, previous_contract,
         retained = [item for item in memory.history
                     if item.get("kind") == event["kind"]
                     and item.get("source_head") == event["source_head"]]
-        _require((not require_live_history or len(retained) == 1)
+        if retained_history:
+            decoded_history_bytes += _retained_history_evidence(
+                edge['history_evidence'], edge, body, record['owner_invocation'])
+            _require(decoded_history_bytes <= 8 * 1024 * 1024)
+        _require((not require_live_history or len(retained) == 1 or retained_history)
                  and len(retained) <= 1
                  and all(_canonical(item) == _canonical(event) for item in retained))
         ids.add(row["authorization_id"])
