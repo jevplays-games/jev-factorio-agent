@@ -1,7 +1,9 @@
 """Bounded, durable provider circuit; inference recovery never mutates the game."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import inspect
 import json
 import math
 import time
@@ -20,8 +22,10 @@ class ProviderPayloadError(ValueError):
 
 
 class ProviderBlocked(RuntimeError):
-    def __init__(self, state: dict, *, called: bool):
+    def __init__(self, state: dict, *, called: bool, identity=None,
+                 delivery_phase: str | None = None):
         self.state, self.called = dict(state), called
+        self.identity, self.delivery_phase = identity, delivery_phase
         super().__init__("Provider access blocked: " + state["category"])
 
 
@@ -62,6 +66,10 @@ class ProviderCircuit:
                       "last_recovery_at": None, "previous_incident": None,
                       "budget_category": None, "budget_limit": None,
                       "in_flight": None}
+        # Async callers share the same durable one-flight gate. The lock keeps
+        # concurrent tasks on this instance from reconciling one another's
+        # still-active reservation as a crash.
+        self._async_lock = None
         if path is not None:
             stored = read_json(path)
             if stored is not None:
@@ -138,6 +146,10 @@ class ProviderCircuit:
         return True
 
     def evaluate(self, state: dict, questions: dict) -> dict:
+        if self._async_lock is not None and self._async_lock.locked():
+            raise RuntimeError("provider health circuit has an active async evaluation")
+        if inspect.iscoroutinefunction(getattr(self.client, "evaluate", None)):
+            raise TypeError("synchronous evaluate cannot use an async provider client; use evaluate_async")
         self.client.last_usage = self.client.last_model = None
         now = self.clock()
         if self._reconcile_in_flight(now):
@@ -226,6 +238,185 @@ class ProviderCircuit:
             self.state = reservation
             raise
         return answers
+
+    async def evaluate_async(self, state: dict, questions: dict, *, identity,
+                             deadline: float | None = None):
+        """Run one explicit async request through the existing durable circuit.
+
+        Async clients return immutable per-request results rather than the
+        synchronous client's shared ``last_usage``/``last_model`` fields. This
+        method preserves that result and identity, validates a detached copy of
+        its answers, and uses the same persisted budgets and recovery gates.
+        """
+        from .async_provider import (
+            AsyncProviderQueueFull,
+            RequestIdentity,
+            snapshot_json,
+        )
+
+        if not isinstance(identity, RequestIdentity):
+            raise TypeError("identity must be a RequestIdentity")
+        if (deadline is not None
+                and (not isinstance(deadline, (int, float)) or isinstance(deadline, bool)
+                     or not math.isfinite(deadline))):
+            raise ValueError("deadline must be an absolute finite monotonic timestamp")
+        evaluate = getattr(self.client, "evaluate", None)
+        if evaluate is None or not inspect.iscoroutinefunction(evaluate):
+            raise TypeError("evaluate_async requires an explicit async provider client")
+        if not isinstance(state, dict) or not isinstance(questions, dict):
+            raise TypeError("async provider state and questions must be JSON objects")
+        request = snapshot_json({"state": state, "questions": questions})
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
+        if self._async_lock.locked():
+            raise AsyncProviderQueueFull("provider health circuit is already evaluating", identity)
+        async with self._async_lock:
+            return await self._evaluate_async_locked(
+                request["state"], request["questions"], identity=identity,
+                deadline=deadline)
+
+    async def _evaluate_async_locked(self, state: dict, questions: dict, *, identity,
+                                     deadline: float | None):
+        from .async_provider import (
+            AsyncProviderCancelled,
+            AsyncProviderLocalError,
+            AsyncProviderPayloadError,
+            AsyncProviderResult,
+            NOT_SENT,
+        )
+
+        now = self.clock()
+        if self._reconcile_in_flight(now):
+            raise ProviderBlocked(self.state, called=False, identity=identity,
+                                  delivery_phase=NOT_SENT)
+        self._authorization()
+        if self.state["phase"] == "exhausted" or now < self.state["next_probe_at"]:
+            raise ProviderBlocked(self.state, called=False, identity=identity,
+                                  delivery_phase=NOT_SENT)
+
+        before_attempt = deepcopy(self.state)
+        healthy_start = self.state["phase"] == "healthy"
+        if not healthy_start:
+            self.state["attempts"] += 1
+            budget = self.state.get("budget_category") or self.state.get("category")
+            maximum = self.state.get("budget_limit") or self._limit(budget)
+            self.state["phase"] = "exhausted" if self.state["attempts"] >= maximum else "cooldown"
+            self.state["budget_category"] = budget
+            self.state["budget_limit"] = maximum
+            self.state["next_probe_at"] = now + self._delay(budget, self.state["attempts"])
+        self.state["in_flight"] = {"request_id": str(uuid4()), "started_at": now,
+                                   "healthy_start": healthy_start}
+        reservation = deepcopy(self.state)
+        try:
+            self._save()
+        except BaseException:
+            self.state = reservation
+            raise
+
+        try:
+            result = await self.client.evaluate(state, questions, identity=identity,
+                                                deadline=deadline)
+            if (not isinstance(result, AsyncProviderResult)
+                    or result.identity != identity
+                    or not isinstance(result.requested_model, str)
+                    or not result.requested_model.strip()
+                    or not isinstance(result.request_payload_sha256, str)
+                    or len(result.request_payload_sha256) != 64
+                    or any(char not in "0123456789abcdef" for char in
+                           result.request_payload_sha256)):
+                raise AsyncProviderPayloadError(identity, "Provider result identity or metadata rejected")
+            from .judgments import InvalidJudgment, validate_answers
+
+            def mutable(value):
+                from collections.abc import Mapping
+
+                if isinstance(value, Mapping):
+                    return {key: mutable(item) for key, item in value.items()}
+                if isinstance(value, (list, tuple)):
+                    return [mutable(item) for item in value]
+                return value
+
+            try:
+                validate_answers(questions, mutable(result.answers),
+                                 quantum=getattr(self.client, "answer_quantum", 0))
+            except InvalidJudgment as error:
+                raise AsyncProviderPayloadError(identity, "Provider answer schema rejected") from error
+        except BaseException as error:
+            # The transport can prove that queue/deadline/cancellation stopped
+            # before HTTPX entry. Release that reservation without charging a
+            # provider-health attempt. If the release write fails, keep the
+            # persisted in-flight reservation so recovery remains fail-closed.
+            if (isinstance(error, (AsyncProviderLocalError, AsyncProviderCancelled))
+                    and getattr(error, "delivery_phase", None) == NOT_SENT):
+                self.state = before_attempt
+                try:
+                    self._save()
+                except BaseException:
+                    self.state = reservation
+                    raise
+                raise
+
+            if isinstance(error, (requests.RequestException, ProviderPayloadError)):
+                kind = category(error)
+                if kind is not None:
+                    if healthy_start:
+                        attempts = 1
+                        budget_limit = self._limit(kind)
+                        budget_category = kind
+                        self.state.update(incident_id=str(uuid4()), first_failure_at=now,
+                                          attempts=attempts, budget_category=budget_category,
+                                          budget_limit=budget_limit)
+                    else:
+                        attempts = self.state["attempts"]
+                        budget_category = self.state.get("budget_category") or kind
+                        budget_limit = min(self.state.get("budget_limit") or self._limit(budget_category),
+                                           self._limit(kind))
+                        self.state.update(budget_category=budget_category, budget_limit=budget_limit)
+                    delay = self._delay(budget_category, attempts)
+                    response = error.response if isinstance(error, requests.HTTPError) else None
+                    if response is not None:
+                        try:
+                            retry_after = float(response.headers.get("Retry-After", "0"))
+                            if math.isfinite(retry_after):
+                                delay = max(delay, min(3600, max(0, retry_after)))
+                        except (ValueError, TypeError):
+                            try:
+                                retry_at = parsedate_to_datetime(
+                                    response.headers.get("Retry-After", "")).timestamp()
+                                delay = max(delay, min(3600, max(0, retry_at - now)))
+                            except (ValueError, TypeError, OverflowError):
+                                pass
+                    self.state.update(category=kind,
+                                      phase="exhausted" if attempts >= budget_limit else "cooldown",
+                                      next_probe_at=now + delay, in_flight=None)
+                    try:
+                        self._save()
+                    except BaseException:
+                        self.state = reservation
+                        raise
+                    raise ProviderBlocked(
+                        self.state, called=True, identity=getattr(error, "identity", identity),
+                        delivery_phase=getattr(error, "delivery_phase", None),
+                    ) from None
+            # A possibly-sent cancellation, an unclassified exception, or a
+            # process interruption leaves the reservation in place. A later
+            # call reconciles it as unknown and cannot silently replay it.
+            raise
+
+        if not healthy_start:
+            self.state.update(previous_incident={key: self.state[key] for key in
+                              ("incident_id", "category", "attempts", "first_failure_at")},
+                              phase="healthy", category=None, attempts=0, next_probe_at=0,
+                              last_recovery_at=now, incident_id=None, first_failure_at=None,
+                              budget_category=None, budget_limit=None, in_flight=None)
+        else:
+            self.state["in_flight"] = None
+        try:
+            self._save()
+        except BaseException:
+            self.state = reservation
+            raise
+        return result
 
     def _authorization(self):
         if self.path is None or self.state["phase"] == "healthy":

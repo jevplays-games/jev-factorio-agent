@@ -7,9 +7,11 @@ Gateway:     Vercel AI Gateway, model id "typesafe-ai/jev",
 """
 from __future__ import annotations
 
+import asyncio
 import math
 import os
 import time
+from collections.abc import Mapping
 
 import requests
 
@@ -17,6 +19,7 @@ from .async_provider import (
     AsyncProviderClient,
     AsyncProviderDeadlineExceeded,
     AsyncProviderPayloadError,
+    AsyncProviderQueueFull,
     AsyncProviderResult,
     RequestIdentity,
     make_result,
@@ -248,6 +251,149 @@ class AsyncMockJevClient:
 
     async def __aexit__(self, exc_type, exc, traceback):
         await self.aclose()
+
+
+class AsyncTracedClient:
+    """Explicit async counterpart to the synchronous causal trace wrapper.
+
+    The caller supplies the immutable provider identity for each request. A
+    trace is one serialized actor context; separate traces may run concurrently
+    without sharing model, usage, or identity metadata.
+    """
+
+    def __init__(self, client, trace):
+        self._client, self._trace = client, trace
+        self._trace_lock = None
+
+    def __getattr__(self, name):
+        return getattr(self._client, name)
+
+    async def evaluate(self, state: dict, questions: dict, *, identity: RequestIdentity,
+                       deadline: float | None = None) -> AsyncProviderResult:
+        if not isinstance(identity, RequestIdentity):
+            raise TypeError("identity must be a RequestIdentity")
+        if (deadline is not None
+                and (not isinstance(deadline, (int, float)) or isinstance(deadline, bool)
+                     or not math.isfinite(deadline))):
+            raise ValueError("deadline must be an absolute finite monotonic timestamp")
+        if not isinstance(state, dict) or not isinstance(questions, dict):
+            raise TypeError("async provider state and questions must be JSON objects")
+        request = snapshot_json({"state": state, "questions": questions})
+        state, questions = request["state"], request["questions"]
+        trace = self._trace
+        if not trace.enabled:
+            result = await self._evaluate(state, questions, identity, deadline)
+            if (not isinstance(result, AsyncProviderResult)
+                    or result.identity != identity):
+                raise AsyncProviderPayloadError(
+                    identity, "Provider result identity does not match request")
+            return result
+        if self._trace_lock is None:
+            self._trace_lock = getattr(trace, "_async_provider_trace_lock", None)
+            if self._trace_lock is None:
+                self._trace_lock = asyncio.Lock()
+                trace._async_provider_trace_lock = self._trace_lock
+        if self._trace_lock.locked():
+            raise AsyncProviderQueueFull("causal trace is already evaluating a provider", identity)
+        async with self._trace_lock:
+            if trace._failed:
+                from .research_log import ResearchLogError
+
+                raise ResearchLogError("Causal trace has failed")
+            self._require_context(identity)
+            reservation = trace._reserve_async_provider_call()
+            model_call_id = None
+            try:
+                trace.model_call_id = trace.identity("model")
+                model_call_id = trace.model_call_id
+                provider_identity = self._identity_payload(identity)
+                requested_model = getattr(self._client, "model", None)
+                trace.emit("model_request", {
+                    "state": state,
+                    "questions": questions,
+                    "requested_model": requested_model,
+                    "is_mock": getattr(self._client, "is_mock", False),
+                    "dispatch": "prepared",
+                    "provider_identity": provider_identity,
+                })
+                if not self._context_matches(identity, model_call_id):
+                    from .research_log import ResearchLogError
+
+                    trace._failed = True
+                    raise ResearchLogError(
+                        "Causal context changed before an async provider request")
+                try:
+                    result = await self._evaluate(state, questions, identity, deadline)
+                    if not self._context_matches(identity, model_call_id):
+                        from .research_log import ResearchLogError
+
+                        trace._failed = True
+                        raise ResearchLogError(
+                            "Causal context changed during an async provider request")
+                    if (not isinstance(result, AsyncProviderResult)
+                            or result.identity != identity):
+                        raise AsyncProviderPayloadError(
+                            identity, "Provider result identity does not match request")
+                    trace.emit("model_response", {
+                        "status": "ok",
+                        "answers": _mutable_provider_json(result.answers),
+                        "requested_model": result.requested_model,
+                        "resolved_model": _mutable_provider_json(result.resolved_model),
+                        "usage": _mutable_provider_json(result.usage),
+                        "request_payload_sha256": result.request_payload_sha256,
+                        "provider_identity": provider_identity,
+                    })
+                except BaseException as error:
+                    if not self._context_matches(identity, model_call_id):
+                        # The response/error belongs to the original request,
+                        # but the shared trace envelope has moved. Poison the
+                        # trace rather than writing those facts under new IDs.
+                        trace._failed = True
+                        raise
+                    trace.error("model_response", error,
+                                requested_model=requested_model,
+                                provider_identity=provider_identity,
+                                delivery_phase=getattr(error, "delivery_phase", None))
+                    raise
+                return result
+            finally:
+                trace._release_async_provider_call(reservation)
+
+    async def _evaluate(self, state, questions, identity, deadline):
+        async_method = getattr(self._client, "evaluate_async", None)
+        if callable(async_method):
+            return await async_method(state, questions, identity=identity, deadline=deadline)
+        return await self._client.evaluate(state, questions, identity=identity, deadline=deadline)
+
+    def _require_context(self, identity: RequestIdentity) -> None:
+        trace = self._trace
+        if (trace.decision_id != identity.decision_id
+                or trace.observation_id != identity.observation_id
+                or trace._session_id != identity.session_id):
+            raise ValueError("provider identity does not match the active causal trace")
+
+    def _context_matches(self, identity: RequestIdentity, model_call_id) -> bool:
+        trace = self._trace
+        return (trace.decision_id == identity.decision_id
+                and trace.observation_id == identity.observation_id
+                and trace._session_id == identity.session_id
+                and trace.model_call_id == model_call_id)
+
+    @staticmethod
+    def _identity_payload(identity: RequestIdentity) -> dict:
+        return {"session_id": identity.session_id,
+                "actor_id": identity.actor_id,
+                "observation_id": identity.observation_id,
+                "decision_id": identity.decision_id,
+                "request_id": identity.request_id}
+
+
+def _mutable_provider_json(value):
+    if isinstance(value, Mapping):
+        return {key: _mutable_provider_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_mutable_provider_json(item) for item in value]
+    return value
 
 
 def make_client(*, allow_mock: bool = True, model: str | None = None) -> object:
