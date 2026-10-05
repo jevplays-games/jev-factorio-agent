@@ -130,6 +130,33 @@ def producer_resupply(planner: ReadyWorkPlanner, primary: Plan) -> Plan | None:
     return min(choices, key=lambda row: row[:-1])[-1] if choices else None
 
 
+
+def _preparation_parent_path(catalog, researched, root, material):
+    """Keep a bounded current recipe ancestry when probing one ingredient."""
+    remaining = 128
+    def visit(item, path):
+        nonlocal remaining
+        remaining -= 1
+        if remaining < 0 or len(path) >= 32 or item in path:
+            return None
+        if item == material:
+            return tuple('item:' + parent for parent in path)
+        try:
+            recipe = catalog.recipe_for(item)
+            if not catalog.enabled(recipe, researched):
+                return None
+            ingredients = sorted({row['name'] for row in recipe['ingredients']
+                                  if row.get('type') == 'item'})
+        except (KeyError, TypeError, ValueError):
+            return None
+        for ingredient in ingredients:
+            found = visit(ingredient, (*path, item))
+            if found is not None:
+                return found
+        return None
+    return visit(root, ())
+
+
 def prepare_research_batch(planner: ReadyWorkPlanner, primary: Plan) -> Plan:
     """Prepare at most one extra current-research batch beyond lab inventory.
 
@@ -171,8 +198,13 @@ def prepare_research_batch(planner: ReadyWorkPlanner, primary: Plan) -> Plan:
             probe.focus, probe.demands = current.focus, dict(current.demands)
             probe.raw_targets = dict(current.raw_targets)
             probe.speculative = True
+            parent_path = _preparation_parent_path(
+                planner.catalog, planner.snapshot.researched or [], item, material)
+            if parent_path is None:
+                rejected.add('unlinked_preparation_ingredient')
+                continue
             try:
-                options.append(probe._need(material, amount))
+                options.append(probe._need(material, amount, parent_path))
             except (ValueError, KeyError):
                 rejected.add('unsupported_ingredient')
         for option in options:

@@ -215,3 +215,30 @@ tick, or recent successful action is insufficient evidence of sustained play.
 Continue active monitoring across later crafts, research and production stages,
 and record each new hold separately. No uninterrupted multi-day soak has yet
 been demonstrated.
+
+
+## Follow-up: research-preparation probes dropped their parent path
+
+During the extended V19 watch, the game completed and delivered another science
+batch, then briefly held an iron-furnace service at tick 10733246. Unlike the
+previous permanent gear hold, this cleared naturally when current factory facts
+changed. No owner restart or manual model retry was used. The retained native
+observation nevertheless exposed a planner provenance defect: the local target
+was 15 automation science packs, but an ingredient probe began its path at
+iron gears. The paid-service input witness correctly rejected that mismatch.
+
+When probing a current-research ingredient, retain its bounded, enabled native
+recipe ancestry from the science target. Reject unrelated, disabled, cyclic or
+over-budget ancestry. The captured composed planner produces the identical
+service ID, two transfers, quantities, receipts, research deadline and lookahead
+scope after this correction; only the missing science parent is restored, which
+allows the existing producer to emit its paid-input evidence. This does not
+relax the consumer's narrower immediate-service qualifier or force JEV approval.
+The retained rejected JEV answer still blocks execution.
+
+For a short hold during research, capture the exact native observation as well
+as the model request. Compare local target, dependency-path root, preparation
+quantity, lab inventory and research progress before interpreting the hold as a
+crash. Distinguish a hold that clears on changed facts from a permanent repeated
+frontier. Preserve both in the monitoring record. Do not interrupt a progressing
+campaign merely to replace its source; use a qualified idle recovery boundary.
