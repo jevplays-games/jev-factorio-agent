@@ -1,6 +1,8 @@
 """Audit recorded producer references without manufacturing causal identities."""
 from __future__ import annotations
 
+from .request_order import RequestOrderError, reconstruct_request
+
 
 def audit_producer(events: list[dict], report) -> None:
     observations, models, actions, plans, frames = {}, {}, {}, {}, {}
@@ -160,6 +162,7 @@ def audit_producer(events: list[dict], report) -> None:
         frame = frames.setdefault((trace, decision), {
             "trace_id": trace, "decision_id": decision, "evidence": [],
             "selection": None, "actions": [], "missing_evidence": [],
+            "model_calls": [],
         })
         frame["evidence"].append(event)
         observation = payload.get("observation_id")
@@ -186,7 +189,35 @@ def audit_producer(events: list[dict], report) -> None:
             elif (trace, model) in models:
                 issue("duplicate_model_request", "Model call identity is reused")
             else:
-                models[trace, model] = {"request": event, "result": None}
+                if "request_order" not in payload:
+                    request_order_status = "unavailable"
+                    reconstructed_request = None
+                    issue("request_order_unavailable",
+                          "Captured model request has no explicit supported ordering claim", "gap")
+                else:
+                    try:
+                        reconstructed_request = reconstruct_request(
+                            payload.get("state"), payload.get("questions"),
+                            payload["request_order"],
+                        )
+                    except RequestOrderError:
+                        request_order_status = "invalid"
+                        reconstructed_request = None
+                        issue("invalid_request_order",
+                              "Captured model request ordering is malformed or conflicts with its request")
+                    else:
+                        request_order_status = "validated"
+                model_call = {
+                    "model_call_id": model,
+                    "request": event,
+                    "request_order_status": request_order_status,
+                    "reconstructed_request": reconstructed_request,
+                    "response": None,
+                }
+                frame["model_calls"].append(model_call)
+                models[trace, model] = {
+                    "request": event, "result": None, "report": model_call,
+                }
         elif kind == "model_response":
             call = models.get((trace, model))
             if call is None:
@@ -197,6 +228,7 @@ def audit_producer(events: list[dict], report) -> None:
                 issue("model_decision_conflict", "Model response belongs to another decision")
             else:
                 call["result"] = event
+                call["report"]["response"] = event
         elif kind == "decision":
             if frame["selection"] is not None:
                 issue("duplicate_decision", "Decision identity has multiple selections")

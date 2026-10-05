@@ -12,6 +12,7 @@ from uuid import uuid4
 import requests
 
 from .research_log import EventSink, ResearchLogError, _safe_observation_payload, safe_payload
+from .request_order import RequestOrderError, describe_request_order, snapshot_request
 from .iteration_timing import profiled_iteration, measured, span
 from .timing_attribution import elapsed_clocks, sample_clocks
 
@@ -196,6 +197,10 @@ class CausalTrace:
         began, cpu_began = time.perf_counter_ns(), time.process_time_ns()
         failed = False
         try:
+            if event_type == "model_request":
+                payload = dict(payload)
+                payload["request_order"] = describe_request_order(
+                    payload.get("state"), payload.get("questions"))
             envelope = {"trace_id": self.trace_id, "controller": self.controller,
                         "decision_id": self.decision_id,
                         "observation_id": self.observation_id,
@@ -378,6 +383,13 @@ class TracedClient:
     def evaluate(self, state: dict, questions: dict) -> dict:
         trace, client = self._trace, self._client
         trace._require_sync_provider_admission()
+        if trace.enabled:
+            try:
+                request = snapshot_request(state, questions)
+            except RequestOrderError:
+                trace._failed = True
+                raise ResearchLogError("Cannot capture a bounded model request") from None
+            state, questions = request["state"], request["questions"]
         trace.model_call_id = trace.identity("model")
         payload = {"state": state, "questions": questions,
                    "requested_model": getattr(client, "model", None),
