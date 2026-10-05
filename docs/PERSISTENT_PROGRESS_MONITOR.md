@@ -13,6 +13,24 @@ background-job completion when deriving the latest progress tick. Use a pinned
 adapter that verifies the expected VM/session and reads only bounded status,
 checkpoint and process metadata. Never copy credentials into probe output.
 
+For a running background craft, a probe may also supply `background_craft`.
+Use `background_sample(checkpoint)` to bind its receipt, requested batch count,
+finished count and progress/deadline ticks to the checkpoint's session, attempt
+and exact saved-step fingerprint. This projection trusts the pinned controller's
+retained native observation; it does not independently inspect the game. Omit
+this optional evidence when no tracked craft exists. Existing probes retain
+their completed-action-only behavior.
+
+The monitor requires two observations of the same craft with both its finished
+count and native event tick increasing. Only then can it report `progressing`
+with reason `tracked craft is advancing`. It preserves the separate completed
+useful-action timestamp and age. A first observation, replacement receipt,
+repeated count or rewritten heartbeat cannot refresh the craft's progress time.
+If counts stop advancing for the stall interval, the warning returns. Regressed,
+inconsistent or expired craft evidence is unknown; controller blocks, uncertain
+actions, stopped processes and completion retain precedence. Monitoring never
+unlocks craft outputs or grants a gameplay retry.
+
 By default, sample every 15 seconds, label heartbeats older than 30 seconds
 unknown, and flag 120 seconds without verified useful progress. Policy blocks
 and uncertain actions are visible immediately. Pending native work remains
@@ -48,3 +66,11 @@ service enablement and the actual rendered display after installation. Probe
 and display errors, monitoring-service downtime, and gameplay blocks are separate
 conditions; this observer does not provide an external paging service or prove
 multi-day gameplay reliability.
+
+On October 5, a native 20-pack logistic-science craft advanced from 8 packs at
+tick 10927618 to 18 at tick 10931102, then completed at 10931702. The earlier
+completed-action-only monitor briefly raised a no-progress warning during this
+valid long craft. The regression case retains those observed counters and
+checks that advancing work avoids that warning while a frozen counter still
+expires after 120 seconds. This corrects a display false alarm; it does not
+resolve JEV decision holds or establish multi-day reliability.
