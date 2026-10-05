@@ -3161,6 +3161,7 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
                 prior = max(snapshot.inventory.get(step.item, 0),
                             harvest_thresholds.get(step.item, 0))
                 remaining = max(0, step.threshold - prior)
+                actor += remaining * RAW_TICKS_PER_ITEM
                 harvest_thresholds[step.item] = max(prior, step.threshold)
                 quantities += remaining
                 outputs.add(step.item)
