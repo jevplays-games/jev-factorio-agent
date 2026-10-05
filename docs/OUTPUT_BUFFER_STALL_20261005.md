@@ -175,3 +175,43 @@ A single read-only diagnostic with this added evidence selected the same pickup
 at confidence 0.55, useful probability 0.83, and missing-observation probability
 0.23, passing the unchanged gates with both original candidates offered. That
 diagnostic dispatched nothing and is separate from production acceptance.
+
+
+## Follow-up: receipt-tracked craft omitted current recipe demand
+
+V18 resumed the iron pickup, made 20 gears and 20 science packs, delivered
+science to the lab, and gathered another batch of ingredients. At 2026-10-05
+11:43:54 UTC (tick 9936012), it held on a 20-gear craft with 40 carried iron
+plates and no carried gears. The controller process and guest were alive.
+Global JEV choice confidence was 0.96, but the independent usefulness answer
+was unsupported (0.51 versus 0.49 useful), so strict policy withheld execution.
+
+The prior pickup repair did not cover crafting. Craft start readiness and item
+path names were present, but the request lacked independently projected native
+parent-recipe quantities and the current product deficit. Lifetime production
+included 75 gears; those counts do not describe currently carried materials.
+
+For a single receipt-tracked immediate craft, project the current craft recipe
+and selected parent dependency chain. Recompute bounded batches, paid inputs,
+actor/queue/protocol readiness, product deficit, receipt identity, session, tick
+and catalog version before adding the demand-specific usefulness question.
+A direct-target craft uses its own current inventory shortfall. This evidence
+covers only the selected branch and proves neither future craft completion nor
+the full target bill. Keep the original independent JEV and native gates.
+
+To diagnose this case quickly, preserve the last rejected model request and
+compare `craft_start_evidence`, `craft_dependency`, current `facts.inventory`,
+and `facts.factory.recipe_dependency_catalog`. Check the independent usefulness
+answer even when global choice is confident. Replaying that original answer
+must still reject execution. A changed-evidence read-only native diagnostic at
+tick 10626210 passed the unchanged gates (choice 0.99, useful probability 0.73,
+usefulness confidence 0.46, missing-observation probability 0.13) in 28704 bytes,
+with the original sole candidate and no dispatch. This is diagnostic evidence,
+not production acceptance.
+
+The persistent monitor correctly displayed the stall; it detects progress loss
+but does not repair semantic evidence defects. An alive process, advancing game
+tick, or recent successful action is insufficient evidence of sustained play.
+Continue active monitoring across later crafts, research and production stages,
+and record each new hold separately. No uninterrupted multi-day soak has yet
+been demonstrated.
