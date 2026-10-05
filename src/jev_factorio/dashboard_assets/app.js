@@ -395,7 +395,9 @@ function render(data) {
   $("observations").replaceChildren(...observed.map(([key, value, hint]) => { const row = el("div"); const term = el("dt", "", key); if (hint) term.title = hint; row.append(term, el("dd", "", value)); return row; }));
   renderInventory(state);
   const latency = el("span", "", " ms"); $("latency").replaceChildren(document.createTextNode(number(v.model_ms, 0)), latency);
-  const usage = object(v.usage || object(v.response).usage);
+  const currentResponse = v.response && typeof v.response === "object" && !Array.isArray(v.response)
+    ? object(v.response) : null;
+  const usage = currentResponse ? object(currentResponse.usage) : object(v.usage);
   set("tokens", short(usage.total_tokens ?? (typeof usage.input_tokens === "number" && typeof usage.output_tokens === "number" ? usage.input_tokens + usage.output_tokens : null)));
   renderCandidates(v);
   STAGES.forEach((_, index) => {
