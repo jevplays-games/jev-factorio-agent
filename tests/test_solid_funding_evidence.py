@@ -76,6 +76,10 @@ def funded_evidence():
             'version': data.version, 'catalog_sha256': funding['catalog_sha256']}}
     for record in rows:
         record['acceptance_configuration']['solid_science_policy'] = True
+        # Match SolidRouteMixin._record_extras for this enabled treatment. A
+        # checkpoint and acceptance label alone are not the emitted producer
+        # record that the analyzer now validates.
+        record['solid_science_policy'] = True
         record.update(solid_funding_schema=1, solid_funding=deepcopy(funding), history=[])
         record['attempt_outcomes'] = deepcopy(outcomes)
         for label in ('state', 'after_state'):
@@ -177,6 +181,7 @@ def test_initial_funding_paid_handoff_has_exact_observed_ownership():
     initial['solid_funding'] = deepcopy(funding)
     for record in rows:
         record['acceptance_configuration']['solid_science_policy'] = True
+        record['solid_science_policy'] = True
         record.update(solid_funding_schema=1, solid_funding=None, history=[])
     rows[0]['history'] = [event('solid_kit_paid_handoff', funding, initial['last_tick'])]
     for record in rows[1:]: record['history'] = deepcopy(rows[0]['history'])
@@ -256,7 +261,9 @@ def test_funding_history_corruption_is_not_a_passing_measurement(mutation):
         initial['solid_funding'] = final['solid_funding'] = None
         initial['solid_science_policy'] = final['solid_science_policy'] = False
         trial['configuration']['solid_science_policy'] = False
-        for record in rows: record['acceptance_configuration']['solid_science_policy'] = False
+        for record in rows:
+            record['acceptance_configuration']['solid_science_policy'] = False
+            record['solid_science_policy'] = False
     assert_rejected(data)
 
 

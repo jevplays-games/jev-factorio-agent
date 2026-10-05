@@ -358,7 +358,13 @@ def test_analyzer_keeps_intermediate_route_unqualified_with_sequence():
         checkpoint['coal_commitments'] = {}
     for index, record in enumerate(rows):
         record['acceptance_configuration'].update(coal_supply=True, coal_kit_policy=True)
-        record['coal_supply_fault'] = False
+        # Mirror CoalSupplyMixin._record_extras for the disabled-economic-
+        # admission composition. The snapshots below model a supported empty
+        # bundle; the producer still emits each declared treatment/evidence
+        # field on every record.
+        record.update(coal_supply=True, coal_supply_fault=False, coal_kit_policy=True,
+                      coal_kit_evidence={}, coal_economic_admission=False,
+                      coal_admission_evidence={})
         for label in ('state', 'after_state'):
             state = record[label]
             state['factory']['coal_supply'] = {'protocol': 1, 'session_id': state['session_id'],
@@ -391,6 +397,7 @@ def test_analyzer_keeps_intermediate_route_unqualified_with_sequence():
                     state['factory']['receipts'][receipt_id] = {
                         'role': role, 'unit_number': unit, 'item': item,
                         'extracting': extracting, 'quantity': qty, 'tick': tick}
+        record['coal_supply_evidence'] = deepcopy(record['state']['factory']['coal_supply'])
     for checkpoint, state in ((initial, rows[0]['state']), (final, rows[-1]['after_state'])):
         checkpoint['solid_commitments'] = {key: commitment(value) for key, value in
             state['factory']['solid_routes']['routes'].items()}

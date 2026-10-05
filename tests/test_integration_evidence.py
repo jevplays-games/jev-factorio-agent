@@ -16,6 +16,11 @@ def configure_output_buffers(args, enabled):
     trial['configuration']['furnace_output_buffers'] = enabled
     for record in rows:
         record['acceptance_configuration'] = deepcopy(trial['configuration'])
+        if enabled:
+            record.update(furnace_output_buffers=True, buffer_evidence={})
+        else:
+            record.pop('furnace_output_buffers', None)
+            record.pop('buffer_evidence', None)
     for checkpoint in (initial, final):
         if enabled:
             checkpoint.update(output_buffers_schema=1, output_commitments={})
@@ -397,6 +402,12 @@ def test_valid_successor_composed_checkpoint_can_be_analyzed():
         args[1]['configuration'][flag] = True
     for record in args[0]:
         record['acceptance_configuration'] = deepcopy(args[1]['configuration'])
+        record.update(background_work=True, background_schema=2,
+                      background_job=None, background_attempt=None,
+                      furnace_output_buffers=True, buffer_evidence={},
+                      furnace_input_belts=True, input_route_evidence={},
+                      input_validation_failure={}, ore_side_successors=True,
+                      successor_evidence={}, successor_projects={})
     value = report.analyze_rows(*args)
     assert value['measurement_checks_passed'], value['issues']
 
@@ -643,6 +654,9 @@ def test_observed_input_commitment_cannot_be_omitted_from_final_checkpoint():
     args[1]['configuration'].update(furnace_output_buffers=True, furnace_input_belts=True)
     for row in args[0]:
         row['acceptance_configuration'] = deepcopy(args[1]['configuration'])
+        row.update(furnace_output_buffers=True, buffer_evidence={},
+                   furnace_input_belts=True, input_route_evidence={},
+                   input_validation_failure={})
     args[0][-1]['after_state']['factory']['input_routes'] = {
         'sources': {'recipe:iron-plate': {'state': 'building'}}}
     assert 'observed_composed_commitment_missing' in report.analyze_rows(*args)['issues']
