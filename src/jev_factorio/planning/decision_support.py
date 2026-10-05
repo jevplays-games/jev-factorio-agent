@@ -3819,44 +3819,49 @@ def defer_gather_until_bill_craft(plans, support: dict, snapshot, memory):
 
 
 def add_craft_overlap_evidence(snapshot, plans, rows):
-    """Explain an observed craft/gather pair without changing its choice frontier.
+    """Explain observed craft/gather pairs without changing their choice frontier.
 
     The craft's inputs are present now; they are not paid until native admission.
     Gathering may overlap only after that admission and a fresh observation.
     """
-    from ..craft_jobs import permits_locked_outputs
-
-    if len(plans) != 2 or len({plan.id for plan in plans}) != 2:
+    if not 2 <= len(plans) <= 32 or len({plan.id for plan in plans}) != len(plans):
         return
     crafts = [p for p in plans if len(p.steps) == 1
               and p.steps[0].action == 'factory_craft_job']
     gathers = [p for p in plans if len(p.steps) == 1
                and p.steps[0].action == 'factory_gather']
-    if len(crafts) != 1 or len(gathers) != 1:
+    if not crafts or len(gathers) != 1:
         return
-    craft, gather = crafts[0], gathers[0]
+    for craft in crafts:
+        _add_craft_gather_pair(snapshot, craft, gathers[0], rows)
+
+
+def _add_craft_gather_pair(snapshot, craft, gather, rows):
+    from ..craft_jobs import permits_locked_outputs
+
     cr, gr = rows.get(craft.id), rows.get(gather.id)
     if not isinstance(cr, dict) or not isinstance(gr, dict):
         return
-    start, dependency = cr.get('craft_start_evidence'), cr.get('craft_dependency')
+    start = cr.get('craft_start_evidence')
     raw, gather_start = gr.get('raw_prerequisite'), gr.get('gather_start_evidence')
-    if not all(isinstance(value, dict) for value in (start, dependency, raw, gather_start)):
+    if not all(isinstance(value, dict) for value in (start, raw, gather_start)):
         return
     cs, gs = craft.steps[0], gather.steps[0]
     outputs = start.get('expected_products_after_native_verification')
-    cp, gp = dependency.get('planner_item_path'), raw.get('planner_item_path')
+    gp = raw.get('planner_item_path')
     target = cr.get('local_target')
-    if (any(row.get('unknowns') != [] or row.get('work_scope') != 'immediate'
+    if (not _current_overlap_craft(snapshot, craft, cr)
+            or gr.get('work_scope') != 'immediate'
+            or any(row.get('unknowns') != []
             or type(row.get('urgency')) is not int or row['urgency'] != 0
             or row.get('research_deadline_tick') is not None for row in (cr, gr))
             or not isinstance(target, dict) or target != gr.get('local_target')
             or not isinstance(target.get('item'), str) or not target['item']
             or any(value.get('observed_tick') != snapshot.tick
-                   for value in (start, dependency, raw, gather_start))
-            or not isinstance(cp, list) or not 2 <= len(cp) <= 32
+                   for value in (start, raw, gather_start))
             or not isinstance(gp, list) or not 2 <= len(gp) <= 32
-            or cp[0] != target['item'] or gp[0] != target['item']
-            or cp[-1] != cs.item or gp[-1] != (gs.parameters or {}).get('resource')
+            or gp[0] != target['item']
+            or gp[-1] != (gs.parameters or {}).get('resource')
             or cs.effect != 'craft_job_complete' or gs.effect != 'inventory'
             or not isinstance((cs.parameters or {}).get('receipt'), str)
             or not cs.parameters['receipt']
@@ -3899,6 +3904,40 @@ def add_craft_overlap_evidence(snapshot, plans, rows):
         'future_gather_selection_and_all_judgment_gates_remain_required': True,
         'does_not_authorize_either_action_or_prove_completion': True,
     }
+
+
+def _current_overlap_craft(snapshot, craft, row):
+    """Accept a current recursive dependency or complete current material bill.
+
+    Shared-bill alternatives keep their compiler scope and rank. They are useful
+    current ingredients rather than discretionary stock for a future target.
+    """
+    dependency, bill = row.get('craft_dependency'), row.get('shared_bill_craft')
+    local, start = row.get('local_target'), row.get('craft_start_evidence')
+    if not isinstance(local, dict) or not isinstance(start, dict):
+        return False
+    step = craft.steps[0]
+    if row.get('work_scope') == 'immediate' and isinstance(dependency, dict):
+        path = dependency.get('planner_item_path')
+        return (dependency.get('observed_tick') == snapshot.tick
+                and isinstance(path, list) and 2 <= len(path) <= 32
+                and path[0] == local.get('item') and path[-1] == step.item)
+    if row.get('work_scope') != 'lookahead' or not isinstance(bill, dict):
+        return False
+    carried, target = bill.get('inventory_now'), bill.get('bounded_bill_inventory_target')
+    needed, produced = bill.get('unfilled_bill_units'), bill.get('expected_products_after_native_verification')
+    outputs = start.get('expected_products_after_native_verification')
+    return (bill.get('observed_tick') == snapshot.tick
+        and bill.get('basis') == 'current_catalog_shared_material_bill_and_native_recipe'
+        and bill.get('local_target_item') == local.get('item')
+        and bill.get('craft_item') == step.item
+        and bill.get('forecast_is_not_paid_stock_or_completed_output') is True
+        and bill.get('background_overlap_requires_native_admission') is True
+        and type(carried) is int and type(target) is int and 0 <= carried < target
+        and snapshot.inventory.get(step.item, 0) == carried
+        and type(needed) is int and needed == target - carried
+        and type(produced) is int and produced >= needed
+        and isinstance(outputs, dict) and outputs.get(step.item) == produced)
 
 
 def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
