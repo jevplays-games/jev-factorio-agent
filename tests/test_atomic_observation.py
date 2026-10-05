@@ -433,3 +433,53 @@ def test_arbitrary_native_tile_cannot_claim_water(monkeypatch):
     backend,native,payload,_=setup(monkeypatch)
     payload['anchors']={'water':{'name':'grass-1','surface_index':1,'position':{'x':3,'y':6}}}
     with pytest.raises(ValueError,match='discovery identity'):backend.observe()
+
+
+@pytest.mark.parametrize(('wire', 'expected'), [
+    ({}, []),
+    ([], []),
+    (['automation'], ['automation']),
+])
+def test_researched_is_normalized_at_both_public_snapshot_boundaries_and_serialization(
+        monkeypatch, wire, expected):
+    backend, _, payload, calls = setup(monkeypatch)
+    payload['factory']['researched'] = wire
+
+    state = backend.observe()
+    rendered = state.for_jev()
+    decoded = json.loads(json.dumps(rendered, allow_nan=False))
+
+    assert state.researched == expected
+    assert state.factory['researched'] == expected
+    assert rendered['researched'] == expected
+    assert rendered['factory']['researched'] == expected
+    assert decoded['researched'] == decoded['factory']['researched'] == expected
+    assert payload['factory']['researched'] == wire  # preserve the captured wire object
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('wire', [
+    {'automation': True},
+    {'0': 'automation'},
+    [''],
+    [True],
+    [None],
+    ['automation'] * 4097,
+])
+def test_researched_rejects_malformed_or_oversized_values_without_replacing_prior_observation(
+        monkeypatch, wire):
+    backend, _, payload, calls = setup(monkeypatch)
+    previous = backend.observe()
+    identity = backend._factory._coherent_identity
+    tick = backend._factory._coherent_tick
+    resources = copy.deepcopy(backend._resources)
+    payload['factory']['researched'] = wire
+
+    with pytest.raises(ValueError, match='Invalid atomic research state'):
+        backend.observe()
+
+    assert len(calls) == 2
+    assert backend._factory._coherent_identity == identity
+    assert backend._factory._coherent_tick == tick
+    assert backend._resources == resources
+    assert previous.factory['researched'] == previous.researched == []

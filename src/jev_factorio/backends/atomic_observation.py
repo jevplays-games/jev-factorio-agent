@@ -192,6 +192,9 @@ def observe_atomic(native: Any, snapshot: GameSnapshot) -> GameSnapshot:
     if (not isinstance(researched, list) or len(researched) > 4096
             or any(not isinstance(v, str) or not v or len(v) > 128 for v in researched)):
         raise ValueError('Invalid atomic research state')
+    # Publish the same validated list at both snapshot boundaries. The local
+    # normalization above is otherwise lost when the factory dict is attached.
+    factory['researched'] = researched
     launched = _integer(factory.get('rockets_launched'), 'launch counter')
     baseline = _integer(factory.get('rocket_baseline'), 'launch baseline')
     if launched < baseline:
