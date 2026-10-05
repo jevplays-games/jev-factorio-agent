@@ -88,3 +88,5 @@ checks. Retained native receipt and archive fixtures supplement these tests;
 they do not establish uninterrupted multi-day operation. Continue the soak and
 record any later stall separately. Strict JEV can still abstain, and this direct
 attachment path does not authorize recovery of an unfinished native craft.
+
+For multi-day capacity planning, see [storage headroom and guarded online expansion](CONTINUOUS_STORAGE_HEADROOM.md).
