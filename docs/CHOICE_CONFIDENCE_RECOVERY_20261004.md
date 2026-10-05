@@ -102,6 +102,40 @@ the unchanged selector. Its 45,075 bytes fit the unchanged 48,000-byte budget.
 The focused suite passed 357 tests. Production deployment and subsequent native
 progress remain separate acceptance steps for this extension.
 
+## Latest production result: the strict choice gate still holds
+
+PR #361 was merged as `17b933e` and deployed through the existing owner. Its
+signed archive and guest source fingerprint were verified, all 79 prior decision
+attempts were retained, and one exact-checkpoint admission was consumed.
+
+At tick 7697721, the live request contained both overlap comparisons. All three
+main candidates passed their individual usefulness, observation, benefit and
+disruption checks: usefulness probabilities were 0.89 for gears, 0.81 for belts
+and 0.77 for copper gathering. Nevertheless, JEV's overall choice confidence was
+0.40, below the unchanged 0.45 floor. The controller rejected the entire batch.
+The remaining one-plate pickup was then offered separately and rejected for
+missing start evidence and unsupported progress. No native action followed this
+deployment. Both rejected batches remain recorded; there is no pending mutation
+or background craft to replay.
+
+This identifies the immediate blocking mechanism: confidence in choosing among
+approved actions is a separate mandatory gate. Healthy services, available
+actions, positive individual judgments and an earlier passing diagnostic do not
+override it. The additional scheduling evidence cleared the previous frontier
+under PR #359 but did not establish reliable continued selection. Do not describe
+these deployments as a multi-day reliability fix or rerun a consumed admission.
+
+The operational choice is explicit. Retaining strict JEV selection preserves this
+hold. A scheduler that chooses among individually approved actions would be a
+different decision policy, even if all other JEV vetoes, native preconditions,
+receipts and durability checks remain mandatory. Such a change requires an
+explicit policy decision and separate recorded treatment; it must not be silently
+introduced as an unchanged JEV run. The deployed policy remains strict.
+
+The live Program output was restored to the candidate-evidence blocked status.
+The game server, stream and autosaves remain active. The most recent verified
+useful work remains PR #359's eight completed gears and ten-plate pickup.
+
 ## Fast recurrence triage
 
 1. Read the existing owner, child PID, checkpoint reason, latest useful tick and
