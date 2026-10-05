@@ -190,9 +190,10 @@ def continuation(planner, spec):
             plan = planner._production(recipe, spec['role'], spec['batches'], ())
             if plan and 'utility_power_prerequisite' in (plan.materials or {}):
                 power = plan.materials['utility_power_prerequisite']
-                plan = replace(plan, materials={**plan.materials,
-                    'utility_power_prerequisite': {
-                        **power, 'planner_path': ['item:' + spec['item']]}})
+                if power['consumer_role'] == spec['role']:
+                    plan = replace(plan, materials={**plan.materials,
+                        'utility_power_prerequisite': {
+                            **power, 'planner_path': ['item:' + spec['item']]}})
             if plan:
                 stage = 'configure' if plan.steps[0].action == 'factory_configure' and (
                     plan.steps[0].parameters['role'] == spec['role']) else 'supply'
