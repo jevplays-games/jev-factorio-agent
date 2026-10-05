@@ -12,6 +12,7 @@ import gzip
 import io
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 from .acceptance_capture import RECORD_FIELDS, STATE_FIELDS, FACTORY_FIELDS, DENIED
 from .acceptance_io import MAX_JSON, MAX_LOG, canonical, hash_file, load_json, records, sha256, stable_read, write_new
@@ -22,6 +23,11 @@ from .dev_preflight import checkpoint_type
 from .state import GameSnapshot
 from . import coal_supply as coal
 from . import solid_routes as solid
+from . import input_routes as input_route_contract
+from . import mining_outposts as outpost_contract
+from . import output_buffers as output_buffer_contract
+from . import production_sites as production_site_contract
+from . import successors as successor_contract
 from .planning import solid_funding
 
 SCHEMA = 'jev-factorio.complete-capture.v3'
@@ -36,6 +42,13 @@ NATIVE_FIELDS = FACTORY_FIELDS | {'solid_routes', 'coal_supply'}
 CRITICAL = ('coal', 'solid', 'owner', 'receipt', 'funding', 'flow', 'commitment', 'pending')
 FILES = {'capture-manifest.json', 'trial.json', 'preflight.json', 'initial-checkpoint.json',
          'final-checkpoint.json', 'gameplay.jsonl.gz'}
+FEATURE_CHECKPOINTS = {
+    'background_work': ('background_schema', 'background_job', 'background_attempt', 'background_step'),
+    'furnace_output_buffers': ('output_buffers_schema', 'output_commitments'),
+    'furnace_input_belts': ('input_routes_schema', 'input_commitments'),
+    'mining_outposts': ('outposts_schema', 'outpost_commitments'),
+    'ore_side_successors': ('successor_schema', 'successor_projects', 'successor_receipts'),
+}
 
 
 def checked_checkpoint(raw: bytes) -> dict:
@@ -151,6 +164,391 @@ def checked_checkpoint_progress(initial: dict, final: dict) -> None:
         new = final.get('solid_commitments', {}).get(route)
         if not isinstance(new, dict) or not _solid_prefix(old, new):
             raise ValueError('Checkpoint paid solid ownership regressed')
+
+
+def checked_feature_checkpoint(checkpoint: dict, configuration: dict) -> None:
+    """Keep every enabled producer extension in both typed boundaries."""
+    for flag, fields in FEATURE_CHECKPOINTS.items():
+        present = any(field in checkpoint for field in fields)
+        if configuration[flag]:
+            if not all(field in checkpoint for field in fields):
+                raise ValueError(f'Enabled {flag} checkpoint extension is missing')
+            schema = checkpoint[fields[0]]
+            supported = {1, 2, 3} if flag == 'background_work' else {1}
+            if type(schema) is not int or schema not in supported:
+                raise ValueError(f'Unsupported {flag} checkpoint schema')
+        elif present:
+            raise ValueError(f'Disabled {flag} checkpoint extension is present')
+
+
+def checked_feature_record(row: dict, configuration: dict) -> None:
+    """Bind the real controller record flags and extras to the declared MRO."""
+    if row.get('acceptance_configuration') != configuration:
+        raise ValueError('Capture feature configuration differs from gameplay')
+    if (configuration['factory_scheduling'] == 'serial' and 'factory_scheduling' in row
+            or configuration['factory_scheduling'] != 'serial'
+            and row.get('factory_scheduling') != configuration['factory_scheduling']):
+        raise ValueError('Capture factory scheduling differs from gameplay')
+
+    if (type(row.get('mining_outposts')) is not bool
+            or row['mining_outposts'] is not configuration['mining_outposts']):
+        raise ValueError('Capture mining-outpost flag differs from gameplay')
+    feature_fields = {
+        'background_work': ('background_work', ('background_schema', 'background_job', 'background_attempt')),
+        'furnace_output_buffers': ('furnace_output_buffers', ('buffer_evidence',)),
+        'furnace_input_belts': ('furnace_input_belts', ('input_route_evidence', 'input_validation_failure')),
+        'mining_outposts': ('mining_outposts', ('mining_outpost_evidence',)),
+        'ore_side_successors': ('ore_side_successors', ('successor_evidence', 'successor_projects')),
+    }
+    for flag, (record_flag, evidence_fields) in feature_fields.items():
+        enabled = configuration[flag]
+        # The core controller always emits its mining_outposts boolean. Optional
+        # mixins emit their true flag and evidence as one producer-owned bundle.
+        required = enabled or flag == 'mining_outposts'
+        if required:
+            if type(row.get(record_flag)) is not bool or row[record_flag] is not enabled:
+                raise ValueError(f'Capture {flag} record flag differs from treatment')
+        elif record_flag in row:
+            raise ValueError(f'Disabled {flag} record flag is present')
+        for field in evidence_fields:
+            if enabled:
+                if field not in row:
+                    raise ValueError(f'Enabled {flag} record evidence is missing')
+            elif field in row:
+                raise ValueError(f'Disabled {flag} record evidence is present')
+    if configuration['background_work']:
+        if (type(row['background_schema']) is not int or row['background_schema'] not in {2, 3}
+                or (row['background_job'] is None) != (row['background_attempt'] is None)
+                or (row['background_job'] is not None and not isinstance(row['background_job'], dict))
+                or (row['background_attempt'] is not None and not isinstance(row['background_attempt'], dict))):
+            raise ValueError('Invalid background-work record evidence')
+    if configuration['furnace_input_belts'] and not valid_input_validation_failure(
+            row['input_validation_failure']):
+        raise ValueError('Invalid input-route validation failure evidence')
+    for flag, evidence_field in (
+            ('furnace_output_buffers', 'buffer_evidence'),
+            ('furnace_input_belts', 'input_route_evidence'),
+            ('mining_outposts', 'mining_outpost_evidence'),
+            ('ore_side_successors', 'successor_evidence'),
+            ('ore_side_successors', 'successor_projects')):
+        if configuration[flag] and not isinstance(row[evidence_field], dict):
+            raise ValueError(f'Invalid {flag} record evidence')
+    after_factory = row['after_state']['factory']
+    for flag, record_field, native_field in (
+            ('furnace_output_buffers', 'buffer_evidence', 'output_buffers'),
+            ('furnace_input_belts', 'input_route_evidence', 'input_routes'),
+            ('mining_outposts', 'mining_outpost_evidence', 'mining_outposts'),
+            ('ore_side_successors', 'successor_evidence', 'successors')):
+        if configuration[flag] and canonical(row[record_field]) != canonical(after_factory.get(native_field)):
+            raise ValueError(f'{flag} producer evidence differs from its after-observation')
+
+
+def _feature_snapshot(state: dict):
+    return SimpleNamespace(tick=state['tick'], session_id=state['session_id'], factory=state['factory'])
+
+
+def _native_output_rows(snapshot, successor_enabled: bool) -> dict:
+    rows = output_buffer_contract.sources(snapshot)
+    allowed = output_buffer_contract.SOURCES | (
+        output_buffer_contract.SUCCESSOR_SOURCES if successor_enabled else set())
+    if set(rows) - allowed:
+        raise ValueError('Output-buffer source is outside the composed treatment')
+    owned = {}
+    for source, row in rows.items():
+        if (not isinstance(row, dict) or row.get('source') != source
+                or row.get('item') != source[7:] or type(row.get('source_unit')) is not int
+                or not 0 < row['source_unit'] <= 2**53 - 1
+                or not isinstance(row.get('layout'), str) or not 0 < len(row['layout']) <= 128
+                or row.get('state') not in {'proposed', 'building', 'ready'}
+                or type(row.get('topology')) is not bool
+                or not isinstance(row.get('parts'), dict) or not isinstance(row.get('flow'), dict)
+                or not output_buffer_contract.current(row, snapshot)):
+            raise ValueError('Invalid or stale output-buffer observation')
+        if (row['state'] == 'proposed' and (row['parts'] or row['topology'] or row['flow'])
+                or row['state'] == 'building' and (not row['parts'] or row['topology'])
+                or row['state'] == 'ready'
+                and (set(row['parts']) != set(output_buffer_contract.PARTS) or not row['topology'])):
+            raise ValueError('Output-buffer phase differs from its paid prefix')
+        commitment = {'source_unit': row['source_unit'], 'layout': row['layout'],
+                      'parts': row['parts']}
+        output_buffer_contract.validate_commitments(
+            {source: commitment}, successors=successor_enabled)
+        for part, paid in row['parts'].items():
+            entity = snapshot.factory.get('entities', {}).get(paid['role'], {})
+            if (entity.get('unit_number') != paid['unit_number']
+                    or entity.get('name') != output_buffer_contract.PARTS[part]):
+                raise ValueError('Output-buffer paid component differs from native entity')
+        if row['parts'] and row.get('chest_role') != row['parts'].get('chest', {}).get('role'):
+            raise ValueError('Output-buffer chest identity differs from its paid receipt')
+        if row['flow'] and not output_buffer_contract.flow_complete(source, row['layout'], snapshot):
+            raise ValueError('Output-buffer flow certificate is invalid')
+        if source in output_buffer_contract.SOURCES and row['parts']:
+            owned[source] = commitment
+    output_buffer_contract.validate_commitments(owned, successors=successor_enabled)
+    return rows
+
+
+def _owner_prefix(old: dict, current: dict, identity: tuple[str, ...]) -> bool:
+    return (isinstance(old, dict) and isinstance(current, dict)
+            and all(canonical(old.get(key)) == canonical(current.get(key)) for key in identity)
+            and isinstance(old.get('parts'), dict) and isinstance(current.get('parts'), dict)
+            and all(canonical(current['parts'].get(part)) == canonical(paid)
+                    for part, paid in old['parts'].items()))
+
+
+def _outpost_prefix(old: dict, current: dict) -> bool:
+    return (_owner_prefix(old, current, ('layout', 'surface_index', 'force_index', 'steps'))
+            and (not old.get('flow') or canonical(old['flow']) == canonical(current.get('flow'))))
+
+
+def _output_owner(route: dict) -> dict | None:
+    if route['source'] in output_buffer_contract.SUCCESSOR_SOURCES or (
+            route['state'] == 'proposed' and not route['parts']):
+        return None
+    if not route['parts']:
+        return None
+    return {'source_unit': route['source_unit'], 'layout': route['layout'],
+            'parts': deepcopy(route['parts'])}
+
+
+def _input_owner(route: dict) -> dict | None:
+    if route['state'] == 'proposed':
+        return None
+    return {'layout': route['layout'], 'source_unit': route['source_unit'],
+            'parts': deepcopy(route['parts'])}
+
+
+def _outpost_owner(route: dict) -> dict | None:
+    if route['state'] == 'proposed':
+        return None
+    return {key: deepcopy(route[key]) for key in
+            ('layout', 'surface_index', 'force_index', 'steps', 'parts', 'flow')}
+
+
+def _advance_owner_map(retained: dict, observed: dict, project, prefix, label: str) -> None:
+    for owner, old in retained.items():
+        live = observed.get(owner)
+        current = project(live) if live is not None else None
+        if current is None or not prefix(old, current):
+            raise ValueError(f'Paid {label} ownership disappeared or changed in gameplay')
+    for owner, live in observed.items():
+        current = project(live)
+        if current is None:
+            continue
+        old = retained.get(owner)
+        if old is not None and not prefix(old, current):
+            raise ValueError(f'Paid {label} receipt regressed in gameplay')
+        retained[owner] = current
+
+
+def _successor_receipt_prefix(old: dict, current: dict) -> bool:
+    if not isinstance(old, dict) or not isinstance(current, dict):
+        return False
+    for layout in ('output_layout', 'input_layout'):
+        if old.get(layout) is not None and old.get(layout) != current.get(layout):
+            return False
+    for family in ('output', 'input'):
+        if (not isinstance(old.get(family), dict) or not isinstance(current.get(family), dict)
+                or any(canonical(current[family].get(part)) != canonical(paid)
+                       for part, paid in old[family].items())):
+            return False
+    return all(not old.get(proof) or canonical(old[proof]) == canonical(current.get(proof))
+               for proof in ('use', 'qualification'))
+
+
+def _successor_project_prefix(old: dict, current: dict) -> bool:
+    if not isinstance(old, dict) or not isinstance(current, dict):
+        return False
+    immutable = ('anchor', 'predecessor_unit', 'started_tick', 'deadline_tick')
+    if any(old.get(key) != current.get(key) for key in immutable):
+        return False
+    return old.get('source_unit') == 0 or old.get('source_unit') == current.get('source_unit')
+
+
+def checked_feature_ownership(initial: dict, final: dict, rows: list[dict],
+                              configuration: dict) -> None:
+    """Bind composed optional route owners across both checkpoints and every observation."""
+    checked_feature_checkpoint(initial, configuration)
+    checked_feature_checkpoint(final, configuration)
+    for row in rows:
+        checked_feature_record(row, configuration)
+
+    retained_output = deepcopy(initial.get('output_commitments', {}))
+    retained_input = deepcopy(initial.get('input_commitments', {}))
+    retained_outpost = deepcopy(initial.get('outpost_commitments', {}))
+    retained_projects = deepcopy(initial.get('successor_projects', {}))
+    retained_receipts = deepcopy(initial.get('successor_receipts', {}))
+    for row in rows:
+        for label in ('state', 'after_state'):
+            state = row[label]
+            snapshot = _feature_snapshot(state)
+            factory = snapshot.factory
+            if configuration['furnace_output_buffers']:
+                output_rows = _native_output_rows(snapshot, configuration['ore_side_successors'])
+            else:
+                if 'output_buffers' in factory:
+                    raise ValueError('Disabled output-buffer observation is present')
+                output_rows = {}
+            if configuration['furnace_input_belts']:
+                input_rows = input_route_contract.sources(snapshot)
+                production_site_contract.sources(snapshot)
+                for route in input_rows.values():
+                    if not input_route_contract.current(route, snapshot):
+                        raise ValueError('Input-route native entity differs from its receipt')
+            else:
+                if 'input_routes' in factory:
+                    raise ValueError('Disabled input-route observation is present')
+                input_rows = {}
+            if configuration['mining_outposts']:
+                outpost_rows = outpost_contract.sources(snapshot)
+                for resource, route in outpost_rows.items():
+                    if (not outpost_contract.current(route, snapshot)
+                            or route['flow'] and not outpost_contract.flow_complete(
+                                resource, route['layout'], snapshot)):
+                        raise ValueError('Mining-outpost native entity differs from its receipt')
+            else:
+                if 'mining_outposts' in factory:
+                    raise ValueError('Disabled mining-outpost observation is present')
+                outpost_rows = {}
+            if configuration['ore_side_successors']:
+                successor_rows = successor_contract.sources(snapshot)
+                site_rows = production_site_contract.sources(snapshot)
+                if 'production_sites' not in factory:
+                    raise ValueError('Successor treatment lacks production-site evidence')
+                if set(successor_rows) - set(site_rows):
+                    raise ValueError('Successor observation lacks its production-site source')
+            else:
+                if 'successors' in factory:
+                    raise ValueError('Disabled successor observation is present')
+                successor_rows = {}
+
+            if configuration['furnace_output_buffers']:
+                _advance_owner_map(
+                    retained_output, output_rows, _output_owner,
+                    lambda old, current: _owner_prefix(old, current, ('source_unit', 'layout')),
+                    'output-buffer')
+            if configuration['furnace_input_belts']:
+                _advance_owner_map(
+                    retained_input, input_rows, _input_owner,
+                    lambda old, current: _owner_prefix(old, current, ('layout', 'source_unit')),
+                    'input-route')
+            if configuration['mining_outposts']:
+                _advance_owner_map(retained_outpost, outpost_rows, _outpost_owner,
+                                   _outpost_prefix, 'mining-outpost')
+
+            if configuration['ore_side_successors']:
+                projects = (row['successor_projects'] if label == 'after_state'
+                            else final['successor_projects'])
+                for source, old in retained_projects.items():
+                    current = projects.get(source)
+                    if not _successor_project_prefix(old, current):
+                        raise ValueError('Successor project identity disappeared or changed')
+                for source, project in projects.items():
+                    if label == 'after_state':
+                        successor_contract.project_valid(project, source, state['tick'])
+                    final_project = final['successor_projects'].get(source)
+                    if not _successor_project_prefix(project, final_project):
+                        raise ValueError('Final checkpoint does not retain successor project identity')
+                    if label == 'after_state':
+                        retained_projects[source] = deepcopy(project)
+                for source, native in successor_rows.items():
+                    project = projects.get(source)
+                    final_project = final['successor_projects'].get(source)
+                    if (not isinstance(project, dict) or project.get('anchor') != native['anchor']
+                            or project.get('predecessor_unit') != native['predecessor_unit']
+                            or project.get('started_tick') != native['started_tick']):
+                        raise ValueError('Successor native source is not retained in the controller record')
+                    if (not isinstance(final_project, dict)
+                            or final_project.get('anchor') != native['anchor']
+                            or final_project.get('predecessor_unit') != native['predecessor_unit']
+                            or final_project.get('source_unit') != native['source_unit']
+                            or final_project.get('started_tick') != native['started_tick']):
+                        raise ValueError('Final checkpoint does not retain paid successor source')
+                    if (project.get('source_unit') != native['source_unit']
+                            and not (label == 'state' and native['source_unit'] == 0
+                                     and project.get('source_unit', 0) > 0)):
+                        raise ValueError('Successor project source unit differs from native observation')
+                    previous = retained_receipts.get(source, {
+                        'output_layout': None, 'input_layout': None,
+                        'output': {}, 'input': {}, 'use': {}, 'qualification': {}})
+                    output = output_rows.get(source, {})
+                    input_route = input_rows.get(source, {})
+                    current_receipt = {
+                        'output_layout': (output.get('layout') if output.get('parts')
+                                          else previous.get('output_layout')),
+                        'input_layout': (input_route.get('layout') if input_route.get('parts')
+                                         else previous.get('input_layout')),
+                        'output': deepcopy(output.get('parts', {})),
+                        'input': deepcopy(input_route.get('parts', {})),
+                        'use': deepcopy(native['use']),
+                        'qualification': deepcopy(native['qualification']),
+                    }
+                    if not _successor_receipt_prefix(previous, current_receipt):
+                        raise ValueError('Successor paid route or qualification receipt regressed')
+                    retained_receipts[source] = current_receipt
+                    final_receipt = final.get('successor_receipts', {}).get(source)
+                    if not _successor_receipt_prefix(current_receipt, final_receipt):
+                        raise ValueError('Final checkpoint does not retain observed successor receipts')
+                for source, receipt in retained_receipts.items():
+                    if (source not in successor_rows and any(
+                            receipt.get(key) for key in ('output', 'input', 'use', 'qualification'))):
+                        raise ValueError('Retained successor receipts lack a native observation')
+
+            if label == 'after_state':
+                if configuration['ore_side_successors']:
+                    if canonical(row['successor_evidence']) != canonical(factory.get('successors')):
+                        raise ValueError('Successor record evidence differs from its after-observation')
+
+    if configuration['furnace_output_buffers']:
+        final_snapshot = _feature_snapshot(rows[-1]['after_state'])
+        final_output = _native_output_rows(final_snapshot, configuration['ore_side_successors'])
+        expected = {source: {'source_unit': route['source_unit'], 'layout': route['layout'],
+                             'parts': deepcopy(route['parts'])}
+                    for source, route in final_output.items()
+                    if source in output_buffer_contract.SOURCES and route['parts']}
+        if canonical(final.get('output_commitments')) != canonical(expected):
+            raise ValueError('Final checkpoint output owners differ from final native observation')
+    if configuration['furnace_input_belts']:
+        expected = {source: {'layout': route['layout'], 'source_unit': route['source_unit'],
+                             'parts': deepcopy(route['parts'])}
+                    for source, route in input_route_contract.sources(
+                        _feature_snapshot(rows[-1]['after_state'])).items()
+                    if route['state'] != 'proposed'}
+        if canonical(final.get('input_commitments')) != canonical(expected):
+            raise ValueError('Final checkpoint input owners differ from final native observation')
+    if configuration['mining_outposts']:
+        expected = {resource: {key: deepcopy(route[key]) for key in
+                               ('layout', 'surface_index', 'force_index', 'steps', 'parts', 'flow')}
+                    for resource, route in outpost_contract.sources(
+                        _feature_snapshot(rows[-1]['after_state'])).items()
+                    if route['state'] != 'proposed'}
+        if canonical(final.get('outpost_commitments')) != canonical(expected):
+            raise ValueError('Final checkpoint outpost owners differ from final native observation')
+    if configuration['ore_side_successors']:
+        if canonical(rows[-1]['successor_projects']) != canonical(final['successor_projects']):
+            raise ValueError('Final checkpoint successor projects differ from the final record')
+        final_snapshot = _feature_snapshot(rows[-1]['after_state'])
+        successor_rows = successor_contract.sources(final_snapshot)
+        for source, receipt in final['successor_receipts'].items():
+            native = successor_rows.get(source)
+            if not isinstance(receipt, dict):
+                raise ValueError('Invalid final successor receipt')
+            if native is None:
+                if any(receipt.get(key) for key in ('output', 'input', 'use', 'qualification')):
+                    raise ValueError('Final successor receipt lacks its native observation')
+                continue
+            output = final_snapshot.factory['output_buffers']['sources'].get(source, {})
+            input_route = final_snapshot.factory['input_routes']['sources'].get(source, {})
+            expected = {
+                'output_layout': output.get('layout') if output.get('parts') else receipt.get('output_layout'),
+                'input_layout': input_route.get('layout') if input_route.get('parts') else receipt.get('input_layout'),
+                'output': deepcopy(output.get('parts', {})),
+                'input': deepcopy(input_route.get('parts', {})),
+                'use': deepcopy(native['use']),
+                'qualification': deepcopy(native['qualification']),
+            }
+            if canonical(receipt) != canonical(expected):
+                raise ValueError('Final successor receipts differ from native route observation')
 
 
 def checked_campaign_binding(initial: dict, final: dict, rows: list[dict]) -> None:
@@ -374,6 +772,7 @@ def capture(*, gameplay: Path, trial_path: Path, initial_checkpoint: Path,
                  for row in records(raw)]
     checked_preflight(preflight, trial, initial, projected)
     checked_economic_binding(trial, initial, final, projected)
+    checked_feature_ownership(initial, final, projected, trial['configuration'])
     for row in projected:
         for label in ('state', 'after_state'):
             checked_coal_observation(row[label])
@@ -440,6 +839,7 @@ def verify(directory: Path) -> dict:
     checked_preflight(preflight, trial, initial, projected)
     checked_checkpoint_progress(initial, final)
     checked_economic_binding(trial, initial, final, projected)
+    checked_feature_ownership(initial, final, projected, trial['configuration'])
     if (trial['schema'] not in {TRIAL_SCHEMA_V2, TRIAL_SCHEMA_V3}
             or len(projected) != manifest.get('records')
             or manifest.get('capture_complete') is not True
