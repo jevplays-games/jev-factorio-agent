@@ -28,6 +28,12 @@ evidence, validate the full current specification and recompile its continuation
 require the exact stage, tick, ID, paid step and native consumer annotation.
 A capital marker alone grants no permission.
 
+The ordinary planner can reuse a paid producer after capital intent expires.
+It also separates recipe-consumer purpose from physical power expansion and
+disables optional nested investment while acquiring power supplies. Otherwise
+the next cable craft for the poles would encounter a false cycle through the
+very assembler being powered. Technology and infrastructure cycle guards remain.
+
 A fixed query now reads insertable counts for coal, wood, iron ore, copper ore
 and stone in the same RCON command as the existing observation. It changes no
 installed callback or native ownership record. The decoder requires the exact

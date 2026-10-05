@@ -89,6 +89,26 @@ def test_simulated_later_power_steps_do_not_cycle_through_consumer_product(carri
     assert current.steps == original.steps
 
 
+@pytest.mark.parametrize('wood', [1, 10])
+def test_paid_producer_after_capital_expiry_can_bootstrap_its_own_power(wood):
+    state, catalog, _, _, _ = case(simulated_capacity=True)
+    state.inventory['wood'] = wood
+    planner = MiningOutpostPlanner(catalog, state, 'rocket_launch')
+    plan = planner._powered('recipe:copper-cable', ('item:copper-cable',))
+    assert plan.steps[0].action == ('factory_gather' if wood == 1 else 'factory_craft')
+    assert plan.materials['utility_power_prerequisite']['planner_path'] == ['item:copper-cable']
+    assert not getattr(planner, '_economic_acquiring', False)
+    assert _qualified_utility_power_dependency(plan, evidence(state, catalog, plan), state.tick)
+
+
+def test_power_bootstrap_still_rejects_a_real_infrastructure_cycle():
+    state, catalog, _, _, _ = case(simulated_capacity=True)
+    planner = MiningOutpostPlanner(catalog, state, 'rocket_launch')
+    with pytest.raises(ValueError, match='cycle'):
+        planner._powered('recipe:copper-cable', ('item:copper-cable', 'infrastructure:power'))
+    assert not getattr(planner, '_economic_acquiring', False)
+
+
 @pytest.mark.parametrize('change', [
     'missing_path', 'foreign_path', 'stale_marker', 'extra_marker', 'wrong_stage',
     'wrong_catalog', 'wrong_role', 'wrong_id', 'wrong_step', 'wrong_unit',
