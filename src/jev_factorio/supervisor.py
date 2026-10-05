@@ -1074,6 +1074,140 @@ Only report repaired when every acceptance requirement is verified.
             return None
         return match.group(1)
 
+    def _current_pull_request_opinions(self, number: str, pull: dict) -> tuple[bool, bool] | None:
+        """Read complete per-author opinion state and bind every page to the CLI PR."""
+        owner, repository = _CANONICAL_REPOSITORY.split("/", 1)
+        head = pull.get("headRefOid")
+        merge_commit = pull.get("mergeCommit")
+        merge_oid = merge_commit.get("oid") if isinstance(merge_commit, dict) else None
+
+        def valid_oid(value: object) -> bool:
+            return isinstance(value, str) and re.fullmatch(
+                r"(?:[0-9a-f]{40}|[0-9a-f]{64})", value) is not None
+
+        if not valid_oid(head) or not valid_oid(merge_oid):
+            return None
+
+        query = (
+            "query($owner:String!, $name:String!, $number:Int!, $after:String) { "
+            "repository(owner:$owner, name:$name) { "
+            "pullRequest(number:$number) { "
+            "number url baseRefName state headRefOid reviewDecision mergeCommit { oid } "
+            "latestOpinionatedReviews(first:100, after:$after) { "
+            "nodes { state author { login } commit { oid } } "
+            "pageInfo { hasNextPage endCursor } "
+            "} } } }"
+        )
+        cursor = None
+        seen_cursors: set[str] = set()
+        seen_authors: set[str] = set()
+        approved = False
+        veto = False
+        unset_decision = object()
+        first_decision = unset_decision
+        expected_identity = (
+            int(number), pull.get("url"), pull.get("baseRefName"), pull.get("state"),
+            head, merge_oid,
+        )
+
+        for _ in range(100):
+            command = [
+                "gh", "api", "graphql",
+                "-F", f"owner={owner}",
+                "-F", f"name={repository}",
+                "-F", f"number={number}",
+                "-f", f"query={query}",
+            ]
+            if cursor is not None:
+                command.extend(["-F", f"after={cursor}"])
+            code, raw = self.capture(command)
+            if code != 0:
+                return None
+            try:
+                payload = json.loads(raw)
+            except (TypeError, ValueError):
+                return None
+            if not isinstance(payload, dict):
+                return None
+            errors = payload.get("errors", [])
+            if not isinstance(errors, list) or errors:
+                return None
+            data = payload.get("data")
+            repository_data = data.get("repository") if isinstance(data, dict) else None
+            current = repository_data.get("pullRequest") if isinstance(repository_data, dict) else None
+            if not isinstance(current, dict):
+                return None
+            if type(current.get("number")) is not int:
+                return None
+            current_merge = current.get("mergeCommit")
+            current_merge_oid = current_merge.get("oid") if isinstance(current_merge, dict) else None
+            identity = (
+                current.get("number"), current.get("url"), current.get("baseRefName"),
+                current.get("state"), current.get("headRefOid"), current_merge_oid,
+            )
+            if identity != expected_identity:
+                return None
+
+            if "reviewDecision" not in current:
+                return None
+            decision = current["reviewDecision"]
+            if (decision is not None
+                    and (not isinstance(decision, str)
+                         or decision not in {"APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"})):
+                return None
+            if first_decision is unset_decision:
+                first_decision = decision
+            elif decision != first_decision:
+                # Do not combine pages if the PR's effective decision changed mid-read.
+                return None
+            if decision == "CHANGES_REQUESTED":
+                veto = True
+
+            connection = current.get("latestOpinionatedReviews")
+            if not isinstance(connection, dict):
+                return None
+            nodes = connection.get("nodes")
+            page_info = connection.get("pageInfo")
+            if (not isinstance(nodes, list) or not isinstance(page_info, dict)
+                    or "hasNextPage" not in page_info or "endCursor" not in page_info):
+                return None
+            has_next = page_info["hasNextPage"]
+            end_cursor = page_info["endCursor"]
+            if not isinstance(has_next, bool):
+                return None
+            if end_cursor is not None and (not isinstance(end_cursor, str) or not end_cursor.strip()):
+                return None
+
+            for review in nodes:
+                if not isinstance(review, dict):
+                    return None
+                state = review.get("state")
+                author = review.get("author")
+                login = author.get("login") if isinstance(author, dict) else None
+                review_commit = review.get("commit")
+                review_oid = review_commit.get("oid") if isinstance(review_commit, dict) else None
+                if (not isinstance(state, str)
+                        or state not in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}
+                        or not isinstance(login, str) or not login.strip() or login != login.strip()
+                        or not valid_oid(review_oid)):
+                    return None
+                author_key = login.casefold()
+                if author_key in seen_authors:
+                    return None
+                seen_authors.add(author_key)
+                if state == "CHANGES_REQUESTED":
+                    veto = True
+                elif state == "APPROVED" and review_oid == head:
+                    approved = True
+
+            if not has_next:
+                return approved, veto
+            if end_cursor is None or end_cursor in seen_cursors or end_cursor == cursor:
+                return None
+            seen_cursors.add(end_cursor)
+            cursor = end_cursor
+        return None
+
     def _repair_ownership_is_preserved(self, previous: dict, current: dict) -> bool:
         """Validate both full checkpoints and retain every paid owner exactly.
 
@@ -1240,34 +1374,48 @@ Only report repaired when every acceptance requirement is verified.
             return False
         code, raw = self.capture([
             "gh", "pr", "view", number, "--repo", _CANONICAL_REPOSITORY, "--json",
-            "url,baseRefName,state,headRefOid,mergeCommit,reviews,statusCheckRollup",
+            "url,baseRefName,state,headRefOid,mergeCommit,statusCheckRollup",
         ])
         if code != 0:
             return False
-        pull = json.loads(raw)
+        try:
+            pull = json.loads(raw)
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(pull, dict):
+            return False
         expected_url = f"https://github.com/{_CANONICAL_REPOSITORY}/pull/{number}"
+        merge_commit = pull.get("mergeCommit")
+        merge_oid = merge_commit.get("oid") if isinstance(merge_commit, dict) else None
         if (pull.get("url") != expected_url or pull.get("baseRefName") != "main"
                 or pull.get("state") != "MERGED"
-                or pull.get("mergeCommit", {}).get("oid") != commit):
+                or merge_oid != commit):
             return False
-        reviews = pull.get("reviews", [])
-        latest = {}
-        for review in reviews:
-            latest[review.get("author", {}).get("login")] = review
-        approved = any(
-            review.get("state") == "APPROVED"
-            and review.get("commit", {}).get("oid") == pull["headRefOid"]
-            for review in latest.values()
-        )
-        if (not approved and not self.independent_review(result, pull["headRefOid"])
-                or any(review.get("state") == "CHANGES_REQUESTED" for review in latest.values())):
+        opinion_state = self._current_pull_request_opinions(number, pull)
+        if opinion_state is None:
             return False
-        checks = pull.get("statusCheckRollup", [])
-        if not checks or not all(
-            check.get("conclusion") in {"SUCCESS", "NEUTRAL", "SKIPPED"}
-            or check.get("state") == "SUCCESS" for check in checks
-        ):
+        approved, changes_requested = opinion_state
+        if changes_requested:
             return False
+        if not approved:
+            try:
+                independent = self.independent_review(result, pull["headRefOid"])
+            except (OSError, TypeError, ValueError):
+                return False
+            if not independent:
+                return False
+        checks = pull.get("statusCheckRollup")
+        if not isinstance(checks, list) or not checks:
+            return False
+        for check in checks:
+            if not isinstance(check, dict):
+                return False
+            conclusion = check.get("conclusion")
+            state = check.get("state")
+            if not ((isinstance(conclusion, str)
+                     and conclusion in {"SUCCESS", "NEUTRAL", "SKIPPED"})
+                    or (isinstance(state, str) and state == "SUCCESS")):
+                return False
         if "prevalidation" in result:
             # Run with the configured interpreter: the verifier must have the
             # same runtime/dependencies as the pre-maintenance full suite.

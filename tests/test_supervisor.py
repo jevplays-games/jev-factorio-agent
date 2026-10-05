@@ -1068,13 +1068,30 @@ def test_pull_request_url_is_bound_to_canonical_repository(value, number):
     assert Supervisor._canonical_pr_number(value) == number
 
 
+def _graphql_review_page(pull, *, opinions=None, decision="APPROVED"):
+    if opinions is None:
+        opinions = [{"author": {"login": "reviewer"}, "state": "APPROVED",
+                     "commit": {"oid": pull["headRefOid"]}}]
+    return json.dumps({"data": {"repository": {"pullRequest": {
+        "number": 1,
+        "url": pull["url"],
+        "baseRefName": pull["baseRefName"],
+        "state": pull["state"],
+        "headRefOid": pull["headRefOid"],
+        "reviewDecision": decision,
+        "mergeCommit": pull["mergeCommit"],
+        "latestOpinionatedReviews": {
+            "nodes": opinions,
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+        },
+    }}}})
+
+
 @pytest.mark.parametrize("status,head", [(" M source.py", "a" * 40), ("", "b" * 40)])
 def test_code_verification_rechecks_source_after_tests(supervisor, monkeypatch, status, head):
     commit = "a" * 40
     pull = {"url": "https://github.com/jevplays-games/jev-factorio-agent/pull/1",
             "baseRefName": "main", "state": "MERGED", "mergeCommit": {"oid": commit}, "headRefOid": "c" * 40,
-            "reviews": [{"author": {"login": "reviewer"}, "state": "APPROVED",
-                         "commit": {"oid": "c" * 40}}],
             "statusCheckRollup": [{"conclusion": "SUCCESS"}]}
     calls = iter([
         (0, commit), (0, ""), (0, "origin\nfork"),
@@ -1084,6 +1101,7 @@ def test_code_verification_rechecks_source_after_tests(supervisor, monkeypatch, 
         (0, "git@github.com:timotgl/jev-factorio-agent.git"),
         (0, commit + "\trefs/heads/main"), (0, commit + "\trefs/heads/main"),
         (0, json.dumps(pull)),
+        (0, _graphql_review_page(pull)),
         (0, "passed"), (0, status), (0, head),
     ])
     monkeypatch.setattr(supervisor, "capture", lambda command: next(calls))
@@ -1133,8 +1151,6 @@ def test_code_verification_requires_origin_and_checks_configured_fork(
     commit = 'a' * 40
     pull = {'url': 'https://github.com/jevplays-games/jev-factorio-agent/pull/1',
             'baseRefName': 'main', 'state': 'MERGED', 'mergeCommit': {'oid': commit}, 'headRefOid': 'c' * 40,
-            'reviews': [{'author': {'login': 'reviewer'}, 'state': 'APPROVED',
-                         'commit': {'oid': 'c' * 40}}],
             'statusCheckRollup': [{'conclusion': 'SUCCESS'}]}
     seen = []
     def capture(command):
@@ -1158,6 +1174,8 @@ def test_code_verification_requires_origin_and_checks_configured_fork(
         if command[:3] == ['gh', 'pr', 'view']:
             assert command[3:6] == ['1', '--repo', 'jevplays-games/jev-factorio-agent']
             return 0, json.dumps(pull)
+        if command[:3] == ['gh', 'api', 'graphql']:
+            return 0, _graphql_review_page(pull)
         if command == [supervisor.config.python, '-m', 'pytest', 'tests/']: return 0, 'passed'
         pytest.fail(f'Unexpected command: {command}')
     monkeypatch.setattr(supervisor, 'capture', capture)
@@ -1174,8 +1192,6 @@ def test_explicit_prevalidation_replaces_only_full_suite(supervisor, monkeypatch
     commit = "a" * 40
     pull = {"url": "https://github.com/jevplays-games/jev-factorio-agent/pull/1",
             "baseRefName": "main", "state": "MERGED", "mergeCommit": {"oid": commit}, "headRefOid": "c" * 40,
-            "reviews": [{"author": {"login": "reviewer"}, "state": "APPROVED",
-                         "commit": {"oid": "c" * 40}}],
             "statusCheckRollup": [{"conclusion": "SUCCESS"}]}
     seen = []
     def capture(command):
@@ -1191,6 +1207,8 @@ def test_explicit_prevalidation_replaces_only_full_suite(supervisor, monkeypatch
         if command[:3] == ["gh", "pr", "view"]:
             assert command[3:6] == ["1", "--repo", "jevplays-games/jev-factorio-agent"]
             return 0, json.dumps(pull)
+        if command[:3] == ["gh", "api", "graphql"]:
+            return 0, _graphql_review_page(pull)
         if command[1:4] == ["-m", "jev_factorio.prevalidation", "check"]:
             assert command[-1] == reference
             assert command[-3] == str(supervisor.config.state_dir)
