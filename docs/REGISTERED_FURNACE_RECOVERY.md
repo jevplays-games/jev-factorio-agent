@@ -24,6 +24,15 @@ The same identity rule supplies grouped fuel-transfer evidence. A partial
 transfer still lacks the stronger full-deficit proof, as before. Strict JEV
 choice, native action checks, reservations and failure budgets are unchanged.
 
+Native resume preflight exposed the same scope assumption in a second place:
+the output-buffer module retains unspent proposals for iron, copper **and
+steel**, while connector reattachment allowed only two ore-furnace roles.
+Reattachment now permits the existing steel proposal and three output offers,
+while ore-site ownership remains restricted to iron and copper. Every proposal
+must still reference its original registered entity, position and unit, contain
+no paid parts or unknown fields, and remain unchanged across both readbacks.
+No survey, ownership registry or proposal is cleared to make resume succeed.
+
 For efficient diagnosis and recovery:
 
 1. Read the owner status, child liveness, terminal result and exact checkpoint.
