@@ -1136,9 +1136,19 @@ class HierarchicalLoop(AgentLoop):
         return step.allowed(snapshot)
 
     def _execution_barrier(self, snapshot: GameSnapshot) -> bool:
-        return (self._capital_fault or
-                self.memory.status == 'uncertain' and
-                self.memory.reason == 'Connector route needs exact reconciliation')
+        if self._capital_fault:
+            return True
+        if (self.memory.status == 'uncertain'
+                and self.memory.reason == 'Connector route needs exact reconciliation'):
+            from .connector_checkpoint import shared_connector_handoff
+            # All composed controllers consult this barrier before delegating
+            # pending verification. _observe has freshly checked every cell;
+            # only the normal verifier may finish the retained attempt.
+            return not (snapshot.world_kind == 'fle'
+                        and shared_connector_handoff(self.memory)
+                        and snapshot.factory.get('connector_ownership', {}).get('active') is None
+                        and Plan.from_dict(self.memory.active_plan).steps[0].satisfied(snapshot))
+        return False
 
     def _absent_ambiguous_placement(self, plan: Plan, step, snapshot: GameSnapshot) -> bool:
         """Prove that retrying an ambiguous placement cannot duplicate a building."""
@@ -1438,14 +1448,7 @@ class HierarchicalLoop(AgentLoop):
 
     def _verify_pending(self, snapshot: GameSnapshot) -> dict:
         if self._execution_barrier(snapshot):
-            from .connector_checkpoint import shared_connector_handoff
-            # _observe already compared every native cell to its checkpoint.
-            # Only the ordinary verifier may finish this retained attempt.
-            if (self._capital_fault or snapshot.world_kind != 'fle'
-                    or not shared_connector_handoff(self.memory)
-                    or snapshot.factory.get('connector_ownership', {}).get('active') is not None
-                    or not Plan.from_dict(self.memory.active_plan).steps[0].satisfied(snapshot)):
-                return self._record(snapshot, "observe", self.memory.reason)
+            return self._record(snapshot, "observe", self.memory.reason)
         plan = Plan.from_dict(self.memory.active_plan)
         step = plan.steps[self.memory.step_index]
         pending = self.memory.pending
