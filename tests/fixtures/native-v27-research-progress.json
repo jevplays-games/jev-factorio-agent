@@ -1,0 +1,153 @@
+{
+  "note": "Field projections of two retained accepted native observation pairs; not full hash-verifiable research event records. No values synthesized.",
+  "pairs": [
+    {
+      "observation": {
+        "event_type": "observation",
+        "time": {
+          "factorio_tick": 13330812,
+          "monotonic_ns": 113327513679593,
+          "utc": "2026-10-06T03:31:40.432271Z"
+        },
+        "payload": {
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "world_kind": "fle",
+          "factorio_tick": 13330812,
+          "observation_id": "observation:1307",
+          "status": "ok",
+          "supervisor_provenance": {
+            "code_revision": {
+              "commit": "3a623f5ea562c54184c8e0852243f7a222f8647b",
+              "source_sha256": "38bc44a12c818281cfad0d5ef2d2ce0cd702ec7b58fd4f93f27461fe2616a58a"
+            },
+            "execution_id": "d97a8800ffda4edda28bbfa4e52ce4c5",
+            "run_id": "jev-continuous-20261004",
+            "segment_id": "frozen-source"
+          },
+          "snapshot": {
+            "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+            "tick": 13330812,
+            "world_kind": "fle",
+            "factory": {
+              "tick": 13330812,
+              "observation_snapshot_schema": 2,
+              "acceptance_runtime": {
+                "actor_unit": 2543,
+                "force_index": 1,
+                "mods": {
+                  "base": "2.0.77"
+                },
+                "player_index": 1,
+                "schema": 1,
+                "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+                "speed": 1,
+                "surface_index": 1,
+                "tick_paused": false
+              },
+              "research": "automation-2",
+              "research_progress": 0.21211111111113484
+            }
+          }
+        }
+      },
+      "observation_validated": {
+        "event_type": "observation_validated",
+        "time": {
+          "factorio_tick": 13330812,
+          "monotonic_ns": 113327678032394,
+          "utc": "2026-10-06T03:31:40.596624Z"
+        },
+        "payload": {
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "world_kind": "fle",
+          "factorio_tick": 13330812,
+          "observation_id": "observation:1307",
+          "accepted": true,
+          "supervisor_provenance": {
+            "code_revision": {
+              "commit": "3a623f5ea562c54184c8e0852243f7a222f8647b",
+              "source_sha256": "38bc44a12c818281cfad0d5ef2d2ce0cd702ec7b58fd4f93f27461fe2616a58a"
+            },
+            "execution_id": "d97a8800ffda4edda28bbfa4e52ce4c5",
+            "run_id": "jev-continuous-20261004",
+            "segment_id": "frozen-source"
+          }
+        }
+      }
+    },
+    {
+      "observation": {
+        "event_type": "observation",
+        "time": {
+          "factorio_tick": 13336969,
+          "monotonic_ns": 113431145520509,
+          "utc": "2026-10-06T03:33:24.064112Z"
+        },
+        "payload": {
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "world_kind": "fle",
+          "factorio_tick": 13336969,
+          "observation_id": "observation:1328",
+          "status": "ok",
+          "supervisor_provenance": {
+            "code_revision": {
+              "commit": "3a623f5ea562c54184c8e0852243f7a222f8647b",
+              "source_sha256": "38bc44a12c818281cfad0d5ef2d2ce0cd702ec7b58fd4f93f27461fe2616a58a"
+            },
+            "execution_id": "d97a8800ffda4edda28bbfa4e52ce4c5",
+            "run_id": "jev-continuous-20261004",
+            "segment_id": "frozen-source"
+          },
+          "snapshot": {
+            "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+            "tick": 13336969,
+            "world_kind": "fle",
+            "factory": {
+              "tick": 13336969,
+              "observation_snapshot_schema": 2,
+              "acceptance_runtime": {
+                "actor_unit": 2543,
+                "force_index": 1,
+                "mods": {
+                  "base": "2.0.77"
+                },
+                "player_index": 1,
+                "schema": 1,
+                "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+                "speed": 1,
+                "surface_index": 1,
+                "tick_paused": false
+              },
+              "research": "automation-2",
+              "research_progress": 0.3831388888889394
+            }
+          }
+        }
+      },
+      "observation_validated": {
+        "event_type": "observation_validated",
+        "time": {
+          "factorio_tick": 13336969,
+          "monotonic_ns": 113431310626278,
+          "utc": "2026-10-06T03:33:24.229223Z"
+        },
+        "payload": {
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "world_kind": "fle",
+          "factorio_tick": 13336969,
+          "observation_id": "observation:1328",
+          "accepted": true,
+          "supervisor_provenance": {
+            "code_revision": {
+              "commit": "3a623f5ea562c54184c8e0852243f7a222f8647b",
+              "source_sha256": "38bc44a12c818281cfad0d5ef2d2ce0cd702ec7b58fd4f93f27461fe2616a58a"
+            },
+            "execution_id": "d97a8800ffda4edda28bbfa4e52ce4c5",
+            "run_id": "jev-continuous-20261004",
+            "segment_id": "frozen-source"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -7,6 +7,7 @@ adapter is a gameplay controller, model client or recovery authority.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import math
@@ -86,6 +87,75 @@ def craft_progress(sample, previous, now):
     return result
 
 
+def research_sample(observation, validation, *, session_id, execution_id, checkpoint_tick, now):
+    """Project a recent accepted native observation from a trusted event reader.
+
+    The caller pins the campaign, execution and read-only log source. Event
+    pairing is required: a model request or an unvalidated snapshot is not an
+    accepted native observation. This does not verify research completion.
+    """
+    try:
+        observed, accepted = observation['payload'], validation['payload']
+        snapshot = observed['snapshot']; factory = snapshot['factory']
+        tick = snapshot['tick']; runtime = factory['acceptance_runtime']
+        if (observation['event_type'] != 'observation'
+                or validation['event_type'] != 'observation_validated'
+                or observed['status'] != 'ok' or accepted['accepted'] is not True
+                or not isinstance(observed['observation_id'], str)
+                or not observed['observation_id']
+                or observed['observation_id'] != accepted['observation_id']
+                or snapshot['world_kind'] != 'fle'
+                or type(tick) is not int or type(checkpoint_tick) is not int
+                or not 0 <= tick <= checkpoint_tick
+                or snapshot['session_id'] != session_id
+                or factory['tick'] != tick or factory['observation_snapshot_schema'] != 2
+                or runtime['schema'] != 1 or runtime['session_id'] != session_id
+                or type(runtime['force_index']) is not int or runtime['force_index'] < 1
+                or runtime['speed'] != 1 or runtime['tick_paused'] is not False):
+            raise ValueError('unbound research observation')
+        for event, payload in ((observation, observed), (validation, accepted)):
+            stamp = datetime.fromisoformat(event['time']['utc'].replace('Z', '+00:00'))
+            if (stamp.tzinfo is None or not now - 30 <= stamp.timestamp() <= now + 2
+                    or payload['session_id'] != session_id or payload['world_kind'] != 'fle'
+                    or payload['factorio_tick'] != tick or event['time']['factorio_tick'] != tick
+                    or payload['supervisor_provenance']['execution_id'] != execution_id):
+                raise ValueError('stale or unbound research observation')
+        technology = factory.get('research')
+        if not technology:
+            return None
+        return {'technology': technology, 'force_index': runtime['force_index'],
+                'progress': factory['research_progress'], 'observed_tick': tick}
+    except (KeyError, TypeError, AttributeError, OverflowError) as error:
+        raise ValueError('invalid research observation') from error
+
+
+def research_progress(sample, previous, now):
+    """Count only advancing native research fraction and observation tick."""
+    if sample is None:
+        return None
+    if (not isinstance(sample, dict)
+            or not isinstance(sample.get('technology'), str)
+            or not 1 <= len(sample['technology']) <= 128
+            or type(sample.get('force_index')) is not int or sample['force_index'] < 1
+            or not number(sample.get('progress')) or not 0 <= sample['progress'] < 1
+            or type(sample.get('observed_tick')) is not int or sample['observed_tick'] < 0):
+        raise ValueError('invalid tracked research evidence')
+    result = {k: sample[k] for k in ('technology', 'force_index', 'progress', 'observed_tick')}
+    result['advanced_at'] = None
+    if (isinstance(previous, dict) and all(previous.get(k) == sample[k]
+                                         for k in ('technology', 'force_index'))):
+        old_progress, old_tick = previous.get('progress'), previous.get('observed_tick')
+        if (not number(old_progress) or type(old_tick) is not int
+                or sample['progress'] < old_progress or sample['observed_tick'] < old_tick
+                or (sample['progress'] > old_progress and sample['observed_tick'] == old_tick)):
+            raise ValueError('tracked research evidence regressed or changed')
+        stamp = previous.get('advanced_at')
+        if stamp is not None and (not number(stamp) or not 0 <= stamp <= now + 2):
+            raise ValueError('invalid tracked research progress time')
+        result['advanced_at'] = now if sample['progress'] > old_progress else stamp
+    return result
+
+
 def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
              stall_seconds=120):
     """Do not turn process liveness, tick movement or a restart into progress."""
@@ -97,7 +167,8 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
               'progress_tick': prior.get('progress_tick'),
               'progress_age_seconds': None, 'blocked_since': None,
               'blocked_age_seconds': None, 'pending': False,
-              'automatic_recovery_allowed': False, 'craft_progress': None}
+              'automatic_recovery_allowed': False, 'craft_progress': None,
+              'research_progress': None}
     if number(prior.get('at')) and now + 2 < prior['at']:
         result['reason'] = 'monitor clock regressed'
         return result
@@ -125,13 +196,26 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
                   progress_age_seconds=max(0, now - stamp) if stamp is not None else None,
                   pending=sample.get('pending') is True)
     craft_error = None
+    # After a long observer gap, a larger counter only proves work occurred
+    # sometime during that gap. Establish a fresh baseline before crediting it.
+    continuous_sample = number(prior.get('at')) and 0 <= now - prior['at'] < stall_seconds
     try:
-        craft = craft_progress(sample.get('background_craft'), prior.get('craft_progress'), now)
+        craft = craft_progress(sample.get('background_craft'),
+                               prior.get('craft_progress') if continuous_sample else None, now)
         result['craft_progress'] = craft
     except ValueError as error:
         craft = None
         craft_error = str(error)
     craft_stamp = craft.get('advanced_at') if craft else None
+    research_error = None
+    try:
+        research = research_progress(sample.get('native_research'),
+                                     prior.get('research_progress') if continuous_sample else None, now)
+        result['research_progress'] = research
+    except ValueError as error:
+        research = None
+        research_error = str(error)
+    research_stamp = research.get('advanced_at') if research else None
     status, phase = sample.get('checkpoint_status'), sample.get('owner_phase')
     if phase == 'stopped_by_service_owner':
         result.update(status='stopped', reason='stopped by service owner', attention=False)
@@ -141,7 +225,7 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
         result.update(status='stopped', reason='controller process unavailable')
     elif status in {'blocked', 'uncertain'}:
         since = prior.get('blocked_since')
-        if (prior.get('status') not in {'blocked', 'uncertain', 'crafting'}
+        if (prior.get('status') not in {'blocked', 'uncertain', 'crafting', 'researching'}
                 or not number(since) or since > now):
             since = now
         result.update(status=status, reason=str(sample.get('reason') or status)[:180],
@@ -151,16 +235,27 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
         # Native uncertainty and unrelated holds keep their attention priority.
         if (status == 'blocked' and sample.get('reason') in {
                 'low choice confidence', 'Candidate evidence insufficient'}
-                and number(craft_stamp) and now - craft_stamp < stall_seconds):
+                and not research_error and number(craft_stamp) and now - craft_stamp < stall_seconds):
             result.update(status='crafting', reason='tracked craft is advancing; foreground decision waiting',
+                          attention=False, foreground_status=status,
+                          foreground_reason=sample['reason'])
+        elif (status == 'blocked' and sample.get('reason') in {
+                'low choice confidence', 'Candidate evidence insufficient'}
+                and not craft_error and number(research_stamp)
+                and now - research_stamp < stall_seconds):
+            result.update(status='researching', reason='native research is advancing; foreground decision waiting',
                           attention=False, foreground_status=status,
                           foreground_reason=sample['reason'])
     elif status != 'running':
         result['reason'] = 'unrecognized controller state'
     elif craft_error:
         result['reason'] = craft_error
+    elif research_error:
+        result['reason'] = research_error
     elif number(craft_stamp) and now - craft_stamp < stall_seconds:
         result.update(status='progressing', reason='tracked craft is advancing', attention=False)
+    elif number(research_stamp) and now - research_stamp < stall_seconds:
+        result.update(status='progressing', reason='native research is advancing', attention=False)
     elif stamp is None or now - stamp >= stall_seconds:
         result.update(status='no_progress', reason=('awaiting verified progress' if stamp is None
                       else 'no recent verified useful action'))
@@ -176,6 +271,10 @@ def banner(state):
     if status == 'crafting':
         craft = state['craft_progress']
         return (f"JEV crafting: {craft['finished']}/{craft['requested']} batches"
+                f" | Foreground waiting: {state['foreground_reason']}")[:240]
+    if status == 'researching':
+        research = state['research_progress']
+        return (f"JEV researching: {research['technology']} {research['progress']:.1%}"
                 f" | Foreground waiting: {state['foreground_reason']}")[:240]
     age = state.get('progress_age_seconds')
     suffix = f' | {int(age // 60)}m since progress' if number(age) else ''
