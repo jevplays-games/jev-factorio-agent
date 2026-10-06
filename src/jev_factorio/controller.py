@@ -59,7 +59,8 @@ class HierarchicalLoop(AgentLoop):
                  blocked_source_revision: str | None = None,
                  persist_recoverable_blocks: bool = False,
                  initialize_persistent_campaign: bool = False,
-                 persistent_idle_observations: int = DEFAULT_IDLE_OBSERVATIONS):
+                 persistent_idle_observations: int = DEFAULT_IDLE_OBSERVATIONS,
+                 two_stage_decisions: bool = False):
         if factory_scheduling not in {"serial", "ready-work"}:
             raise ValueError("Unknown factory scheduling policy")
         self.factory_scheduling = factory_scheduling
@@ -68,6 +69,12 @@ class HierarchicalLoop(AgentLoop):
             raise ValueError("Unknown campaign policy")
         if policy != "deterministic" and jev is None:
             raise ValueError("Supply an explicit Jev client; mock use must be intentional")
+        if type(two_stage_decisions) is not bool:
+            raise ValueError("Two-stage decisions require an explicit boolean")
+        if two_stage_decisions and (policy != "jev" or not persist_recoverable_blocks
+                                    or checkpoint is None):
+            raise ValueError("Two-stage decisions require synchronous persistent strict JEV control")
+        self.two_stage_decisions = two_stage_decisions
         if not math.isfinite(confidence_floor) or not 0 <= confidence_floor <= 1:
             raise ValueError("Confidence floor must be in [0, 1]")
         if not math.isfinite(tick_seconds) or tick_seconds < 0:
@@ -406,6 +413,10 @@ class HierarchicalLoop(AgentLoop):
         an unseen candidate batch. Pending, provider, validation, and unknown
         outcomes remain one-use and stop this pass.
         """
+        if getattr(self, "two_stage_decisions", False):
+            from . import two_stage_controller
+            if two_stage_controller.pending(self):
+                return two_stage_controller.advance(self)
         from . import judgments
         from .blocked_persistence import (
             MAX_SELECTION_BATCHES_PER_STATE, is_recoverable_reason,
@@ -535,11 +546,6 @@ class HierarchicalLoop(AgentLoop):
                 return {"record": self._persistent_wait(
                     snapshot, input_sha256, source_authorized=source_auth_pending)}
 
-            self._record_persistent_attempt(
-                snapshot, input_sha256, source_authorized=source_auth_pending,
-                authorization_reason=authorization_reason,
-                selection_batch=metadata)
-            source_auth_pending = False
             self._persistent_runtime_wait_level = 0
             self._persistent_idle_waits = 0
             self._persistent_recovery_status = {
@@ -552,6 +558,21 @@ class HierarchicalLoop(AgentLoop):
                 "offered_candidate_count": len(offered),
                 "recorded_attempts": self._blocked_recovery_attempt_count(),
             }
+            if getattr(self, "two_stage_decisions", False):
+                from . import two_stage_controller
+                two_stage_controller.prepare(
+                    self, snapshot, state, remaining, context, questions, offered,
+                    metadata, input_sha256, source_authorized=source_auth_pending,
+                    authorization_reason=authorization_reason)
+                result = two_stage_controller.advance(self)
+                # The existing caller durably finishes this batch. Subsequent
+                # polls may offer only the bounded, previously unseen remainder.
+                return result
+            self._record_persistent_attempt(
+                snapshot, input_sha256, source_authorized=source_auth_pending,
+                authorization_reason=authorization_reason,
+                selection_batch=metadata)
+            source_auth_pending = False
             try:
                 with phase("selection", self._diagnostic_trace):
                     self._decision = select_plan(
@@ -626,14 +647,15 @@ class HierarchicalLoop(AgentLoop):
                                    source_authorized: bool = False,
                                    authorization_reason: str | None = None,
                                    outcome: str = "pending",
-                                   selection_batch: dict | None = None) -> None:
+                                   selection_batch: dict | None = None,
+                                   save: bool = True) -> None:
         """Write-ahead one decision fingerprint before model selection."""
         if source_authorized:
             # The changed-contract source authorization and its first concrete
             # fingerprint share the same durable checkpoint commit.
             self._consume_blocked_reevaluation(
                 snapshot, input_sha256, authorization_reason=authorization_reason,
-                persistent_outcome=outcome, selection_batch=selection_batch)
+                persistent_outcome=outcome, selection_batch=selection_batch, save=save)
             return
         from .blocked_persistence import is_recoverable_reason, finish_attempt, record_attempt
         self._archive_full_recovery_tail()
@@ -652,7 +674,8 @@ class HierarchicalLoop(AgentLoop):
             self.memory.event(
                 "blocked_recovery_attempt", decision_input_sha256=input_sha256,
                 tick=snapshot.tick, source_head=self.provenance["code_revision"]["commit"])
-            self._save()
+            if save:
+                self._save()
         except BaseException:
             self.memory.blocked_recovery = prior_recovery
             self.memory.history = prior_history
@@ -814,13 +837,16 @@ class HierarchicalLoop(AgentLoop):
             validate_memory_state(
                 memory, self.provenance.get("code_revision"),
                 allow_source_change=self._reevaluate_blocked_once)
+        if memory.two_stage_decision is not None and not self.two_stage_decisions:
+            raise ValueError("Checkpoint requires its two-stage decision protocol")
         return memory
 
     def _consume_blocked_reevaluation(self, snapshot: GameSnapshot,
                                       persistent_input: str | None = None, *,
                                       authorization_reason: str | None = None,
                                       persistent_outcome: str = "pending",
-                                      selection_batch: dict | None = None) -> None:
+                                      selection_batch: dict | None = None,
+                                      save: bool = True) -> None:
         """Durably consume the one-use authorization before any model request."""
         from .blocked_reevaluation import validate_blocked_memory
 
@@ -876,7 +902,8 @@ class HierarchicalLoop(AgentLoop):
                 self.memory.event("blocked_recovery_attempt", decision_input_sha256=persistent_input,
                                   tick=snapshot.tick,
                                   source_head=self.provenance["code_revision"]["commit"])
-            self._save()
+            if save:
+                self._save()
         except BaseException:
             self.memory.history = prior_history
             self.memory.blocked_reevaluations = prior_ledger
@@ -1885,6 +1912,9 @@ class HierarchicalLoop(AgentLoop):
                                      "does not justify waiting for speculative output."),
                         "ultimate_goal": self.memory.active_goal,
                     }
+                if self.two_stage_decisions:
+                    from .two_stage_decision import PROTOCOL
+                    state["decision_protocol"] = PROTOCOL
                 # Every resumable Jev selection is write-ahead persisted. Do
                 # not wait for the legacy stalled-decision threshold: a lost
                 # response on the first running request is already ambiguous.

@@ -1,5 +1,9 @@
 # Status checks, recovery, and the live overlay
 
+For strict confidence holds, see [two-stage JEV decisions](TWO_STAGE_JEV.md).
+For the October 6 planner cycle and guest-agent access failure, see the
+[incident checklist](RECOVERY_20261006.md).
+
 For the replacement October 4 Train campaign, start with the concrete
 [continuous-runtime operations runbook](CONTINUOUS_RUNTIME_OPERATIONS.md).
 For the October 5 archive crash, completed-craft reconciliation and compatible

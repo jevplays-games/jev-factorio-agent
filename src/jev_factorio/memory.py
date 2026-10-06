@@ -14,6 +14,7 @@ _BLOCKED_REEVALUATION_REASONS = frozenset({
     "Candidate evidence insufficient", "low choice confidence",
     "Current native boiler identity and coal stock are required",
     "Furnace fuel service requires current owned source identity",
+    "Native buffer component dependency cycle",
 })
 
 
@@ -87,6 +88,9 @@ class CampaignMemory:
     # CampaignMemory construction retains its historical argument order.
     blocked_recovery_archive: dict | None = None
     compatible_source_recoveries: list[dict] = field(default_factory=list)
+    # Appended optional records preserve legacy positional construction.
+    two_stage_decision: dict | None = None
+    planner_fault_recovery: dict | None = None
 
     def event(self, kind: str, **details) -> None:
         validate_history_authority(self, archive_index=getattr(self, "_blocked_recovery_archive_index", None))
@@ -157,6 +161,12 @@ class CampaignMemory:
             if data["version"] == 2 and not {"attempt", "attempt_outcomes"} <= data.keys():
                 raise ValueError("Version 2 checkpoint is missing attempt fields")
             memory = cls(**data)
+            if memory.planner_fault_recovery is not None:
+                from .planner_fault_recovery import validate_record as validate_planner_fault
+                validate_planner_fault(memory, boundary=False)
+            if memory.two_stage_decision is not None:
+                from .two_stage_decision import validate as validate_two_stage
+                validate_two_stage(memory.two_stage_decision, session_id, target)
             if memory.transfer_recovery is not None and not isinstance(memory.transfer_recovery, dict):
                 raise ValueError("Invalid transfer recovery reference")
             if memory.transfer_recovery is not None and memory.pending is None:

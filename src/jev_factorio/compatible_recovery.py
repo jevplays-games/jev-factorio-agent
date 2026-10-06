@@ -40,6 +40,12 @@ def scope(memory, *, include_background_step: bool = True,
     """Bind complete retained state, including counters and native ownership."""
     from dataclasses import asdict
     value = asdict(memory)
+    # Preserve historical scope preimages when this opt-in protocol is absent.
+    # A present record remains part of the complete state digest.
+    if value.get("two_stage_decision") is None:
+        value.pop("two_stage_decision", None)
+    if value.get("planner_fault_recovery") is None:
+        value.pop("planner_fault_recovery", None)
     if not include_step_in_state:
         value.pop("background_step", None)
     # Exact checkpoint bytes and the full decoded-state digest bind every

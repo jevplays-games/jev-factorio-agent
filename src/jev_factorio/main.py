@@ -28,7 +28,7 @@ class _ReconcileOnlyDecisionClient:
 
 def make_backend(name: str, resume: bool = False, adopt_session: bool = False,
                  setup_timing=None, connector_witness_path=None, connector_binding=None,
-                 completed_craft=None, background_craft=None):
+                 completed_craft=None, background_craft=None, output_commitments=None):
     if name == "mock":
         return MockBackend()
     if name == "play_api":
@@ -44,6 +44,8 @@ def make_backend(name: str, resume: bool = False, adopt_session: bool = False,
             attachment['completed_craft'] = completed_craft
         if background_craft is not None:
             attachment['background_craft'] = background_craft
+        if output_commitments is not None:
+            attachment['output_commitments'] = output_commitments
         if setup_timing is None:
             b.start(resume=resume, adopt_session=adopt_session,
                     connector_witness_path=connector_witness_path, **attachment)
@@ -186,6 +188,8 @@ def cli() -> None:
                    help="Exact starting controller checkpoint SHA-256 for blocked re-evaluation")
     p.add_argument("--blocked-source-revision",
                    help="Full Git commit supplied by the checkpoint owner for the blocked decision")
+    p.add_argument("--two-stage-decisions", action="store_true",
+                   help="Assess candidates, then make a strict JEV choice with durable phase records")
     p.add_argument("--persist-recoverable-blocks", action="store_true",
                    help="Opt in to observation-only waits and changed-evidence retries for exact recoverable blocks")
     p.add_argument("--initialize-persistent-campaign", action="store_true",
@@ -261,6 +265,9 @@ def cli() -> None:
     elif (args.compatible_source_authorization_sha256 is not None
           or args.compatible_source_lock_fd is not None):
         p.error("Compatible-source pins require an explicit authorization file")
+    if args.two_stage_decisions and (not args.persist_recoverable_blocks
+                                     or args.controller != "hierarchical" or args.policy != "jev"):
+        p.error("--two-stage-decisions requires persistent hierarchical strict JEV control")
     if args.persist_recoverable_blocks:
         if (not args.until_complete or args.backend != "fle" or args.controller != "hierarchical"
                 or args.policy != "jev" or args.mock_model
@@ -490,6 +497,7 @@ def cli() -> None:
             until_complete=args.until_complete, reconcile_only=args.reconcile_only,
             reevaluate_blocked_once=args.reevaluate_blocked_once,
             persist_recoverable_blocks=args.persist_recoverable_blocks,
+            two_stage_decisions=args.two_stage_decisions,
             initialize_persistent_campaign=args.initialize_persistent_campaign,
             persistent_idle_observations=persistent_idle_observations,
             exact_checkpoint_sha256=args.exact_checkpoint_sha256,
@@ -569,6 +577,8 @@ def cli() -> None:
                 options["persistent_idle_observations"] = persistent_idle_observations
                 if args.initialize_persistent_campaign:
                     options["initialize_persistent_campaign"] = True
+            if args.two_stage_decisions:
+                options["two_stage_decisions"] = True
             loop_type = HierarchicalLoop
             if args.background_work:
                 from .background import BackgroundWorkLoop
@@ -740,6 +750,9 @@ def cli() -> None:
                 binding = json.loads(selected_resume_checkpoint_capture).get('connector_ownership')
                 if isinstance(binding, dict) and binding.get('routes'):
                     attachment['connector_binding'] = binding
+                    output_owners = json.loads(selected_resume_checkpoint_capture).get('output_commitments')
+                    if output_owners:
+                        attachment['output_commitments'] = output_owners
                     from .backends.native_completed_craft import (
                         checkpoint_completed_craft, checkpoint_background_craft)
                     craft = checkpoint_completed_craft(json.loads(selected_resume_checkpoint_capture))

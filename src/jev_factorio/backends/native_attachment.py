@@ -497,7 +497,7 @@ def prepare_install_command(script: str, attachment=None) -> str:
 
 def readback(client, *, receipt_path=None, connector_witness_path=None,
              checkpoint_binding=None,
-             completed_craft=None, background_craft=None,
+             completed_craft=None, background_craft=None, output_commitments=None,
              allow_legacy_manual_cycle_repair=False,
              allow_unqualified_connector_bridge=False):
     result = decode_native(client.send_command('/sc ' + PROBE))
@@ -635,6 +635,8 @@ def readback(client, *, receipt_path=None, connector_witness_path=None,
             raise RuntimeError('Unknown native installation profile requires reconciliation')
         from .native_current_attachment import is_supported_direct_installation
         supported_direct = is_supported_direct_installation(result)
+        if output_commitments is not None and not supported_direct:
+            raise RuntimeError('Paid output attachment requires a supported direct installation')
         if (result['modules']['connector_ownership'] and not supported_direct
                 and not (profile == LEGACY_MANUAL_CYCLE_PROFILE
                          and allow_legacy_manual_cycle_repair)
@@ -657,7 +659,7 @@ def readback(client, *, receipt_path=None, connector_witness_path=None,
             from .native_current_attachment import qualify_current_connector_snapshot
             return qualify_current_connector_snapshot(
                 client, result, checkpoint_binding=checkpoint_binding, completed_craft=completed_craft,
-                background_craft=background_craft)
+                background_craft=background_craft, output_commitments=output_commitments)
         if (result['modules']['connector_ownership']
                 and not (profile == LEGACY_MANUAL_CYCLE_PROFILE
                          and allow_legacy_manual_cycle_repair)

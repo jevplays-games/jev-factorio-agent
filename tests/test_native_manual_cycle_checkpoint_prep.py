@@ -91,6 +91,8 @@ def test_legacy_none_prepares_only_empty_binding_and_consumes_one_use(tmp_path):
     original.pop('capital_investment', None)  # normal checkpoint serializer omits null
     original.pop('blocked_recovery', None)  # empty extension state retains historical bytes
     original.pop('blocked_recovery_archive', None)  # absent archive retains historical bytes
+    original.pop('two_stage_decision', None)
+    original.pop('planner_fault_recovery', None)
     assert after == original
     assert paths['receipt_path'].read_bytes() == json.dumps({
         'schema': 'jev.native-attachment.v1', 'session_id': 'retained-session',

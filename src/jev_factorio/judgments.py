@@ -3255,6 +3255,54 @@ def is_lone_passive_background_wait(plans) -> bool:
             and plan.steps[0].effect == "crafting_idle")
 
 
+def candidate_assessments(answers: dict, offered: list[Plan], confidence_floor: float) -> dict:
+    """Apply the same candidate gates to validated assessment answers in either protocol."""
+    diagnostics = {"candidate_rejections": {}}
+    diagnostics["benefit_gate"] = {}
+    diagnostics["usefulness_gate"] = {}
+    for plan in offered:
+        benefit = answers[plan.id + "/benefit"]
+        disruption = answers[plan.id + "/disruption"]
+        usefulness = answers[plan.id + "/useful_progress"]
+        gate = benefit_gate(benefit, confidence_floor)
+        gate["eligibility_authority"] = False
+        diagnostics["benefit_gate"][plan.id] = gate
+        # Eligibility is judged from the validated answer distribution, not from
+        # the model's separately reported confidence. For this two-label question
+        # the reported number is not tied to the probabilities (a live answer put
+        # 0.60 on `useful` while reporting 0.20), so using it as a veto rejected a
+        # plan the model clearly favored. The same principle governs benefit_gate.
+        # The reported confidence stays in the diagnostics for audit only.
+        useful_probability = float(usefulness["probabilities"]["useful"])
+        useful = (usefulness["choice"] == "useful"
+                  and useful_probability >= confidence_floor)
+        diagnostics["usefulness_gate"][plan.id] = {
+            "choice": usefulness["choice"],
+            "probability": useful_probability,
+            "confidence": usefulness["confidence"],
+            "floor": confidence_floor,
+            "passed": useful,
+        }
+        rejected = []
+        if answers[plan.id + "/needs_observation"]["noul"] >= 0.5:
+            rejected.append("missing_start_evidence")
+        if usefulness["choice"] != "useful":
+            rejected.append("no_demonstrated_progress")
+        elif useful_probability < confidence_floor:
+            rejected.append("low_usefulness_confidence")
+        # A negative ordinal judgment contradicts eligibility; never ignore it.
+        # Positive-level ambiguity and its reported confidence only affect rank.
+        probabilities = benefit["probabilities"]
+        if probabilities["0"] >= max(value for key, value in probabilities.items()
+                                     if key != "0"):
+            rejected.append("low_benefit_confidence")
+        if disruption["confidence"] < confidence_floor:
+            rejected.append("low_disruption_confidence")
+        if rejected:
+            diagnostics["candidate_rejections"][plan.id] = rejected
+    return diagnostics
+
+
 def select_plan(client, state: dict, plans: list[Plan], confidence_floor: float = 0.45,
                 max_bytes: int = DEFAULT_MAX_REQUEST_BYTES, *, prepared_batch=None) -> Decision:
     _number(confidence_floor)
@@ -3330,49 +3378,12 @@ def select_plan(client, state: dict, plans: list[Plan], confidence_floor: float 
                         diagnostics={**diagnostics, "outcome": "invalid_answer"})
     choice = answers["candidate"]
     utilities = {}
-    diagnostics["benefit_gate"] = {}
-    diagnostics["usefulness_gate"] = {}
+    diagnostics.update(candidate_assessments(answers, offered, confidence_floor))
     for plan in offered:
+        if plan.id in diagnostics["candidate_rejections"]:
+            continue
         benefit = answers[plan.id + "/benefit"]
         disruption = answers[plan.id + "/disruption"]
-        usefulness = answers[plan.id + "/useful_progress"]
-        gate = benefit_gate(benefit, confidence_floor)
-        gate["eligibility_authority"] = False
-        diagnostics["benefit_gate"][plan.id] = gate
-        # Eligibility is judged from the validated answer distribution, not from
-        # the model's separately reported confidence. For this two-label question
-        # the reported number is not tied to the probabilities (a live answer put
-        # 0.60 on `useful` while reporting 0.20), so using it as a veto rejected a
-        # plan the model clearly favored. The same principle governs benefit_gate.
-        # The reported confidence stays in the diagnostics for audit only.
-        useful_probability = float(usefulness["probabilities"]["useful"])
-        useful = (usefulness["choice"] == "useful"
-                  and useful_probability >= confidence_floor)
-        diagnostics["usefulness_gate"][plan.id] = {
-            "choice": usefulness["choice"],
-            "probability": useful_probability,
-            "confidence": usefulness["confidence"],
-            "floor": confidence_floor,
-            "passed": useful,
-        }
-        rejected = []
-        if answers[plan.id + "/needs_observation"]["noul"] >= 0.5:
-            rejected.append("missing_start_evidence")
-        if usefulness["choice"] != "useful":
-            rejected.append("no_demonstrated_progress")
-        elif useful_probability < confidence_floor:
-            rejected.append("low_usefulness_confidence")
-        # A negative ordinal judgment contradicts eligibility; never ignore it.
-        # Positive-level ambiguity and its reported confidence only affect rank.
-        probabilities = benefit["probabilities"]
-        if probabilities["0"] >= max(value for key, value in probabilities.items()
-                                     if key != "0"):
-            rejected.append("low_benefit_confidence")
-        if disruption["confidence"] < confidence_floor:
-            rejected.append("low_disruption_confidence")
-        if rejected:
-            diagnostics["candidate_rejections"][plan.id] = rejected
-            continue
         # Ranking heuristic, NOT a probability of plan success or game victory.
         benefit_maximum = len(questions[plan.id + "/benefit"]["criteria"]) - 1
         disruption_maximum = len(questions[plan.id + "/disruption"]["criteria"]) - 1
