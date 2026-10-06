@@ -49,16 +49,109 @@ fair.actor = function()
 end
 
 fair.stop = function(reason)
-    -- Cleanup must still stop the original player when configuration drifts.
-    local player = game.get_player(player_index)
-    if player and player.character == (storage.agent_characters or {})[1] then
-        player.walking_state = {walking = false}
-        player.mining_state = {mining = false}
+    -- Cleanup is scoped to the originally selected LuaPlayer. A replacement
+    -- character must never be adopted, and some controller types reject these
+    -- input writes entirely (notably spectator and ghost controllers).
+    local player_ok, player = pcall(game.get_player, player_index)
+    local cleanup_errors, skipped = {}, nil
+    if not player_ok then
+        cleanup_errors[#cleanup_errors + 1] = tostring(player)
+    elseif not player then
+        skipped = "player_unavailable"
+    else
+        local inspected, valid, controller = pcall(function()
+            return player.valid, player.controller_type
+        end)
+        if not inspected then
+            cleanup_errors[#cleanup_errors + 1] = tostring(valid)
+        elseif valid == false then
+            skipped = "invalid_player"
+        else
+            local controllers = defines and defines.controllers or {}
+            local supports_input = controller ~= nil and (
+                (controllers.character ~= nil and controller == controllers.character)
+                or (controllers.god ~= nil and controller == controllers.god)
+                or (controllers.editor ~= nil and controller == controllers.editor))
+            if supports_input and controller == controllers.character then
+                local character_ok, has_valid_character = pcall(function()
+                    local character = player.character
+                    return character ~= nil and character.valid
+                end)
+                if not character_ok then
+                    cleanup_errors[#cleanup_errors + 1] = tostring(has_valid_character)
+                    supports_input = false
+                elseif not has_valid_character then
+                    skipped = "invalid_character"
+                    supports_input = false
+                end
+            end
+            if controller == nil then
+                -- Older offline Lua fixtures omit controller_type. Permit their
+                -- ordinary character case only while the original character is
+                -- still valid and bound; never infer support for a replacement.
+                local original_bound, same_original = pcall(function()
+                    local character = player.character
+                    return character and character.valid
+                        and storage.agent_characters
+                        and character == storage.agent_characters[1]
+                end)
+                if not original_bound then
+                    cleanup_errors[#cleanup_errors + 1] = tostring(same_original)
+                else
+                    supports_input = same_original and true or false
+                end
+            end
+            if not supports_input then
+                if not cleanup_errors[1] and not skipped then
+                    skipped = "unsupported_controller"
+                end
+            else
+                for _, assignment in ipairs({
+                    {"walking_state", {walking = false}},
+                    {"mining_state", {mining = false}}
+                }) do
+                    local assigned, failure = pcall(function()
+                        player[assignment[1]] = assignment[2]
+                    end)
+                    if not assigned then
+                        cleanup_errors[#cleanup_errors + 1] = tostring(failure)
+                    end
+                end
+            end
+        end
     end
-    if fair.job and (fair.job.status ~= "failed" or reason) then
-        fair.job.status = reason and "failed" or "completed"
-        fair.job.error = reason
+
+    local cleanup_error = #cleanup_errors > 0 and table.concat(cleanup_errors, "; ") or nil
+    local job = fair.job
+    local was_failed = job and job.status == "failed"
+    if job then
+        if cleanup_error then
+            job.cleanup_result = "failed"
+            job.cleanup_error = cleanup_error
+        elseif skipped then
+            job.cleanup_result = "skipped:" .. skipped
+        else
+            job.cleanup_result = "cleared"
+        end
+
+        local final_reason = reason
+        if not final_reason and (cleanup_error or skipped) then
+            final_reason = "Player controls could not be cleared: "
+                .. (cleanup_error or skipped)
+        end
+        if job.status ~= "failed" or reason or cleanup_error or skipped then
+            job.status = final_reason and "failed" or "completed"
+            if final_reason then
+                if reason or not was_failed then job.error = final_reason end
+            else
+                job.error = nil
+            end
+        end
     end
+
+    -- Persist terminal job state and its original reason before surfacing an
+    -- actual API setter/getter fault to Factorio's event error log.
+    if cleanup_error then error(cleanup_error, 0) end
 end
 
 fair.bind = function()
