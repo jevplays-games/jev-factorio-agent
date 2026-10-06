@@ -1481,7 +1481,10 @@ def _recipe_source_matches(snapshot, catalog, role, machine):
 
     Native recipe roles are registered after ordinary placement; discovery only
     adds stock containers. Ore furnaces still require their production-site
-    identity. This is current entity identity, not historical payment evidence.
+    identity. Registered burner furnaces choose their recipe from input, so an
+    idle furnace may report an empty recipe. Its catalog must independently
+    permit the enabled smelting recipe. This is current entity identity, not
+    historical payment evidence.
     """
     try:
         unit = machine['unit_number']
@@ -1501,9 +1504,15 @@ def _recipe_source_matches(snapshot, catalog, role, machine):
                 and type(snapshot.factory.get('tick')) is int
                 and snapshot.factory['tick'] == snapshot.tick
                 and role == 'recipe:' + recipe['name']
-                and machine['recipe'] == recipe_name
-                and prototype.get('electric') is True and prototype.get('burner') is False
-                and prototype.get('categories', {}).get(recipe['category']) is True)
+                and prototype.get('categories', {}).get(recipe['category']) is True
+                and ((machine['recipe'] == recipe_name
+                      and prototype.get('electric') is True and prototype.get('burner') is False)
+                     or (machine['name'] in {'stone-furnace', 'steel-furnace'}
+                         and prototype.get('burner') is True and prototype.get('electric') is False
+                         and recipe['category'] == 'smelting'
+                         and machine['recipe'] in ('', recipe_name)
+                         and not recipe.get('hidden')
+                         and catalog.enabled(recipe, snapshot.researched or []))))
     except (KeyError, TypeError, AttributeError):
         return False
 
@@ -3717,10 +3726,6 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
             recipe_name = role.removeprefix('recipe:') if isinstance(role, str) else ''
             recipe = catalog.recipes.get(recipe_name, {})
             prototype = catalog.machines.get(machine.get('name'), {})
-            try:
-                owned = production_site_sources(snapshot).get(role)
-            except (ValueError, KeyError, TypeError, AttributeError):
-                owned = None
             required = (primary.get('deficit') if isinstance(primary, dict) else None)
             receipt = parameters.get('receipt')
             if (isinstance(service, dict) and service.get('schema') == 2
@@ -3745,8 +3750,7 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
                     and isinstance(fuel_bag, dict)
                     and isinstance(role, str) and role.startswith('recipe:')
                     and type(machine.get('unit_number')) is int and machine['unit_number'] > 0
-                    and isinstance(owned, dict) and owned.get('state') == 'owned'
-                    and owned.get('source_unit') == machine['unit_number']
+                    and _recipe_source_matches(snapshot, catalog, role, machine)
                     and snapshot.factory.get('production_sites', {}).get('protocol') == 1
                     and snapshot.factory.get('production_sites', {}).get('session_id') == snapshot.session_id
                     and snapshot.factory.get('production_sites', {}).get('tick') == snapshot.tick

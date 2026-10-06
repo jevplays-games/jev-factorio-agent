@@ -207,9 +207,12 @@ def _bootstrap_plan(snapshot):
     return Plan(plan_id, "bootstrap_mining", plan_id, (step,))
 
 
-def test_boiler_planner_error_is_not_an_automatic_retry_reason(tmp_path, monkeypatch):
+@pytest.mark.parametrize('reason', [
+    'Current native boiler identity and coal stock are required',
+    'Furnace fuel service requires current owned source identity',
+])
+def test_planner_error_is_not_an_automatic_retry_reason(tmp_path, monkeypatch, reason):
     from jev_factorio.blocked_persistence import is_recoverable_reason, validate_memory_state
-    reason = 'Current native boiler identity and coal stock are required'
     prior = {'commit': '1' * 40, 'source_sha256': 'b' * 64}
     backend, checkpoint, _, _, loop = _make_loop(
         tmp_path, monkeypatch, selection=lambda snapshot: [_bootstrap_plan(snapshot)],
@@ -224,6 +227,7 @@ def test_boiler_planner_error_is_not_an_automatic_retry_reason(tmp_path, monkeyp
 @pytest.mark.parametrize("blocked_reason", [
     "Candidate evidence insufficient", "low choice confidence",
     "Current native boiler identity and coal stock are required",
+    "Furnace fuel service requires current owned source identity",
 ])
 def test_selected_recheck_keeps_counter_until_receipt_and_continues_unbounded_run(
         tmp_path, monkeypatch, blocked_reason):

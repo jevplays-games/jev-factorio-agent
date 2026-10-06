@@ -59,6 +59,7 @@ _BLOCKED_REASONS = {
     # A reviewed planner contract change may repair this exact idle failure.
     # This does not make it eligible for unchanged automatic polling/retries.
     "Current native boiler identity and coal stock are required",
+    "Furnace fuel service requires current owned source identity",
 }
 
 
