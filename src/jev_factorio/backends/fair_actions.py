@@ -657,9 +657,345 @@ class FairActions:
             raise ValueError("Inconsistent native connection cell classification")
         return buildable, existing
 
+    @staticmethod
+    def validate_pole_geometry(value: Any, *, base_version: str | None = None,
+                               source_role: str | None = None,
+                               target_role: str | None = None) -> dict:
+        """Validate one actor/session-bound native pole endpoint observation."""
+        top_fields = {
+            "schema", "base_version", "session_id", "tick", "actor_unit",
+            "surface_index", "force_index", "supply_area_distance",
+            "maximum_wire_distance", "source", "target",
+        }
+        endpoint_fields = {
+            "role", "name", "unit_number", "position", "direction",
+            "orientation", "surface_index", "force_index", "quality",
+            "bounding_box",
+        }
+
+        def exact_fields(raw: Any, expected: set[str], label: str) -> dict:
+            if not isinstance(raw, dict) or set(raw) != expected:
+                raise ValueError(f"Malformed native pole {label}")
+            return raw
+
+        def integer(raw: Any, low: int, high: int, label: str) -> int:
+            if type(raw) is not int or not low <= raw <= high:
+                raise ValueError(f"Invalid native pole {label}")
+            return raw
+
+        def finite(raw: Any, low: float, high: float, label: str) -> float:
+            if (isinstance(raw, bool) or not isinstance(raw, (int, float))
+                    or not math.isfinite(raw) or not low <= raw <= high):
+                raise ValueError(f"Invalid native pole {label}")
+            return float(raw)
+
+        def point(raw: Any, label: str) -> dict:
+            raw = exact_fields(raw, {"x", "y"}, label)
+            return {
+                "x": finite(raw["x"], -1_000_000, 1_000_000, f"{label} x"),
+                "y": finite(raw["y"], -1_000_000, 1_000_000, f"{label} y"),
+            }
+
+        def cardinal_orientation(raw: Any, label: str) -> float:
+            orientation = finite(raw, 0, math.nextafter(1.0, 0.0), label)
+            quarter_turn = round(orientation * 4)
+            if not math.isclose(orientation, quarter_turn / 4, abs_tol=1e-9):
+                raise ValueError(f"Unsupported non-cardinal native pole {label}")
+            return orientation
+
+        value = exact_fields(value, top_fields, "geometry response")
+        if value["schema"] != "jev.native-pole-geometry.v1":
+            raise ValueError("Unsupported native pole geometry schema")
+        version = value["base_version"]
+        if (not isinstance(version, str) or not version
+                or (base_version is not None and version != base_version)):
+            raise ValueError("Native pole geometry game version changed")
+        session = value["session_id"]
+        if not isinstance(session, str) or not session or len(session) > 128:
+            raise ValueError("Invalid native pole geometry session")
+        tick = integer(value["tick"], 0, 9_007_199_254_740_991, "tick")
+        actor_unit = integer(value["actor_unit"], 1, 9_007_199_254_740_991,
+                             "actor unit")
+        surface_index = integer(value["surface_index"], 1, 2_147_483_647,
+                                "surface index")
+        force_index = integer(value["force_index"], 1, 2_147_483_647,
+                              "force index")
+        supply = finite(value["supply_area_distance"], 0.01, 64, "supply area")
+        wire = finite(value["maximum_wire_distance"], 0.01, 64, "wire reach")
+
+        endpoints = {}
+        for key, expected_role in (("source", source_role), ("target", target_role)):
+            raw = exact_fields(value[key], endpoint_fields, f"{key} endpoint")
+            role = raw["role"]
+            if (not isinstance(role, str) or not role or len(role) > 128
+                    or (expected_role is not None and role != expected_role)):
+                raise ValueError(f"Native pole {key} role changed")
+            name = raw["name"]
+            quality = raw["quality"]
+            if not isinstance(name, str) or not name or len(name) > 128:
+                raise ValueError(f"Invalid native pole {key} name")
+            if not isinstance(quality, str) or not quality or len(quality) > 64:
+                raise ValueError(f"Invalid native pole {key} quality")
+            unit = integer(raw["unit_number"], 1, 9_007_199_254_740_991,
+                           f"{key} unit")
+            direction = integer(raw["direction"], 0, 15, f"{key} direction")
+            orientation = cardinal_orientation(raw["orientation"], f"{key} orientation")
+            endpoint_surface = integer(raw["surface_index"], 1, 2_147_483_647,
+                                       f"{key} surface index")
+            endpoint_force = integer(raw["force_index"], 1, 2_147_483_647,
+                                     f"{key} force index")
+            if endpoint_surface != surface_index or endpoint_force != force_index:
+                raise ValueError(f"Native pole {key} is outside the actor surface or force")
+            position = point(raw["position"], f"{key} position")
+            box = exact_fields(
+                raw["bounding_box"],
+                {"left_top", "right_bottom", "orientation"},
+                f"{key} footprint",
+            )
+            left_top = point(box["left_top"], f"{key} footprint left top")
+            right_bottom = point(box["right_bottom"], f"{key} footprint right bottom")
+            box_orientation = cardinal_orientation(box["orientation"],
+                                                  f"{key} footprint orientation")
+            width = right_bottom["x"] - left_top["x"]
+            height = right_bottom["y"] - left_top["y"]
+            if (width <= 0 or height <= 0 or width > 512 or height > 512
+                    or not left_top["x"] <= position["x"] <= right_bottom["x"]
+                    or not left_top["y"] <= position["y"] <= right_bottom["y"]):
+                raise ValueError(f"Invalid native pole {key} footprint bounds")
+            FairActions._normalized_pole_bounds(
+                position,
+                {
+                    "left_top": left_top,
+                    "right_bottom": right_bottom,
+                    "orientation": box_orientation,
+                },
+            )
+            endpoints[key] = {
+                "role": role,
+                "name": name,
+                "unit_number": unit,
+                "position": position,
+                "direction": direction,
+                "orientation": orientation,
+                "surface_index": endpoint_surface,
+                "force_index": endpoint_force,
+                "quality": quality,
+                "bounding_box": {
+                    "left_top": left_top,
+                    "right_bottom": right_bottom,
+                    "orientation": box_orientation,
+                },
+            }
+        if (endpoints["source"]["role"] == endpoints["target"]["role"]
+                or endpoints["source"]["unit_number"] == endpoints["target"]["unit_number"]):
+            raise ValueError("Native pole endpoints are not distinct")
+        return {
+            "schema": value["schema"],
+            "base_version": version,
+            "session_id": session,
+            "tick": tick,
+            "actor_unit": actor_unit,
+            "surface_index": surface_index,
+            "force_index": force_index,
+            "supply_area_distance": supply,
+            "maximum_wire_distance": wire,
+            **endpoints,
+        }
+
+    @staticmethod
+    def _normalized_pole_bounds(position: dict, bounding_box: dict) -> dict:
+        """Resolve a native oriented box to bounded world-aligned extents.
+
+        BoundingBox corner coordinates are positioned around the entity.
+        Apply only the box's own non-zero orientation about the entity position;
+        a zero box orientation is already resolved and must not inherit
+        LuaEntity.orientation.
+        """
+        left_top, right_bottom = bounding_box["left_top"], bounding_box["right_bottom"]
+        orientation = bounding_box["orientation"]
+        if orientation == 0:
+            return {"left_top": dict(left_top), "right_bottom": dict(right_bottom)}
+
+        turns = int(round(orientation * 4)) % 4
+        rotated = []
+        for x in (left_top["x"], right_bottom["x"]):
+            for y in (left_top["y"], right_bottom["y"]):
+                dx, dy = x - position["x"], y - position["y"]
+                if turns == 1:
+                    rx, ry = -dy, dx
+                elif turns == 2:
+                    rx, ry = -dx, -dy
+                elif turns == 3:
+                    rx, ry = dy, -dx
+                else:
+                    rx, ry = dx, dy
+                world_x = position["x"] + rx
+                world_y = position["y"] + ry
+                if (not math.isfinite(world_x) or not math.isfinite(world_y)
+                        or not -1_000_000 <= world_x <= 1_000_000
+                        or not -1_000_000 <= world_y <= 1_000_000):
+                    raise ValueError("Invalid normalized native pole footprint bounds")
+                rotated.append((world_x, world_y))
+
+        bounds = {
+            "left_top": {
+                "x": min(point[0] for point in rotated),
+                "y": min(point[1] for point in rotated),
+            },
+            "right_bottom": {
+                "x": max(point[0] for point in rotated),
+                "y": max(point[1] for point in rotated),
+            },
+        }
+        width = bounds["right_bottom"]["x"] - bounds["left_top"]["x"]
+        height = bounds["right_bottom"]["y"] - bounds["left_top"]["y"]
+        if (not math.isfinite(width) or not math.isfinite(height)
+                or width <= 0 or height <= 0 or width > 512 or height > 512):
+            raise ValueError("Invalid normalized native pole footprint extent")
+        return bounds
+
+    @staticmethod
+    def _pole_supply_overlaps(bounds: dict, position: tuple[float, float],
+                              supply_distance: float) -> bool:
+        """Match the versioned native coal survey's square supply-area overlap."""
+        left = bounds["left_top"]
+        right = bounds["right_bottom"]
+        return (
+            left["x"] < position[0] + supply_distance
+            and position[0] - supply_distance < right["x"]
+            and left["y"] < position[1] + supply_distance
+            and position[1] - supply_distance < right["y"]
+        )
+
+    def _pole_search_rectangles(self, start: dict, end: dict,
+                                geometry: dict) -> list[tuple[int, int, int, int]]:
+        """Bound a complete pole search around both native power regions."""
+        radius = geometry["supply_area_distance"]
+        furthest = 0.0
+        for endpoint in (geometry["source"], geometry["target"]):
+            position = endpoint["position"]
+            bounds = self._normalized_pole_bounds(position, endpoint["bounding_box"])
+            for axis, low_key, high_key in (
+                ("x", "left_top", "right_bottom"),
+                ("y", "left_top", "right_bottom"),
+            ):
+                furthest = max(
+                    furthest,
+                    abs(bounds[low_key][axis] - position[axis]),
+                    abs(bounds[high_key][axis] - position[axis]),
+                )
+        margin = max(16, math.ceil(furthest + radius + 8))
+        if margin > 512:
+            return []
+        rectangles = self._fallback_rectangles(
+            start, end, searched=0, margin=margin,
+        )
+        if any(left < -1_000_000 or right > 999_999
+               or top < -1_000_000 or bottom > 999_999
+               for left, right, top, bottom in rectangles):
+            return []
+        return rectangles
+
+    def _native_pole_route(self, start: dict, end: dict, fluid: str,
+                           geometry: dict) -> tuple[list, set]:
+        from ..planning.connections import (
+            select_pole_positions,
+            shortest_wire_path_between_regions,
+        )
+
+        rectangles = self._pole_search_rectangles(start, end, geometry)
+        if not rectangles:
+            raise ConnectionPreflightRejected("no_connection_route")
+        buildable, existing = set(), set()
+        for rectangle in rectangles:
+            chunk_buildable, chunk_existing = self._connection_cells(
+                "small-electric-pole", fluid, [rectangle],
+            )
+            buildable.update(chunk_buildable)
+            existing.update(chunk_existing)
+        candidates = buildable | existing
+        source_bounds = self._normalized_pole_bounds(
+            geometry["source"]["position"], geometry["source"]["bounding_box"],
+        )
+        target_bounds = self._normalized_pole_bounds(
+            geometry["target"]["position"], geometry["target"]["bounding_box"],
+        )
+        origins = {
+            point for point in candidates
+            if self._pole_supply_overlaps(
+                source_bounds, point,
+                geometry["supply_area_distance"],
+            )
+        }
+        destinations = {
+            point for point in candidates
+            if self._pole_supply_overlaps(
+                target_bounds, point,
+                geometry["supply_area_distance"],
+            )
+        }
+        if not origins or not destinations:
+            raise ConnectionPreflightRejected("no_connection_route")
+        try:
+            route = shortest_wire_path_between_regions(
+                origins, destinations, buildable, existing,
+                max_wire_distance=geometry["maximum_wire_distance"],
+            )
+            route = select_pole_positions(
+                route, max_wire_distance=geometry["maximum_wire_distance"],
+            )
+        except ValueError as error:
+            raise ConnectionPreflightRejected("no_connection_route") from error
+        return route, existing
+
+    @staticmethod
+    def _pole_binding_script(identity: dict, geometry: dict, receipt: str,
+                              route: list, existing: set) -> str:
+        snapshot = json.dumps(geometry, separators=(",", ":"), allow_nan=False)
+        expected = "helpers.json_to_table(" + json.dumps(snapshot) + ")"
+        path = json.dumps([
+            {"x": horizontal, "y": vertical,
+             "existing": (horizontal, vertical) in existing}
+            for horizontal, vertical in route
+        ], allow_nan=False)
+        return (
+            "local expected=" + expected + "; local actor=assert(storage.fair.actor()); "
+            "assert(actor.character and actor.character.valid "
+            "and actor.character.unit_number==expected.actor_unit "
+            "and actor.surface.index==expected.surface_index "
+            "and actor.force.index==expected.force_index "
+            "and storage.jev_session_id==expected.session_id "
+            "and game.tick>=expected.tick "
+            "and script.active_mods.base==expected.base_version,"
+            "'Native pole actor or session changed'); "
+            "local function same_point(a,b) return a and b and a.x==b.x and a.y==b.y end; "
+            "local function check_endpoint(e,want) "
+            "assert(e and e.valid and e.unit_number==want.unit_number and e.name==want.name "
+            "and e.direction==want.direction and e.orientation==want.orientation "
+            "and e.quality.name==want.quality and e.surface.index==want.surface_index "
+            "and e.force.index==want.force_index and same_point(e.position,want.position),"
+            "'Native pole endpoint identity changed'); "
+            "local b=e.bounding_box; assert(b and same_point(b.left_top,want.bounding_box.left_top) "
+            "and same_point(b.right_bottom,want.bounding_box.right_bottom) "
+            "and (b.orientation or 0)==want.bounding_box.orientation,"
+            "'Native pole endpoint footprint changed') end; "
+            "check_endpoint(storage.campaign.entities[expected.source.role],expected.source); "
+            "check_endpoint(storage.campaign.entities[expected.target.role],expected.target); "
+            "local pole=assert(prototypes.entity['small-electric-pole']); "
+            "assert(pole.get_supply_area_distance('normal')==expected.supply_area_distance "
+            "and pole.get_max_wire_distance('normal')==expected.maximum_wire_distance,"
+            "'Native pole prototype limits changed'); "
+            "rcon.print(helpers.table_to_json(storage.campaign.connector_begin("
+            + ",".join(json.dumps(value) for value in (
+                receipt, identity["source"], identity["target"], identity["kind"],
+                identity["fluid"],
+            )) + ",helpers.json_to_table(" + json.dumps(path) + "))))"
+        )
+
     def connect(self, source: Any, target: Any, prototype: Any, fluid: str = "",
                 *, identity: dict | None = None,
-                preflight_budget: _PipePreflightBudget | None = None) -> None:
+                preflight_budget: _PipePreflightBudget | None = None,
+                pole_geometry: dict | None = None) -> None:
         from fle.env import Direction, Position
         from ..planning.connections import (
             select_pole_positions,
@@ -673,10 +1009,30 @@ class FairActions:
         start = self.position(getattr(source, "position", source))
         end = self.position(getattr(target, "position", target))
         if name == "pipe":
+            if pole_geometry is not None:
+                raise ValueError("Pole geometry cannot authorize a pipe connection")
             route, existing = self._pipe_route(
                 start, end, fluid, budget=preflight_budget,
             )
+        elif pole_geometry is not None:
+            if identity is None or fluid != "electricity":
+                raise ValueError("Native pole geometry requires a paid electricity identity")
+            geometry = self.validate_pole_geometry(
+                pole_geometry,
+                source_role=identity.get("source"),
+                target_role=identity.get("target"),
+            )
+            if (identity.get("kind") != name or identity.get("fluid") != fluid
+                    or start != geometry["source"]["position"]
+                    or end != geometry["target"]["position"]):
+                raise ValueError("Native pole geometry is not bound to these endpoints")
+            route, existing = self._native_pole_route(start, end, fluid, geometry)
+        elif identity is not None:
+            raise ValueError("Paid native pole connections require authenticated geometry")
         else:
+            # Historical direct FairActions callers do not have campaign roles
+            # or native endpoint snapshots. Preserve their point-only behavior;
+            # NativeFactory's paid path always uses the geometry-bound branch.
             route = None
             route_error = None
             searched = 0
@@ -746,16 +1102,21 @@ class FairActions:
                     or identity["kind"] != name or identity["fluid"] != fluid):
                 raise ValueError("Connector identity changed before payment")
             receipt = connection_key(identity)
-            prepared = decode_native(self.command(
-                "rcon.print(helpers.table_to_json(storage.campaign.connector_begin("
-                + ",".join(json.dumps(value) for value in (
-                    receipt, identity["source"], identity["target"], name, fluid))
-                + ",helpers.json_to_table(" + json.dumps(json.dumps([
-                    {"x": horizontal, "y": vertical,
-                     "existing": (horizontal, vertical) in existing}
-                    for horizontal, vertical in route
-                ])) + "))))"
-            ))
+            if pole_geometry is not None:
+                prepared = decode_native(self.command(self._pole_binding_script(
+                    identity, geometry, receipt, route, existing,
+                )))
+            else:
+                prepared = decode_native(self.command(
+                    "rcon.print(helpers.table_to_json(storage.campaign.connector_begin("
+                    + ",".join(json.dumps(value) for value in (
+                        receipt, identity["source"], identity["target"], name, fluid))
+                    + ",helpers.json_to_table(" + json.dumps(json.dumps([
+                        {"x": horizontal, "y": vertical,
+                         "existing": (horizontal, vertical) in existing}
+                        for horizontal, vertical in route
+                    ])) + "))))"
+                ))
             if prepared.get("id") != receipt:
                 raise RuntimeError("Native connector preparation receipt changed")
         for index, (horizontal, vertical) in enumerate(route, 1):
