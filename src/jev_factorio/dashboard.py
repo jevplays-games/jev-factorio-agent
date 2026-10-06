@@ -46,6 +46,14 @@ RECORD_KEYS = ("controller", "policy", "tick", "session_id", "world_kind", "goal
 STATE_KEYS = ("tick", "session_id", "world_kind", "inventory", "player_position", "nearby_resources",
               "placed_entities", "drill_status", "drill_fuel", "drill_output_connected",
               "iron_ore_collected", "production_rates", "researched", "victory", "victory_source")
+MISSION_GATE_KEYS = ("contract", "pad", "payload", "rocket", "cargo", "request", "victory")
+MISSION_GATE_STATES = frozenset(("unknown", "pending", "observed", "blocked", "submitted"))
+MISSION_AUTOMATION_FAMILIES = frozenset(("input_routes", "production_sites", "successors"))
+MISSION_AUTOMATION_PER_FAMILY_LIMIT = 6
+MISSION_AUTOMATION_TOTAL_LIMIT = (
+    MISSION_AUTOMATION_PER_FAMILY_LIMIT * len(MISSION_AUTOMATION_FAMILIES)
+)
+MISSION_AUTOMATION_SCOPE = "At most six roles per capability; absent rows are unknown."
 
 
 def secret_values() -> tuple[str, ...]:
@@ -96,11 +104,134 @@ def project_state(value: dict) -> dict:
             **{key: value[key] for key in STATE_KEYS if key in value}}
 
 
+def has_coherent_research_observation(value: Any) -> bool:
+    """Whether a snapshot carries a bounded, tick-bound researched list."""
+    if not isinstance(value, dict) or not dashboard_mission.integer(value.get("tick")):
+        return False
+    researched = value.get("researched")
+    return (isinstance(researched, list)
+            and len(researched) <= research_catalog.MAX_TECHNOLOGIES
+            and all(isinstance(name, str) and research_catalog.NAME.fullmatch(name)
+                    for name in researched))
+
+
+def _has_bounded_mission_research(value: Any) -> bool:
+    if not isinstance(value, dict) or "name" not in value or "progress" not in value:
+        return False
+    name = value["name"]
+    if name is not None and (not isinstance(name, str) or len(name) > 160):
+        return False
+    progress = value["progress"]
+    if progress is None:
+        return True
+    if type(progress) is int:
+        return 0 <= progress <= 1
+    return type(progress) is float and math.isfinite(progress) and 0 <= progress <= 1
+
+
+def has_coherent_mission_projection(value: Any) -> bool:
+    """Whether a complete projected mission is bound to its outer snapshot."""
+    if not isinstance(value, dict) or not dashboard_mission.integer(value.get("tick")):
+        return False
+    session_id = value.get("session_id")
+    if not isinstance(session_id, str) or not 1 <= len(session_id) <= 160:
+        return False
+    mission = value.get("mission")
+    if (not isinstance(mission, dict) or type(mission.get("schema")) is not int
+            or mission["schema"] != 1):
+        return False
+
+    launch = mission.get("launch")
+    if (not isinstance(launch, dict) or type(launch.get("schema")) is not int
+            or launch["schema"] != 1 or not dashboard_mission.integer(launch.get("tick"))
+            or launch["tick"] != value["tick"] or launch.get("session_id") != session_id
+            or not isinstance(launch.get("headline"), str) or len(launch["headline"]) > 160
+            or launch.get("basis") != "Recorded snapshot only; never a launch command or deployment approval."
+            or type(launch.get("evidence_valid")) is not bool
+            or launch.get("fault") is not None and type(launch.get("fault")) is not bool):
+        return False
+    gates = launch.get("gates")
+    if not isinstance(gates, list) or len(gates) != len(MISSION_GATE_KEYS):
+        return False
+    for key, row in zip(MISSION_GATE_KEYS, gates):
+        if (not isinstance(row, dict) or row.get("key") != key
+                or not isinstance(row.get("title"), str) or len(row["title"]) > 160
+                or not isinstance(row.get("state"), str) or row["state"] not in MISSION_GATE_STATES
+                or not isinstance(row.get("detail"), str) or len(row["detail"]) > 160):
+            return False
+
+    research = mission.get("research")
+    if not _has_bounded_mission_research(research):
+        return False
+
+    automation = mission.get("automation")
+    if (mission.get("automation_scope") != MISSION_AUTOMATION_SCOPE
+            or not isinstance(automation, list) or len(automation) > MISSION_AUTOMATION_TOTAL_LIMIT):
+        return False
+    family_counts: dict[str, int] = {}
+    for row in automation:
+        if (not isinstance(row, dict) or not isinstance(row.get("family"), str)
+                or row["family"] not in MISSION_AUTOMATION_FAMILIES
+                or row.get("role") is not None
+                and (not isinstance(row["role"], str) or len(row["role"]) > 160)
+                or row.get("state") is not None
+                and (not isinstance(row["state"], str) or len(row["state"]) > 160)
+                or row.get("reason") is not None
+                and (not isinstance(row["reason"], str) or len(row["reason"]) > 160)
+                or row.get("survey_tick") is not None
+                and not dashboard_mission.integer(row["survey_tick"])
+                or row.get("cached") is not None and type(row["cached"]) is not bool):
+            return False
+        family = row["family"]
+        family_counts[family] = family_counts.get(family, 0) + 1
+        if family_counts[family] > MISSION_AUTOMATION_PER_FAMILY_LIMIT:
+            return False
+    return True
+
+
+def without_incoherent_mission(value: Any) -> Any:
+    """Do not render stale gates beside current state; keep only tick-bound research."""
+    if not isinstance(value, dict) or "mission" not in value or has_coherent_mission_projection(value):
+        return value
+    mission = value.get("mission")
+    launch = mission.get("launch") if isinstance(mission, dict) else None
+    session_id = value.get("session_id")
+    same_snapshot_identity = (
+        type(value.get("tick")) is int
+        and dashboard_mission.integer(value.get("tick"))
+        and isinstance(launch, dict)
+        and type(launch.get("schema")) is int and launch["schema"] == 1
+        and dashboard_mission.integer(launch.get("tick"))
+        and launch["tick"] == value["tick"]
+        and ((session_id is None and launch.get("session_id") is None)
+             or isinstance(session_id, str) and 1 <= len(session_id) <= 160
+             and launch.get("session_id") == session_id)
+    )
+    if (has_coherent_research_observation(value) and same_snapshot_identity
+            and isinstance(mission, dict) and type(mission.get("schema")) is int
+            and mission["schema"] == 1 and _has_bounded_mission_research(mission.get("research"))):
+        # Research has its own validated tick-bound evidence. The launch summary
+        # and automation rows also need the full outer session binding above.
+        safe = dict(value)
+        safe["mission"] = {"schema": 1, "research": mission["research"]}
+        return safe
+    return {key: child for key, child in value.items() if key != "mission"}
+
+
 def project_record(value: dict) -> dict:
     record = {"mission_record": dashboard_mission.project_record(value)}
-    state = value.get("after_state") or value.get("state")
+    has_after_state = "after_state" in value
+    state = value.get("after_state") if has_after_state else value.get("state")
+    if has_after_state and not has_coherent_research_observation(state):
+        # This internal hint keeps a separately exported catalog from filling
+        # in current research after an explicit incomplete observation.
+        record["_dashboard_research_observation_incomplete"] = True
+    if has_after_state and (not isinstance(state, dict) or not state):
+        # An explicit incomplete observation clears the current display. In
+        # particular, do not carry forward the pre-action state or research.
+        record["state"] = {}
     if isinstance(state, dict):
-        if not isinstance(state.get("factory"), dict):
+        if not has_after_state and not isinstance(state.get("factory"), dict):
             # Legacy records keep factory facts (current research) with the decision.
             decision = value.get("decision")
             facts = decision.get("state", {}).get("facts") if isinstance(decision, dict) else None
@@ -108,7 +239,8 @@ def project_record(value: dict) -> dict:
             if isinstance(factory, dict):
                 state = dict(state, factory={key: factory[key] for key in ("research", "research_progress")
                                              if key in factory})
-        record["state"] = project_state(state)
+        if not has_after_state or state:
+            record["state"] = project_state(state)
     # Keep the bounded observation before potentially large model decision data.
     record.update({key: value[key] for key in RECORD_KEYS
                    if key in value and key != "persistent_recovery"})
@@ -460,6 +592,9 @@ class Monitor:
         self._tail_invalid_seen = 0
         # None until the first observation; research already done then has no known tick.
         self.research_seen: dict[str, int | None] | None = None
+        # Once an explicit gap is seen, a run/log reset alone cannot make an
+        # older sidecar current again; a coherent observation clears this latch.
+        self._research_observation_incomplete = False
 
     def accept(self, event: dict) -> None:
         if (event.get("schema") != SCHEMA or not isinstance(event.get("run_id"), str)
@@ -495,8 +630,23 @@ class Monitor:
             view["request"], view["response"], view["decision"] = None, None, None
             view["verified"], view["outcome"] = None, None
         elif kind == "observation":
-            view["state"] = data.get("state") if isinstance(data.get("state"), dict) else {}
-            view["state_observed_time"] = event["time"]
+            observed_state = data.get("state")
+            coherent_research = has_coherent_research_observation(observed_state)
+            coherent_mission = has_coherent_mission_projection(observed_state)
+            observed_state = without_incoherent_mission(observed_state)
+            view["state"] = observed_state if isinstance(observed_state, dict) else {}
+            # A raw observation replaces any earlier completed-record display.
+            # Its mission projection can independently keep launch evidence
+            # current, while a missing/malformed research list must not revive
+            # a catalog's older current topic.
+            view.pop("mission_record", None)
+            view.pop("recorded_action", None)
+            view["state_observed_time"] = (event["time"]
+                                           if coherent_research or coherent_mission else None)
+            if coherent_research:
+                self._research_observation_incomplete = False
+            else:
+                self._research_observation_incomplete = True
         elif kind in ("goals", "controller_state"):
             keys = ("goal", "target", "status", "completed_goals", "plan", "pending", "step_index", "decision")
             view.update({key: data[key] for key in keys if key in data})
@@ -525,9 +675,34 @@ class Monitor:
         elif kind == "decision_recorded" and isinstance(data.get("record"), dict):
             view.pop("mission_record", None)
             # A truncated/older record cannot rejuvenate a previous observation.
-            recorded_state = data["record"].get("state")
+            record = data["record"]
+            source_state = record.get("state")
+            recorded_state = without_incoherent_mission(source_state)
+            record_incomplete = record.get("_dashboard_research_observation_incomplete") is True
+            legacy_absent_after_state = (
+                self.legacy and data.get("_dashboard_legacy_after_state_absent") is True
+            )
+            legacy_absent_research_fallback = (
+                legacy_absent_after_state and isinstance(source_state, dict)
+                and "researched" not in source_state
+            )
+            if (not record_incomplete and not legacy_absent_research_fallback
+                    and isinstance(source_state, dict)
+                    and isinstance(source_state.get("mission"), dict)
+                    and not has_coherent_research_observation(source_state)):
+                # Before the private marker was added, project_record persisted
+                # its mission projection beside a missing/null/malformed
+                # researched field. That shape is not evidence that the old
+                # catalog's current topic is still observed. The legacy reader
+                # skips only its specific absent-after_state/no-research-key
+                # fallback; explicit malformed research remains incomplete.
+                record_incomplete = True
+            if record_incomplete:
+                self._research_observation_incomplete = True
+            elif has_coherent_research_observation(recorded_state):
+                self._research_observation_incomplete = False
             view["state"] = recorded_state if isinstance(recorded_state, dict) else {}
-            view["state_observed_time"] = event["time"] if view["state"] else None
+            view["state_observed_time"] = event["time"] if view["state"] and not record_incomplete else None
             view["legacy_record_timestamp"] = data.get("record_timestamp") is True
             view["recorded_action"] = data["record"].get("action")
             view.update({key: value for key, value in data["record"].items()
@@ -559,7 +734,10 @@ class Monitor:
         """
         state = state if isinstance(state, dict) else {}
         tick, researched = state.get("tick"), state.get("researched")
-        if not dashboard_mission.integer(tick) or not isinstance(researched, list):
+        # Treat the researched list as one tick-bound observation. Salvaging
+        # valid names from a malformed list would create unverified milestone
+        # history even though the current observation is marked incomplete.
+        if not has_coherent_research_observation(state):
             return
         first = self.research_seen is None
         seen = self.research_seen = {} if first else self.research_seen
@@ -573,6 +751,7 @@ class Monitor:
         self._dashboard_decoder.reset()
         self._legacy_decoder.reset()
         self.reconstruction_status = "gap"
+        self._research_observation_incomplete = True
         self.view.update(
             gap=True, reconstruction_status="gap", last_event_time=None,
             kind=None, stage=None, status=None, lifecycle=None,
@@ -622,14 +801,16 @@ class Monitor:
                     self.view["reconstruction_status"] = "ok"
                 if self.legacy:
                     # Legacy records expose completed decisions, NOT in-flight model phases.
-                    if not isinstance(row.get("state"), dict) or "action" not in row:
+                    if "action" not in row:
                         self.rejected += 1
                         continue
-                    state = row.get("after_state") or row["state"]
-                    if not isinstance(state, dict):
+                    has_after_state = "after_state" in row
+                    state = row.get("after_state") if has_after_state else row.get("state")
+                    if not has_after_state and not isinstance(state, dict):
                         self.rejected += 1
                         continue
-                    identity = str(row.get("session_id") or state.get("session_id") or "legacy")
+                    state_identity = state if isinstance(state, dict) else {}
+                    identity = str(row.get("session_id") or state_identity.get("session_id") or "legacy")
                     # A copied legacy file must not rejuvenate an old recorded snapshot.
                     timestamp, recorded_at = self.tail.mtime, ""
                     try:
@@ -640,7 +821,8 @@ class Monitor:
                         pass
                     row = {"schema": SCHEMA, "run_id": identity, "seq": self.last_seq + 1 if identity == self.last_run else 1,
                            "time": timestamp, "at": recorded_at, "kind": "decision_recorded", "stage": 7,
-                           "data": {"record": project_record(row), "record_timestamp": bool(recorded_at)}}
+                           "data": {"record": project_record(row), "record_timestamp": bool(recorded_at),
+                                    "_dashboard_legacy_after_state_absent": not has_after_state}}
                 self.accept(sanitize(row, self.secrets))
             self._read_supervisor()
             self._read_research()
@@ -675,7 +857,13 @@ class Monitor:
             return {"status": self.research_status}, None
         state = self.view.get("state") if isinstance(self.view.get("state"), dict) else {}
         researched, current, progress, source = None, None, None, "telemetry"
-        if isinstance(state.get("researched"), list):
+        if self._research_observation_incomplete:
+            # Preserve the static tree and only the technologies previously
+            # observed in telemetry; the catalog's independent state can no
+            # longer stand in for a missing current observation.
+            researched = list(self.research_seen or {})
+            source = "telemetry-history" if self.research_seen is not None else "unknown"
+        elif isinstance(state.get("researched"), list):
             researched = [t for t in state["researched"] if isinstance(t, str)]
             now = dashboard_mission.mapping(dashboard_mission.mapping(state.get("mission")).get("research"))
             current, progress = now.get("name"), now.get("progress")
@@ -691,7 +879,8 @@ class Monitor:
         summary = tree.summary(set(researched), current if isinstance(current, str) else None,
                                progress if type(progress) in (int, float) else None, self.research_seen or {})
         milestones = summary.pop("milestones")
-        return dict(summary, status="ok", source=source), milestones
+        status = "observation incomplete" if self._research_observation_incomplete else "ok"
+        return dict(summary, status=status, source=source), milestones
 
     def _read_supervisor(self) -> None:
         if self.supervisor is None:
