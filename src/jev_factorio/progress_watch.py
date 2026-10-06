@@ -141,10 +141,20 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
         result.update(status='stopped', reason='controller process unavailable')
     elif status in {'blocked', 'uncertain'}:
         since = prior.get('blocked_since')
-        if prior.get('status') not in {'blocked', 'uncertain'} or not number(since) or since > now:
+        if (prior.get('status') not in {'blocked', 'uncertain', 'crafting'}
+                or not number(since) or since > now):
             since = now
         result.update(status=status, reason=str(sample.get('reason') or status)[:180],
                       blocked_since=since, blocked_age_seconds=now - since)
+        # A policy wait affects the next foreground choice. It does not stop an
+        # already admitted native craft whose receipt-bound counter is moving.
+        # Native uncertainty and unrelated holds keep their attention priority.
+        if (status == 'blocked' and sample.get('reason') in {
+                'low choice confidence', 'Candidate evidence insufficient'}
+                and number(craft_stamp) and now - craft_stamp < stall_seconds):
+            result.update(status='crafting', reason='tracked craft is advancing; foreground decision waiting',
+                          attention=False, foreground_status=status,
+                          foreground_reason=sample['reason'])
     elif status != 'running':
         result['reason'] = 'unrecognized controller state'
     elif craft_error:
@@ -163,6 +173,10 @@ def banner(state):
     status = state['status']
     if status == 'progressing':
         return ''
+    if status == 'crafting':
+        craft = state['craft_progress']
+        return (f"JEV crafting: {craft['finished']}/{craft['requested']} batches"
+                f" | Foreground waiting: {state['foreground_reason']}")[:240]
     age = state.get('progress_age_seconds')
     suffix = f' | {int(age // 60)}m since progress' if number(age) else ''
     return ('JEV ' + status.replace('_', ' ') + ': ' + state['reason'] + suffix)[:240]

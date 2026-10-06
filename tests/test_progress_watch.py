@@ -180,3 +180,54 @@ def test_background_projection_binds_current_checkpoint_job_and_attempt():
     with pytest.raises(ValueError, match='unbound'):
         background_sample({**checkpoint, 'session_id': 'other'})
     assert background_sample({'background_job': None}) is None
+
+
+@pytest.mark.parametrize('reason', ['low choice confidence', 'Candidate evidence insufficient'])
+def test_native_craft_counters_distinguish_foreground_policy_wait(reason):
+    # Observed V27 receipt/counters at 02:25:45 and 02:26:00 UTC. Other sample
+    # envelope fields below are test inputs, not a second native observation.
+    recorded = dict(receipt='1779cc5ea58c4085a53769a0e0635fdd', requested=20,
+        finished=16, started_tick=13092548, last_progress_tick=13097366,
+        deadline_tick=13104548, observed_tick=13097376)
+    waiting = sample(at=1791253545, last_progress_at=1791253545,
+        checkpoint_status='blocked', owner_phase='blocked', reason=reason,
+        pending=True, background_craft=recorded)
+    first = classify(waiting, {}, 1791253545, 'campaign')
+    assert first['status'] == 'blocked'  # First sample alone is not movement.
+    advanced = {**recorded, 'finished': 18, 'last_progress_tick': 13097968,
+                'observed_tick': 13097995}
+    second = classify({**waiting, 'at': 1791253560, 'background_craft': advanced},
+                      first, 1791253560, 'campaign')
+    assert second['status'] == 'crafting' and not second['attention']
+    assert second['foreground_status'] == 'blocked' and second['foreground_reason'] == reason
+    assert second['blocked_age_seconds'] == second['progress_age_seconds'] == 15
+    assert second['last_progress_at'] == first['last_progress_at']
+    assert second['automatic_recovery_allowed'] is False
+    assert banner(second) == f'JEV crafting: 18/20 batches | Foreground waiting: {reason}'
+    # Observer restart, unchanged counters and a fresh heartbeat do not extend
+    # the craft-progress window or erase the original foreground wait time.
+    stale = classify({**waiting, 'at': 1791253680, 'background_craft': advanced},
+                     json.loads(json.dumps(second)), 1791253680, 'campaign')
+    assert stale['status'] == 'blocked' and stale['attention']
+    assert stale['blocked_age_seconds'] == 135
+    finished = classify({**waiting, 'at': 1791253561, 'background_craft': None},
+                        second, 1791253561, 'campaign')
+    assert finished['status'] == 'blocked' and finished['attention']
+    assert finished['blocked_age_seconds'] == 16
+
+
+@pytest.mark.parametrize('change,expected', [
+    ({'checkpoint_status': 'uncertain'}, 'uncertain'),
+    ({'reason': 'native reconciliation required'}, 'blocked'),
+    ({'owner_alive': False}, 'stopped'), ({'child_alive': False}, 'stopped'),
+    ({'owner_phase': 'stopped_by_service_owner'}, 'stopped'),
+    ({'checkpoint_status': 'completed'}, 'completed'),
+])
+def test_crafting_label_never_overrides_fault_stop_or_completion(change, expected):
+    waiting = sample(checkpoint_status='blocked', reason='low choice confidence', background_craft=craft())
+    first = classify(waiting, {}, 1000, 'campaign')
+    advanced = {**craft(), 'finished': 9, 'last_progress_tick': 10928000, 'observed_tick': 10928001}
+    second = classify({**waiting, 'at': 1001, 'background_craft': advanced, **change},
+                      first, 1001, 'campaign')
+    assert second['status'] == expected
+    assert not second['automatic_recovery_allowed']
