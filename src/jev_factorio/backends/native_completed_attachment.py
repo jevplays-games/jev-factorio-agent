@@ -7,7 +7,7 @@ qualification. Partial/faulted/uncheckpointed routes require existing recovery.
 from copy import deepcopy
 from types import SimpleNamespace
 
-from ..connector_checkpoint import capture, validate_binding
+from ..connector_checkpoint import capture, validate_binding, route_paid_coverage
 from ..iteration_timing import decode_native
 from .native_current_attachment import current_connector_snapshot_command
 
@@ -16,10 +16,10 @@ def qualify_completed_connectors(client, result, checkpoint_binding, *, complete
                                  background_craft=None):
     saved = deepcopy(validate_binding(checkpoint_binding, result['session_id']))
     routes = saved['routes']
-    if (not routes or any(row['state'] != 'complete' or not row['owned']
+    if (not routes or any(not route_paid_coverage(routes, receipt)
                           or row.get('pending') is not None
                           or row['actor_unit'] != result['actor_unit']
-                          for row in routes.values())):
+                          for receipt, row in routes.items())):
         raise RuntimeError('Completed connector checkpoint requires reconciliation')
     command = current_connector_snapshot_command(result, completed_routes=True,
                                                  completed_craft=completed_craft, background_craft=background_craft)

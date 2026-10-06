@@ -1,11 +1,15 @@
 # Continuous campaign recovery: October 5
 
-The latest crash was a decision-history archive boundary defect, not a VM
+The October 5 crash was a decision-history archive boundary defect, not a VM
 failure. At 16:30 UTC, the controller had 1,024 active decision records and a
 tracked science craft. Archive rotation rejected the background job and exited.
 The world continued and completed the craft. The owner held instead of replaying
 it. Earlier strict JEV evidence holds and an observer false alarm are separate
 incidents; a successful restart does not explain all of them.
+
+The later October 6 00:39 UTC stop has a separate demonstrated cause:
+[shared paid poles rejected as external](SHARED_PAID_POLE_RECOVERY.md).
+Preserve and reconcile the returned connector action; do not replay construction.
 
 ## Classify before restarting
 

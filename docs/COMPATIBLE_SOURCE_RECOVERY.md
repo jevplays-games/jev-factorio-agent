@@ -6,6 +6,13 @@ evaluation, change selection floors, replay a native operation, clear a provider
 circuit, or adopt native infrastructure. Changed-contract decision reevaluation
 remains a separate authorization path.
 
+An exact returned shared-pole connector is also an eligible infrastructure
+handoff boundary: one retained step and matching attempt, no overlapping work,
+and all completed route cells covered by direct checkpointed payments. Migration
+preserves its uncertain status and pending action. Fresh native attachment and
+the ordinary topology verifier must finish it; admission cannot do so. See the
+[shared-pole recovery procedure](SHARED_PAID_POLE_RECOVERY.md).
+
 The existing supervisor must retain its original process/writer lock and provide
 a private immutable authorization file, pinned by its actual file SHA-256 in the
 reviewed launch. This is an application of supervisor authority, not a signature

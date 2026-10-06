@@ -295,7 +295,12 @@ def validate_authorization(authorization: dict, raw: bytes, memory, current_sour
             or authorization["owner_invocation"] != owner_invocation
             or authorization["current_source"] != _source(current_source)):
         raise ValueError("Compatible recovery differs from authorized checkpoint/owner/source scope")
-    if memory.status == "running":
+    from .connector_checkpoint import shared_connector_handoff
+    if shared_connector_handoff(memory):
+        # Exact signed scope retains pending action/attempt and every receipt.
+        # Attachment and the ordinary verifier must still prove native state.
+        pass
+    elif memory.status == "running":
         validate_selected_paid_handoff(memory)
     else:
         validate_blocked_memory(memory, 4, allow_model_abstention=True)
