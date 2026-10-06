@@ -202,9 +202,10 @@ def frontier(loop, snapshot):
                             (Step('factory_wait', 'crafting_idle', timeout_ticks=1800),))], blocker
     rejected_capital = any((p.materials or {}).get(capital.MARKER)
                            and not admissible(p) for p in original)
-    if state is None and original and (not safe or rejected_capital):
+    if original and (not safe or rejected_capital):
         # Recompile the ordinary primary after rejecting an investment, even
-        # when an old lookahead alternative survived. Keep those alternatives;
+        # when an old lookahead alternative survived or another kit is active.
+        # Existing held-kit cost checks still apply. Keep those alternatives;
         # they must not hide the current production need indefinitely.
         planner = current_planner()
         planner._economic_acquiring = True

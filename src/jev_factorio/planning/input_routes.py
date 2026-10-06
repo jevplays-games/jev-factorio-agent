@@ -193,7 +193,7 @@ class InputRoutePlanner(OutputBufferPlanner):
         if row and row["state"] != "fault":
             if self.focus is None:
                 self._set_focus(item, amount)
-            ready = self._ready_buffer_output(item, amount)
+            ready = self._ready_buffer_output(item, amount, path)
             if ready is not None:
                 return ready
             proposed = row["state"] == "proposed"

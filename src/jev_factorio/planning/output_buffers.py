@@ -321,7 +321,7 @@ class OutputBufferPlanner(ReadyWorkPlanner):
                               timeout=1800, identity=f"commission:{row['layout']}")
         return None
 
-    def _ready_buffer_output(self, item, amount) -> Plan | None:
+    def _ready_buffer_output(self, item, amount, path=()) -> Plan | None:
         """Collect only paid, commissioned, current stock before refueling it.
 
         This does not certify new flow or authorize a transfer by forecast.
@@ -348,7 +348,13 @@ class OutputBufferPlanner(ReadyWorkPlanner):
                 continue
             plan = self._transfer(role, item, min(missing, math.floor(available)), extracting=True)
             if plan.steps[0].allowed(self.snapshot) and not plan.steps[0].satisfied(self.snapshot):
-                return replace(plan, materials={**(plan.materials or {}), "maintenance_policy": {
+                item_path = [entry.removeprefix('item:') for entry in
+                             self._visit('item:' + item, path) if entry.startswith('item:')]
+                return replace(plan, materials={**(plan.materials or {}), 'output_pickup': {
+                    'observed_tick': self.snapshot.tick, 'planner_item_path': item_path,
+                    'source_role': role, 'source_unit': self.entities[role]['unit_number'],
+                    'item': item, 'observed_output': available,
+                }, "maintenance_policy": {
                     "schema": 1, "reason": "collect_ready_owned_output_before_upstream_refill",
                     "observed_tick": self.snapshot.tick, "required": missing,
                     "ready": math.floor(available), "source": row["source"],
@@ -360,7 +366,7 @@ class OutputBufferPlanner(ReadyWorkPlanner):
             return super()._need(item, amount, path)
         if self.focus is None:
             self._set_focus(item, amount)
-        ready = self._ready_buffer_output(item, amount)
+        ready = self._ready_buffer_output(item, amount, path)
         if ready is not None:
             return ready
         for row in sources(self.snapshot).values():
