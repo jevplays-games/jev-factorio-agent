@@ -46,6 +46,21 @@ comparisons retain their independent evidence requirements. Unversioned saved
 requests still reconstruct exactly as originally sent, including any old defect;
 answers, hashes and uncertain provider calls are never rewritten or replayed.
 
+After the 20-pack batch reached the lab, another hold occurred before JEV could
+assess a construction action. Retained observations differed only in the boiler's
+steam telemetry (176.00373578071594 to 175.84818482398987). Comparing the whole
+snapshot made normal boiler activity invalidate every new two-stage decision.
+
+New two-stage requests use a versioned projection for the identified boiler's
+fluid telemetry: the model and freshness comparison both receive fluid names and
+empty/present stock, without numeric quantities. The planner does not consume
+these quantities. Raw native observations remain intact, and native action
+checks still run against fresh observations. Unit identity, fluid ports, fuel,
+status, inventory, every other entity and fluid appearing/disappearing or becoming
+empty still invalidate freshness. Malformed telemetry is rejected. Unversioned
+saved decisions keep the old exact comparison. This also prevents boiler churn
+from authorizing another attempt after a strict rejection; it is not a retry rule.
+
 ## Efficient diagnosis and recovery
 
 1. Read the owner status, current checkpoint and last settled decision. Distinguish

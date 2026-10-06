@@ -30,7 +30,8 @@ def prepare(controller, snapshot, state, plans, context, questions, offered,
         "source_revision": deepcopy(controller.provenance["code_revision"]),
         "input_sha256": input_sha256, "state_sha256": metadata["state_sha256"],
         "frontier_sha256": metadata["frontier_sha256"],
-        "native_sha256": protocol.native_digest(snapshot),
+        "native_sha256": protocol.native_digest(
+            snapshot, context.get('native_freshness_projection')),
         "confidence_floor": controller.confidence_floor,
         "max_request_bytes": controller.max_request_bytes,
     }
@@ -109,7 +110,8 @@ def advance(controller):
             # An execution barrier is not stale evidence and must not be
             # converted to an ordinary recoverable selection rejection.
             raise ValueError("Native execution barrier during two-stage selection")
-        return protocol.native_digest(snapshot)
+        return protocol.native_digest(
+            snapshot, record['prepared']['context'].get('native_freshness_projection'))
 
     decision = protocol.advance(record, controller._trace.client(controller.jev),
                                 commit=commit, fresh_native_digest=fresh)
