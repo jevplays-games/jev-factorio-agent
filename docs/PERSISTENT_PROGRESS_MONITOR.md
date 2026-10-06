@@ -27,13 +27,21 @@ with reason `tracked craft is advancing`. It preserves the separate completed
 useful-action timestamp and age. A first observation, replacement receipt,
 repeated count or rewritten heartbeat cannot refresh the craft's progress time.
 If counts stop advancing for the stall interval, the warning returns. Regressed,
-inconsistent or expired craft evidence is unknown; controller blocks, uncertain
-actions, stopped processes and completion retain precedence. Monitoring never
+inconsistent or expired craft evidence is unknown during running work; uncertain
+actions, unrelated controller holds, stopped processes and completion retain precedence. Monitoring never
 unlocks craft outputs or grants a gameplay retry.
 
+When the foreground is waiting specifically for `low choice confidence` or
+`Candidate evidence insufficient`, a qualifying advancing craft is displayed as
+`crafting`, with its batch counter and foreground wait reason. The monitor keeps
+the original blocked-episode timestamp and completed-action age, and reports
+`foreground_status=blocked`; it does not change the controller. Once the craft
+disappears, expires, or stops advancing for the stall interval, the ordinary
+blocked warning returns. A first craft observation cannot suppress that warning.
+
 By default, sample every 15 seconds, label heartbeats older than 30 seconds
-unknown, and flag 120 seconds without verified useful progress. Policy blocks
-and uncertain actions are visible immediately. Pending native work remains
+unknown, and flag 120 seconds without verified useful progress. Policy waits
+remain visible alongside active crafting; uncertain actions are visible immediately. Pending native work remains
 explicit; a no-progress label never licenses replay. Known completion and a
 service-owner stop are reported without an automatic recovery request.
 
@@ -74,3 +82,10 @@ valid long craft. The regression case retains those observed counters and
 checks that advancing work avoids that warning while a frozen counter still
 expires after 120 seconds. This corrects a display false alarm; it does not
 resolve JEV decision holds or establish multi-day reliability.
+
+On October 6, the monitor reported a foreground low-confidence block while the
+native automation-science craft `1779cc5ea58c4085a53769a0e0635fdd` advanced
+from 16 to 18 of 20 batches. The foreground decision had not stopped the admitted
+craft. The regression retains those counters and checks the combined display,
+preserved wait duration across observer restarts, return to a blocked warning
+when progress expires, and unchanged priority for native faults and stops.
