@@ -226,6 +226,16 @@ def frontier(loop, snapshot):
     evidence = candidate_evidence(snapshot, loop.catalog, safe)
     urgent = [p for p in safe if evidence[p.id]['urgency'] >= 2]
     if urgent:
+        if all(evidence[p.id]['work_scope'] == 'lookahead' for p in urgent):
+            # An empty speculative producer can be locally urgent without
+            # serving the current target. Keep executable current work visible
+            # to JEV instead of letting that forecast erase its prerequisites.
+            # Existing cost/reservation, native and judgment gates still apply.
+            immediate = [p for p in safe
+                         if evidence[p.id]['work_scope'] == 'immediate'
+                         and not evidence[p.id]['passive']
+                         and capital.MARKER not in (p.materials or {})]
+            return [*immediate, *urgent], blocker
         return urgent, blocker
     if state:
         try:
