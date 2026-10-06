@@ -71,6 +71,29 @@ interrupted by the supervisor may retain an unsealed, incomplete prefix.
 Evaluate each directory with the commands below; continuation invocations are
 not independent trials. Missing experiment provenance remains an exclusion.
 
+An output directory inside the active checkout must itself be covered by a Git
+ignore rule and contain no tracked files. The supervisor rejects the checkout,
+its ancestors, nonignored in-checkout paths, and paths whose ignore status cannot
+be checked. Put tracked research inputs outside the output directory; Git ignore
+rules do not hide tracked files from source-provenance snapshots. External output
+directories remain supported. These checks validate the output destination and
+do not turn source-snapshot failures into a clean revision.
+
+Supervised capture on POSIX pins the accepted output parent with an inherited
+directory descriptor before resolving the gameplay environment. The child checks
+that the selected path still names that directory before creating a run, then
+creates the run files relative to opened directory descriptors for the complete
+manifest/event/seal lifecycle. A replacement detected before child open fails
+closed; later path changes cannot redirect those file writes into another tree.
+This does not prevent another process from renaming the pinned directory itself.
+Each newly created output-path component and invocation directory is fsynced in
+its containing directory before the writer proceeds; an fsync error aborts
+capture. This describes the requested sync calls, not a universal power-loss
+guarantee.
+Supervised capture currently fails closed on Windows because equivalent
+descriptor-relative file creation is not implemented there. Direct CLI capture
+with `--run-dir` remains available on Windows and POSIX.
+
 Legacy behavior and the existing API remain available:
 
 ```sh
