@@ -274,7 +274,8 @@ class OutputBufferPlanner(ReadyWorkPlanner):
                                         step, parameters={**step.parameters, 'quantity': quantity}),),
                                         description=f"Collect {quantity} {item} for current {name} output-buffer component",
                                         materials=prerequisite.materials)
-                    return prerequisite
+                    from .buffer_demand import scope_prerequisite
+                    return scope_prerequisite(self.snapshot, self.catalog, prerequisite, row, part, path)
                 receipt = f"buffer:{self.snapshot.tick}:{row['source_unit']}:{part}"
                 return self._plan(
                     COMMAND, "buffer_component", parameters={

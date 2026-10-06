@@ -3927,6 +3927,10 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
         current_craft_demand = craft_demand(snapshot, catalog, plan)
         if current_craft_demand is not None:
             result[plan.id]['craft_recipe_demand'] = current_craft_demand
+        from .buffer_demand import purpose as buffer_component_purpose
+        component_purpose = buffer_component_purpose(snapshot, catalog, plan)
+        if component_purpose is not None:
+            result[plan.id]['buffer_component_parent_purpose'] = component_purpose
         if bootstrap_pickup_start is not None:
             result[plan.id]['bootstrap_output_pickup_start_evidence'] = bootstrap_pickup_start
         construction = machine_construction_prerequisite(
@@ -4306,6 +4310,12 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
                    'Immediate prerequisites precede discretionary lookahead at equal urgency; '
                    'moving more items is not evidence of more useful production.')
     first_evidence = evidence.get(plans[0].id, {}) if plans else {}
+    if isinstance(first_evidence.get('buffer_component_parent_purpose'), dict):
+        instruction = (
+            'Acquire the next missing component for the currently paid partial output buffer. '
+            'Its separate parent recipe demand remains recorded in buffer_component_parent_purpose. '
+            'A bounded input or intermediate can advance this component goal; component placement, '
+            'buffer flow and the parent production output still require native verification.')
     if plans and 'input_route_kit_prerequisite' in (plans[0].materials or {}):
         primary = first_evidence.get('local_target')
         kit_purpose = first_evidence.get('input_route_kit_parent_purpose')
