@@ -96,6 +96,25 @@ CAPTURE_FIXTURE = """(() => {
 })();"""
 
 
+DELAYED_FULLSCREEN_FIXTURE = """(() => {
+  const nativeRequestFullscreen = Element.prototype.requestFullscreen;
+  window.testFullscreenDelay = {requestedAt: null, nativeCalledAt: null, settledAt: null};
+  Element.prototype.requestFullscreen = function(...args) {
+    const element = this;
+    window.testFullscreenDelay.requestedAt = performance.now();
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        window.testFullscreenDelay.nativeCalledAt = performance.now();
+        nativeRequestFullscreen.apply(element, args).then(value => {
+          window.testFullscreenDelay.settledAt = performance.now();
+          resolve(value);
+        }, reject);
+      }, 175);
+    });
+  };
+})();"""
+
+
 def test_live_decision_capture_freeze_inspector_and_overlay(live, tmp_path):
     page, writer, url, errors = live
     page.add_init_script(CAPTURE_FIXTURE)
@@ -358,6 +377,7 @@ def test_all_evidence_controls_filter_and_frozen_export(live, tmp_path):
 def test_capture_replacement_cancel_fullscreen_and_track_end(live):
     page, writer, url, errors = live
     page.add_init_script(CAPTURE_FIXTURE)
+    page.add_init_script(DELAYED_FULLSCREEN_FIXTURE)
     page.goto(url)
     seed(writer)
     page.locator("#capture").click()
@@ -374,12 +394,13 @@ def test_capture_replacement_cancel_fullscreen_and_track_end(live):
     assert page.evaluate("window.testCapture.getVideoTracks()[0].readyState") == "live"
     page.locator("#camera-devices").select_option("test")
     page.locator("#fullscreen").click()
-    # `wait_for_function` evaluates string predicates in the page context on
-    # current Playwright releases, which the dashboard's intentional strict CSP
-    # rejects. The click has completed the request; inspect the native
-    # fullscreen state through CDP instead of weakening the page policy.
-    page.wait_for_timeout(50)
-    assert page.evaluate("document.fullscreenElement?.id") == "game-stage"
+    # The fixture holds the real request for 175 ms, reproducing the old
+    # 50 ms race without relaxing CSP or sleeping in the assertion path.
+    stage_fullscreen = page.locator("#game-stage:fullscreen")
+    playwright.expect(stage_fullscreen).to_have_count(1)
+    timing = page.evaluate("window.testFullscreenDelay")
+    assert timing["nativeCalledAt"] - timing["requestedAt"] > 50
+    assert timing["settledAt"] >= timing["nativeCalledAt"]
     page.evaluate("document.exitFullscreen()")
     page.evaluate("window.testCapture.getVideoTracks()[0].dispatchEvent(new Event('ended'))")
     playwright.expect(page.locator("#capture-placeholder")).to_be_visible()
