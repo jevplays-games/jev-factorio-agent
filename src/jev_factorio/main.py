@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+import hashlib
 import json
+import math
 import os
 from contextlib import ExitStack
 from pathlib import Path
@@ -24,6 +27,18 @@ class _ReconcileOnlyDecisionClient:
 
     def evaluate(self, *args, **kwargs):
         raise RuntimeError("Model calls are disabled in reconcile-only mode")
+
+
+async def _run_async_controller_lifecycle(controller, close_state: dict, **run_options):
+    """Run and close an async controller on its one owning event loop."""
+    try:
+        return await controller.run_async(**run_options)
+    finally:
+        # The surrounding ExitStack owns a fallback close for failures before
+        # this coroutine starts. Once closure is attempted here, never retry it
+        # on a different event loop during stack unwinding.
+        close_state["attempted"] = True
+        await controller.aclose_async_provider()
 
 
 def make_backend(name: str, resume: bool = False, adopt_session: bool = False,
@@ -86,6 +101,271 @@ def _checkpoint_capture_matches(path: Path, captured: bytes) -> bool:
     return Path(path).read_bytes() == captured
 
 
+def _preflight_sync_async_rollback(path: Path, target: str) -> bytes:
+    """Reject sync resume while this checkpoint still owns async decision work.
+
+    Sidecar existence alone is not an ownership signal: empty WAL/archive files
+    and fully settled archive history are valid. The decision is based on the
+    exact composed checkpoint, validated WAL records, archive settlements, and
+    the matching provider-health reservation/outcome.
+    """
+    from .memory import checkpoint_memory_type, load_checkpoint_bytes
+    from .operational_safety import read_json, safety_dir
+
+    path = Path(path)
+    captured = path.read_bytes()
+    try:
+        document = json.loads(captured.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("Cannot roll back an invalid async controller checkpoint") from error
+    if (type(document) is not dict or type(document.get("session_id")) is not str
+            or not document["session_id"]):
+        raise ValueError("Cannot roll back a checkpoint without its session identity")
+    session_id = document["session_id"]
+    history = document.get("history", [])
+    if type(history) is not list or any(type(row) is not dict for row in history):
+        raise ValueError("Invalid checkpoint history during async rollback preflight")
+    owns_async = document.get("async_decision") is not None or any(
+        row.get("kind") in {"async_decision_settled", "async_plan_lineage"}
+        for row in history)
+    safety = safety_dir(path)
+    if safety.is_symlink() or (safety.exists() and not safety.is_dir()):
+        raise ValueError("Async rollback safety path is not a real directory")
+    for name in ("provider-decisions.json", "decision-archives"):
+        candidate = safety / name
+        owns_async = owns_async or candidate.exists() or candidate.is_symlink()
+    health_path = safety / "provider.json"
+    if health_path.exists() or health_path.is_symlink():
+        if health_path.is_symlink():
+            raise ValueError("Provider health state is not a real file")
+        health = read_json(health_path)
+        if type(health) is not dict:
+            raise ValueError("Provider health state disappeared during rollback preflight")
+        flight = health.get("in_flight")
+        owns_async = owns_async or "decision_outcome" in health or (
+            isinstance(flight, dict) and "decision_binding" in flight)
+    if not owns_async:
+        # Ordinary checkpoints retain their established composed validation and
+        # authorized migration order. This extra guard only owns async evidence;
+        # loading every legacy checkpoint here would preempt those migrations.
+        if path.read_bytes() != captured:
+            raise ValueError("Checkpoint changed during async rollback preflight")
+        return captured
+
+    memory = load_checkpoint_bytes(
+        captured, session_id, target, checkpoint_path=path,
+        memory_type=checkpoint_memory_type(document))
+    try:
+        return _validate_sync_async_rollback(path, captured, memory)
+    finally:
+        archive_index = getattr(memory, "_blocked_recovery_archive_index", None)
+        if archive_index is not None:
+            archive_index.close()
+
+
+def _validate_sync_async_rollback(path: Path, captured: bytes, memory) -> bytes:
+    """Validate retained async evidence while the caller owns loader resources."""
+    from .async_decision_archive import AsyncDecisionArchive
+    from .controller import HierarchicalLoop
+    from .operational_safety import read_json, safety_dir
+    from .provider_decision_wal import ProviderDecisionWAL, _read_document, _request_sha256
+    from .provider_health import ProviderCircuit
+
+    session_id = memory.session_id
+    if memory.async_decision is not None:
+        raise ValueError("Async provider decision is still selected in the checkpoint")
+
+    safety = safety_dir(path)
+    if safety.is_symlink():
+        raise ValueError("Async rollback safety directory is not a real directory")
+    if not safety.exists():
+        if any(row.get("kind") in {
+                "async_decision_settled", "async_plan_lineage"}
+                for row in memory.history):
+            raise ValueError("Async checkpoint lineage has no retained safety archive")
+        if path.read_bytes() != captured:
+            raise ValueError("Checkpoint changed during async rollback preflight")
+        return captured
+    if not safety.is_dir():
+        raise ValueError("Async rollback safety path is not a directory")
+
+    wal_path = safety / "provider-decisions.json"
+    wal_document = None
+    wal_by_request = {}
+    wal_id = hashlib.sha256(str(wal_path.resolve()).encode("utf-8")).hexdigest()
+    if wal_path.exists() or wal_path.is_symlink():
+        wal_document = _read_document(wal_path)
+        for raw_record in wal_document["records"]:
+            view = ProviderDecisionWAL._view(raw_record)
+            identity = raw_record["identity"]
+            if identity["session_id"] != session_id:
+                continue
+            request_id = identity["request_id"]
+            wal_by_request[request_id] = (raw_record, view)
+            if view.state in {
+                    "reserved", "may_have_been_sent", "response_received", "ambiguous"}:
+                raise ValueError("Async provider WAL still owns an unresolved request")
+
+    archive_directory = safety / "decision-archives"
+    archives_by_request = {}
+    archive_by_id = {}
+    archive = None
+    if archive_directory.is_symlink():
+        raise ValueError("Async decision archive directory is not a real directory")
+    if archive_directory.exists():
+        if not archive_directory.is_dir():
+            raise ValueError("Async decision archive path is not a directory")
+        archive = AsyncDecisionArchive(archive_directory)
+        for record in archive.records():
+            identity = record["identity"]
+            if identity["session_id"] != session_id:
+                continue
+            request_id = record["request_id"]
+            if request_id in archives_by_request:
+                raise ValueError("Async archive request identity is duplicated")
+            archives_by_request[request_id] = record
+            archive_by_id[record["archive_id"]] = record
+
+    # These are the same strict digest/shape validators used by the async
+    # controller. They are read-only and bind each settled selection to its
+    # own retained attempts and archive, rather than accepting a sidecar marker
+    # or historical WAL row by itself.
+    validator = object.__new__(HierarchicalLoop)
+    validator.memory = memory
+    settlements = validator._async_settlement_entries()
+    lineage = validator._async_plan_lineage_entries()
+    settlement_by_id = {entry["archive_id"]: entry for entry in settlements}
+    lineage_by_id = {entry["archive_id"]: entry for entry in lineage}
+    if len(settlement_by_id) != len(settlements) or len(lineage_by_id) != len(lineage):
+        raise ValueError("Async checkpoint contains duplicate settlement identities")
+    if any(entry["disposition"] == "selected" and archive_id not in lineage_by_id
+           for archive_id, entry in settlement_by_id.items()):
+        raise ValueError("Selected async settlement lacks its checkpoint plan lineage")
+    if any(archive_id not in settlement_by_id
+           or settlement_by_id[archive_id]["disposition"] != "selected"
+           for archive_id in lineage_by_id):
+        raise ValueError("Async plan lineage lacks its selected checkpoint settlement")
+
+    if archive is not None:
+        for request_id, record in archives_by_request.items():
+            wal_pair = wal_by_request.get(request_id)
+            wal_view = wal_pair[1] if wal_pair is not None else None
+            provider = record["provider"]
+            if provider["wal_id"] != wal_id:
+                raise ValueError("Async archive is bound to another provider WAL")
+            if wal_pair is not None:
+                raw_wal = wal_pair[0]
+                if (raw_wal["identity"] != record["identity"]
+                        or raw_wal["request_sha256"] != _request_sha256(provider["wal_request"])
+                        ):
+                    raise ValueError("Async archive and provider WAL identities differ")
+
+            entry = settlement_by_id.get(record["archive_id"])
+            marker = archive.load_settlement(record)
+            if entry is not None:
+                if (entry["archive_sha256"] != record["record_sha256"]
+                        or entry["request_id"] != request_id
+                        or entry["wal_state"] != (wal_view.state if wal_view else None)
+                        or entry["wal_phase"] != (wal_view.phase if wal_view else None)
+                        or entry["wal_record_sha256"]
+                        != HierarchicalLoop._async_wal_record_sha256(wal_view)):
+                    raise ValueError("Async checkpoint settlement no longer matches its archive/WAL")
+                if marker is not None and marker != entry:
+                    raise ValueError("Async archive settlement marker differs from checkpoint history")
+                if entry["disposition"] == "selected":
+                    validator._async_validate_settled_plan(
+                        record, entry, lineage_by_id[record["archive_id"]])
+                continue
+
+            if marker is not None:
+                raise ValueError("Async archive marker has no retained checkpoint disposition")
+            if wal_view is None:
+                # Archive creation precedes checkpoint pointer and WAL reserve;
+                # this precise orphan proves no provider request was submitted.
+                continue
+            if (wal_view.state == "failed" and wal_view.phase == "not_sent"
+                    and wal_view.error_category == "local_admission"):
+                continue
+            raise ValueError("Async archive has no checkpoint disposition for its WAL outcome")
+
+    if set(settlement_by_id) - set(archive_by_id):
+        raise ValueError("Async checkpoint settlement refers to a missing archive")
+    if wal_document is not None:
+        for request_id, (_, view) in wal_by_request.items():
+            if request_id not in archives_by_request:
+                raise ValueError("Async provider WAL row has no matching request archive")
+            if view.state == "failed" and view.phase == "not_sent" \
+                    and view.error_category == "local_admission":
+                continue
+            if archives_by_request[request_id]["archive_id"] not in settlement_by_id:
+                raise ValueError("Async provider WAL row has no retained checkpoint disposition")
+
+    health_path = safety / "provider.json"
+    if health_path.exists() or health_path.is_symlink():
+        if health_path.is_symlink():
+            raise ValueError("Provider health state is not a real file")
+        health = read_json(health_path)
+        if health is None:
+            raise ValueError("Provider health state disappeared during rollback preflight")
+        health_identity = health.get("identity")
+        if (type(health_identity) is not str or len(health_identity) != 64
+                or any(character not in "0123456789abcdef" for character in health_identity)):
+            raise ValueError("Provider health identity is malformed")
+        # Match ProviderCircuit's legacy defaults before applying its canonical
+        # validator without constructing a provider client or mutating the file.
+        health.setdefault("in_flight", None)
+        health.setdefault("budget_category", health.get("category"))
+        health.setdefault("budget_limit", (
+            ProviderCircuit._limit(health.get("category"))
+            if health.get("category") else None))
+        circuit = object.__new__(ProviderCircuit)
+        circuit.identity = health_identity
+        circuit._validate(health)
+
+        flight = health.get("in_flight")
+        if isinstance(flight, dict) and "decision_binding" in flight:
+            binding = flight["decision_binding"]
+            bound_identity = binding["identity"]
+            if binding["wal_id"] != wal_id:
+                raise ValueError("Provider health reservation is bound to another WAL")
+            pair = wal_by_request.get(bound_identity["request_id"])
+            if (pair is None or pair[0]["identity"] != bound_identity
+                    or pair[0]["request_sha256"] != binding["request_sha256"]
+                    or pair[1].state not in {
+                        "reserved", "may_have_been_sent", "response_received", "ambiguous"}):
+                raise ValueError("Provider health reservation has no matching unresolved WAL request")
+            raise ValueError("Provider health still owns an async decision reservation")
+
+        outcome = health.get("decision_outcome")
+        if isinstance(outcome, dict) and outcome["identity"]["session_id"] == session_id:
+            if outcome["wal_id"] != wal_id:
+                raise ValueError("Provider health outcome is bound to another WAL")
+            pair = wal_by_request.get(outcome["identity"]["request_id"])
+            if pair is None:
+                raise ValueError("Provider health outcome has no matching provider WAL record")
+            view = pair[1]
+            if (pair[0]["identity"] != outcome["identity"]
+                    or pair[0]["request_sha256"] != outcome["request_sha256"]
+                    or view.state != outcome["state"] or view.phase != outcome["phase"]
+                    or view.result_sha256 != outcome["result_sha256"]
+                    or view.error_category != outcome["error_category"]
+                    or view.http_status != outcome["http_status"]):
+                raise ValueError("Provider health outcome differs from its provider WAL record")
+            if view.state in {
+                    "reserved", "may_have_been_sent", "response_received", "ambiguous"}:
+                raise ValueError("Provider health retains an unresolved async outcome")
+            archive_record = archives_by_request.get(outcome["identity"]["request_id"])
+            if (archive_record is None
+                    or archive_record["archive_id"] not in settlement_by_id):
+                if not (view.state == "failed" and view.phase == "not_sent"
+                        and view.error_category == "local_admission"):
+                    raise ValueError("Provider health outcome lacks retained async disposition")
+
+    if path.read_bytes() != captured:
+        raise ValueError("Checkpoint changed during async rollback preflight")
+    return captured
+
+
 def _validate_treatment_checkpoint(saved: object, treatment: dict) -> None:
     """Keep the selected treatment bound to the exact checkpoint capture."""
     if not isinstance(saved, dict):
@@ -102,6 +382,10 @@ def _validate_treatment_checkpoint(saved: object, treatment: dict) -> None:
 
 
 def cli() -> None:
+    # ``cli`` has several branch-local imports for compatibility; bind the
+    # module before any new async-status output uses the shared JSON encoder.
+    import json
+
     load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
     p = argparse.ArgumentParser(prog="jev-factorio")
     p.add_argument("--backend", default=os.environ.get("JEV_BACKEND", "mock"))
@@ -173,6 +457,10 @@ def cli() -> None:
     p.add_argument("--policy", choices=("jev", "deterministic", "hybrid"), default="jev")
     p.add_argument("--mock-model", action="store_true", help="Explicit offline model (mock backend only)")
     p.add_argument("--model", help="Provider-specific model ID; pin it for reproducible evaluation")
+    p.add_argument("--async-decisions", action="store_true",
+                   help="Explicitly opt in to durable asynchronous decisions (hierarchical controller only)")
+    p.add_argument("--async-decision-timeout-seconds", type=float, default=None,
+                   help="Async provider deadline in (0, 30] seconds; requires --async-decisions (default: 30)")
     p.add_argument("--checkpoint", help="Session-bound controller checkpoint, not a game save")
     p.add_argument("--resume-controller", action="store_true")
     p.add_argument("--reevaluate-blocked-once", action="store_true",
@@ -195,6 +483,65 @@ def cli() -> None:
     p.add_argument("--adopt-session", action="store_true",
                    help="Explicitly identify an older live FLE session without resetting it")
     args = p.parse_args()
+    duration_seconds = None
+    if args.duration_hours is not None:
+        if not math.isfinite(args.duration_hours) or args.duration_hours <= 0:
+            p.error("--duration-hours must be finite and positive")
+        duration_seconds = args.duration_hours * 3600
+        if not math.isfinite(duration_seconds):
+            p.error("--duration-hours must convert to finite seconds")
+    async_provider_mode = None
+    async_decision_timeout = None
+    if args.async_decision_timeout_seconds is not None and not args.async_decisions:
+        p.error("--async-decision-timeout-seconds requires --async-decisions")
+    if args.async_decisions:
+        if args.controller != "hierarchical":
+            p.error("--async-decisions requires --controller hierarchical")
+        if args.policy == "deterministic":
+            p.error("--async-decisions requires a model-based policy")
+        if args.reconcile_only:
+            p.error("--async-decisions cannot be combined with --reconcile-only")
+        if not args.checkpoint:
+            p.error("--async-decisions requires --checkpoint")
+        if args.model is not None and (
+                not args.model.strip() or args.model != args.model.strip()):
+            p.error("--model must be a non-empty provider model ID without surrounding whitespace")
+        if args.mock_model:
+            if args.model is not None:
+                p.error("--model cannot be combined with --mock-model")
+            async_provider_mode = "mock"
+        elif os.environ.get("TYPESAFE_API_KEY"):
+            async_provider_mode = "typesafe"
+        elif (os.environ.get("CLOUDFLARE_API_TOKEN")
+              and os.environ.get("CLOUDFLARE_ACCOUNT_ID")):
+            async_provider_mode = "cloudflare"
+        else:
+            p.error("Async decisions require live provider credentials or explicit --mock-model")
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            p.error("The async CLI must be started from a synchronous process, not a running event loop")
+        async_decision_timeout = (
+            30.0 if args.async_decision_timeout_seconds is None
+            else args.async_decision_timeout_seconds)
+        if (not math.isfinite(async_decision_timeout)
+                or not 0 < async_decision_timeout <= 30):
+            p.error("--async-decision-timeout-seconds must be finite and in (0, 30]")
+    sync_resume_async_capture = None
+    if (args.resume_controller and args.controller == "hierarchical"
+            and not args.async_decisions and args.checkpoint):
+        try:
+            # Do this before constructing either provider client or backend.
+            # A sync reducer cannot safely consume an async-selected plan or
+            # bypass a paid/ambiguous provider request retained by this run.
+            sync_resume_async_capture = _preflight_sync_async_rollback(
+                Path(args.checkpoint), args.target)
+        except (OSError, UnicodeError, ValueError, TypeError, KeyError,
+                RuntimeError, AttributeError) as error:
+            p.error("Synchronous resume is blocked by unresolved or invalid async decision state; "
+                    f"checkpoint and provider evidence were preserved ({type(error).__name__})")
     if (args.persistent_idle_observations is not None
             and not args.persist_recoverable_blocks):
         p.error("--persistent-idle-observations requires --persist-recoverable-blocks")
@@ -220,10 +567,6 @@ def cli() -> None:
         p.error("--lead-time-supply requires --factory-scheduling ready-work")
     if args.coverage_margin_lookahead and not args.lead_time_supply:
         p.error("--coverage-margin-lookahead requires --lead-time-supply")
-    if args.duration_hours is not None and (
-        not 0 < args.duration_hours < float("inf")
-    ):
-        p.error("--duration-hours must be finite and positive")
     if args.until_complete and args.controller != "hierarchical":
         p.error("--until-complete requires --controller hierarchical")
     if args.reconcile_only and (
@@ -426,12 +769,14 @@ def cli() -> None:
             pass
     options = dict(confidence_floor=args.confidence_floor,
                    tick_seconds=args.tick_seconds, log_file=args.log_file)
+    if args.async_decisions:
+        options.update(async_decisions=True,
+                       async_decision_timeout=async_decision_timeout)
     if args.controller == "flat":
         if args.mock_model or args.checkpoint or args.resume_controller or args.model or args.policy != "jev":
             p.error("Campaign options require --controller hierarchical")
     else:
         from .controller import HierarchicalLoop
-        from .jev_client import MockJevClient, make_client
 
         if args.backend not in {"mock", "fle"}:
             p.error("Hierarchical control currently supports mock and FLE backends")
@@ -459,14 +804,20 @@ def cli() -> None:
                 kind.memory_type.load(path, identity.get('session_id'), args.target)
             except (OSError, ValueError, TypeError, KeyError, AttributeError):
                 p.error('Successor checkpoint preflight failed; backend not started')
-        # Resolve credentials before starting a backend that initializes a world.
-        try:
-            client = (_ReconcileOnlyDecisionClient() if args.reconcile_only else
-                      None if args.policy == "deterministic" else
-                      MockJevClient() if args.mock_model else
-                      make_client(allow_mock=False, model=args.model))
-        except ValueError as error:
-            p.error(str(error))
+        # Resolve synchronous clients here as before. Async clients are built
+        # inside ExitStack below, immediately before backend attachment, so
+        # startup failures can still close their owned pool deterministically.
+        if args.async_decisions:
+            client = None
+        else:
+            from .jev_client import MockJevClient, make_client
+            try:
+                client = (_ReconcileOnlyDecisionClient() if args.reconcile_only else
+                          None if args.policy == "deterministic" else
+                          MockJevClient() if args.mock_model else
+                          make_client(allow_mock=False, model=args.model))
+            except ValueError as error:
+                p.error(str(error))
 
     if args.dashboard_events:
         dashboard_path = Path(args.dashboard_events)
@@ -491,7 +842,7 @@ def cli() -> None:
             requested_model=args.model,
             steps=(args.steps if args.steps is not None else 8)
             if args.duration_hours is None and not (args.until_complete or args.reconcile_only) else None,
-            duration_seconds=args.duration_hours * 3600 if args.duration_hours is not None else None,
+            duration_seconds=duration_seconds,
             until_complete=args.until_complete, reconcile_only=args.reconcile_only,
             reevaluate_blocked_once=args.reevaluate_blocked_once,
             persist_recoverable_blocks=args.persist_recoverable_blocks,
@@ -555,6 +906,30 @@ def cli() -> None:
                 p.error(str(error))
         if setup_timing:
             setup_timing.mark('dashboard_ready')
+        async_close_state = None
+        if args.async_decisions:
+            from .jev_client import AsyncMockJevClient, make_async_client
+            try:
+                if args.mock_model:
+                    # Explicit offline selection outranks ambient credentials.
+                    # The general factory intentionally prefers configured live
+                    # providers, so do not route this opt-in through that factory.
+                    client = AsyncMockJevClient()
+                else:
+                    client = make_async_client(
+                        allow_mock=False, model=args.model,
+                        max_concurrency=1, max_queue=0,
+                        timeout=async_decision_timeout)
+            except ValueError as error:
+                p.error(str(error))
+            async_close_state = {"attempted": False}
+
+            def close_async_provider_before_runner() -> None:
+                if not async_close_state["attempted"]:
+                    async_close_state["attempted"] = True
+                    asyncio.run(client.aclose())
+
+            cleanup.callback(close_async_provider_before_runner)
         if args.controller == "flat":
             options["research_log"] = research
             connector_witness = (Path(args.checkpoint).with_name(
@@ -724,6 +1099,16 @@ def cli() -> None:
                 if (blocked_checkpoint_capture is not None
                         and selected_resume_checkpoint_capture != blocked_checkpoint_capture):
                     p.error("Checkpoint changed after blocked-decision preflight; backend not started")
+                if sync_resume_async_capture is not None:
+                    try:
+                        rollback_capture = _preflight_sync_async_rollback(
+                            Path(args.checkpoint), args.target)
+                    except (OSError, UnicodeError, ValueError, TypeError, KeyError,
+                            RuntimeError, AttributeError) as error:
+                        p.error("Synchronous rollback state changed during preflight; backend not started "
+                                f"({type(error).__name__})")
+                    if rollback_capture != selected_resume_checkpoint_capture:
+                        p.error("Checkpoint changed during synchronous rollback preflight; backend not started")
                 if treatment is not None:
                     try:
                         saved = json.loads(selected_resume_checkpoint_capture.decode("utf-8"))
@@ -794,10 +1179,30 @@ def cli() -> None:
                 "requested_model": getattr(getattr(loop, "jev", None), "model", None),
                 "model_is_mock": bool(getattr(getattr(loop, "jev", None), "is_mock", False)),
             }
+            if args.async_decisions:
+                initialized["async_decisions"] = {
+                    "enabled": True,
+                    "provider": async_provider_mode,
+                    "decision_deadline_seconds": async_decision_timeout,
+                    "transport_timeout_seconds": (
+                        None if async_provider_mode == "mock" else async_decision_timeout),
+                    "max_client_concurrency": 1,
+                    "max_queued_requests": 0,
+                }
             if args.profile_latency and setup_timing:
                 initialized['initialization_timing'] = setup_timing.profile_result()
             research.emit("controller_initialized", initialized,
                           session_id=getattr(memory, "session_id", None))
+        if args.async_decisions:
+            print(json.dumps({"async_decisions": {
+                "enabled": True,
+                "provider": async_provider_mode,
+                "decision_deadline_seconds": async_decision_timeout,
+                "transport_timeout_seconds": (
+                    None if async_provider_mode == "mock" else async_decision_timeout),
+                "max_client_concurrency": 1,
+                "max_queued_requests": 0,
+            }}, sort_keys=True), flush=True)
         if args.profile_latency:
             loop.profile_latency = True
             trace = getattr(loop, '_trace', None)
@@ -812,13 +1217,25 @@ def cli() -> None:
                 Path(__file__).resolve().parents[2], args.owner_step_lock_path,
                 args.owner_step_lock_fd, wait_seconds=args.owner_step_wait_seconds)
         try:
-            if args.reconcile_only:
+            if args.async_decisions:
+                if args.until_complete:
+                    run_options = {"until_complete": True}
+                elif args.duration_hours is not None:
+                    run_options = {"steps": None,
+                                   "duration_seconds": duration_seconds}
+                elif step_gate is None:
+                    run_options = {"steps": args.steps if args.steps is not None else 8}
+                else:
+                    run_options = {"steps": args.steps, "after_step": step_gate}
+                asyncio.run(_run_async_controller_lifecycle(
+                    loop, async_close_state, **run_options))
+            elif args.reconcile_only:
                 result = loop.reconcile_only()
                 print(json.dumps({"reconciliation": result}, sort_keys=True), flush=True)
             elif args.until_complete:
                 loop.run(until_complete=True)
             elif args.duration_hours is not None:
-                loop.run(steps=None, duration_seconds=args.duration_hours * 3600)
+                loop.run(steps=None, duration_seconds=duration_seconds)
             else:
                 if step_gate is None:
                     loop.run(steps=args.steps if args.steps is not None else 8)

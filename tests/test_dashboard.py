@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from jev_factorio.dashboard import (
-    ASSETS, MAX_LINE, SCHEMA, DashboardServer, EventWriter, Monitor, Tail, sanitize,
+    ASSETS, MAX_LINE, SCHEMA, DashboardServer, EventWriter, Monitor, Tail, attach, sanitize,
 )
 
 
@@ -90,6 +90,95 @@ def test_sanitize_bounded_depth_bytes_and_secret_keys():
     assert out["Authorization"] == "[redacted]"
     assert out["value"] is None
     assert "display limit" in json.dumps(out)
+
+
+def test_dashboard_observer_preserves_only_known_mock_async_identity(tmp_path):
+    from jev_factorio.backends.mock import MockBackend
+    from jev_factorio.controller import AsyncControllerBusy, HierarchicalLoop
+    from jev_factorio.jev_client import AsyncMockJevClient
+
+    backend = MockBackend()
+    loop = HierarchicalLoop(
+        backend, jev=AsyncMockJevClient(), target="bootstrap_mining", policy="jev",
+        checkpoint=str(tmp_path / "dashboard-mock-identity.json"), tick_seconds=0,
+        async_decisions=True)
+    with EventWriter(tmp_path / "dashboard-mock-identity.jsonl") as writer:
+        attach(loop, writer)
+        assert loop.backend.session_id == backend.session_id
+        assert loop.backend.actor_unit == 0
+        assert loop.backend._shared is backend
+        keys = loop._async_resource_lock_keys()
+    assert keys == (("session", backend.session_id), ("transport", f"mock:{id(backend):x}"))
+
+    class UnknownFacade:
+        def __init__(self):
+            self.inner = MockBackend()
+            self.session_id = self.inner.session_id
+
+        def __getattr__(self, key):
+            return getattr(self.inner, key)
+
+    unknown = UnknownFacade()
+    unknown_loop = HierarchicalLoop(
+        unknown, jev=AsyncMockJevClient(), target="bootstrap_mining", policy="jev",
+        checkpoint=str(tmp_path / "dashboard-unknown-identity.json"), tick_seconds=0,
+        async_decisions=True)
+    with EventWriter(tmp_path / "dashboard-unknown-identity.jsonl") as writer:
+        attach(unknown_loop, writer)
+        assert not hasattr(unknown_loop.backend, "actor_unit")
+        assert not hasattr(unknown_loop.backend, "_shared")
+        with pytest.raises(AsyncControllerBusy, match="stable session and actor identity"):
+            unknown_loop._async_resource_lock_keys()
+
+
+def test_dashboard_observer_forwards_qualified_native_attachment_and_rcon_identity(tmp_path):
+    from types import SimpleNamespace
+
+    from jev_factorio.backends.mock import MockBackend
+    from jev_factorio.controller import HierarchicalLoop
+    from jev_factorio.jev_client import AsyncMockJevClient
+
+    class IdentifiedFleFixture:
+        def __init__(self):
+            self.inner = MockBackend()
+            self.session_id = self.inner.session_id
+            self.actor_unit = 41
+            self.surface_index = 2
+            self.force_index = 3
+            self.rcon = object()
+            self._instance = SimpleNamespace(
+                rcon_client=SimpleNamespace(client=self.rcon))
+            self._native_attachment = {
+                "qualified": True, "session_id": self.session_id,
+                "actor_unit": self.actor_unit,
+            }
+
+        def __getattr__(self, key):
+            return getattr(self.inner, key)
+
+        def observe(self):
+            snapshot = self.inner.observe()
+            snapshot.world_kind = "fle"
+            snapshot.factory["acceptance_runtime"] = {
+                "session_id": self.session_id, "actor_unit": self.actor_unit,
+                "surface_index": self.surface_index, "force_index": self.force_index,
+            }
+            return snapshot
+
+    backend = IdentifiedFleFixture()
+    loop = HierarchicalLoop(
+        backend, jev=AsyncMockJevClient(), target="bootstrap_mining", policy="jev",
+        checkpoint=str(tmp_path / "dashboard-fle-identity.json"), tick_seconds=0,
+        async_decisions=True)
+    with EventWriter(tmp_path / "dashboard-fle-identity.jsonl") as writer:
+        attach(loop, writer)
+        identity = loop._async_observation_identity(loop.backend.observe())
+        keys = loop._async_resource_lock_keys()
+    assert identity == {
+        "session_id": backend.session_id, "actor_unit": 41,
+        "surface_index": 2, "force_index": 3,
+    }
+    assert keys == (("session", backend.session_id), ("transport", f"rcon:{id(backend.rcon):x}"))
 
 
 def test_tail_partial_invalid_truncation_and_rotation(tmp_path):
