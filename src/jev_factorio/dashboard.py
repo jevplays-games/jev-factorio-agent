@@ -515,6 +515,13 @@ class Monitor:
         elif kind == "action":
             view["action"] = data.get("action")
             view["parameters"] = data.get("parameters")
+            view["dispatch"] = {
+                "observed": True,
+                "action": data.get("action"),
+                "parameters": data.get("parameters"),
+                "event_seq": event["seq"],
+                "event_time": event["time"],
+            }
         elif kind == "decision_recorded" and isinstance(data.get("record"), dict):
             view.pop("mission_record", None)
             # A truncated/older record cannot rejuvenate a previous observation.
@@ -522,6 +529,7 @@ class Monitor:
             view["state"] = recorded_state if isinstance(recorded_state, dict) else {}
             view["state_observed_time"] = event["time"] if view["state"] else None
             view["legacy_record_timestamp"] = data.get("record_timestamp") is True
+            view["recorded_action"] = data["record"].get("action")
             view.update({key: value for key, value in data["record"].items()
                          if key in RECORD_KEYS or key == "mission_record"})
         elif kind.endswith("_failed"):
@@ -576,6 +584,8 @@ class Monitor:
         )
         self.view.pop("mission_record", None)
         self.view.pop("persistent_recovery", None)
+        self.view.pop("dispatch", None)
+        self.view.pop("recorded_action", None)
 
     def poll(self) -> None:
         with self.lock:
@@ -765,12 +775,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _allowed(self) -> bool:
         port = self.server.server_port
-        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
-        if self.headers.get("Host") not in allowed:
+        hosts = self.headers.get_all("Host", [])
+        if len(hosts) != 1:
             return False
-        origin = self.headers.get("Origin")
-        return (not origin or origin == "http://" + self.headers.get("Host", "")) and \
-            self.headers.get("Sec-Fetch-Site", "same-origin") in {"same-origin", "none"}
+        host = hosts[0]
+        hostnames = ("127.0.0.1", "localhost")
+        allowed = {f"{name}:{port}" for name in hostnames}
+        if port == 80:
+            allowed.update(hostnames)
+        if host not in allowed:
+            return False
+        origins = self.headers.get_all("Origin", [])
+        if len(origins) > 1:
+            return False
+        origin = origins[0] if origins else None
+        if origin is not None:
+            hostname = host.split(":", 1)[0]
+            allowed_origins = {f"http://{hostname}:{port}"}
+            if port == 80:
+                allowed_origins.add(f"http://{hostname}")
+            if not origin or origin not in allowed_origins:
+                return False
+        fetch_sites = self.headers.get_all("Sec-Fetch-Site", [])
+        if len(fetch_sites) > 1:
+            return False
+        fetch_site = fetch_sites[0] if fetch_sites else "same-origin"
+        return fetch_site in {"same-origin", "none"}
 
     def do_GET(self) -> None:
         if not self._allowed():

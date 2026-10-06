@@ -62,10 +62,15 @@ function inspect(title, description, evidence) {
 function stageEvidence(index) {
   const data = object(displayed);
   const v = object(data.view);
+  const dispatch = object(v.dispatch);
+  const actionEvidence = dispatch.observed === true ? dispatch : {
+    observed: false,
+    reason: data.source?.mode === "legacy" ? "Legacy records do not contain action-dispatch events" : "No action event was observed"
+  };
   return [data.supervisor, {state: v.state, status: v.status, invocation: v.run_id},
     {goal: v.goal, target: v.target, completed_goals: v.completed_goals}, {plan: v.plan, candidates: object(v.request).candidates},
     {request: v.request, response: v.response, accepted_decision: v.decision, latency_ms: v.model_ms},
-    {action: v.action, parameters: v.parameters, pending: v.pending},
+    {recorded_action: v.recorded_action ?? null, dispatch: actionEvidence, pending: v.pending},
     {pending: v.pending, verified: v.verified, outcome: v.outcome, state: v.state}, data.supervisor][index];
 }
 
@@ -193,7 +198,25 @@ function renderResearch(research) {
 
 function renderGoals(v) {
   const completed = object(v.completed_goals);
-  const target = typeof v.target === "string" ? v.target : "rocket_launch";
+  const target = typeof v.target === "string" && v.target.trim() ? v.target : null;
+  const supportedTargets = new Set(["bootstrap_mining", "iron_smelting", "steam_power", "automation_science", "rocket_launch"]);
+  if (!target || !supportedTargets.has(target)) {
+    $("goals").classList.remove("milestones");
+    const unknown = !target;
+    $("goals-count").textContent = unknown ? "TARGET NOT RECORDED" : "UNSUPPORTED TARGET";
+    const title = unknown ? "Campaign target not recorded" : "Unsupported campaign target";
+    const description = unknown ? "No target was captured for this run" : "Recorded target · " + target;
+    const nodes = [el("div", "goal-node")];
+    nodes[0].append(el("strong", "", title), el("small", "", description));
+    for (const [goal, tick] of Object.entries(completed).slice(0, 32)) {
+      if (!goal) continue;
+      const node = el("div", "goal-node done");
+      node.append(el("strong", "", goal), el("small", "", `Verified · tick ${text(tick)}`));
+      nodes.push(node);
+    }
+    $("goals").replaceChildren(...nodes);
+    return;
+  }
   if (target === "rocket_launch" && Array.isArray(v.milestones) && v.milestones.length) {
     renderMilestones(v.milestones, v);
     return;
