@@ -1476,6 +1476,38 @@ def _current_shared_bill(snapshot, catalog, plan, local):
         return None
 
 
+def _recipe_source_matches(snapshot, catalog, role, machine):
+    """Bind a current recipe role without treating ore-site surveys as universal.
+
+    Native recipe roles are registered after ordinary placement; discovery only
+    adds stock containers. Ore furnaces still require their production-site
+    identity. This is current entity identity, not historical payment evidence.
+    """
+    try:
+        unit = machine['unit_number']
+        if type(unit) is not int or unit <= 0:
+            return False
+        sources = snapshot.factory.get('production_sites', {}).get('sources', {})
+        if role in sources or role in {'recipe:iron-plate', 'recipe:copper-plate'}:
+            source = sources.get(role)
+            return (isinstance(source, dict) and source.get('state') == 'owned'
+                    and type(source.get('source_unit')) is int and source['source_unit'] == unit)
+        recipe_name = role.removeprefix('recipe:')
+        recipe = catalog.recipes[recipe_name]
+        prototype = catalog.machines[machine['name']]
+        return (snapshot.world_kind == 'fle'
+                and isinstance(snapshot.session_id, str) and bool(snapshot.session_id)
+                and type(snapshot.tick) is int
+                and type(snapshot.factory.get('tick')) is int
+                and snapshot.factory['tick'] == snapshot.tick
+                and role == 'recipe:' + recipe['name']
+                and machine['recipe'] == recipe_name
+                and prototype.get('electric') is True and prototype.get('burner') is False
+                and prototype.get('categories', {}).get(recipe['category']) is True)
+    except (KeyError, TypeError, AttributeError):
+        return False
+
+
 def _recipe_input_transfer_start_evidence(snapshot, catalog, plan, *, path_root=None,
                                           require_receiver_capacity=False, include_dependency_chain=False):
     """Bind a paid recipe input transfer to current native facts, not future output."""
@@ -1496,7 +1528,6 @@ def _recipe_input_transfer_start_evidence(snapshot, catalog, plan, *, path_root=
         return None
     factory = snapshot.factory
     machine = factory.get('entities', {}).get(role, {})
-    source = (factory.get('production_sites', {}).get('sources', {}).get(role, {}))
     recipe = catalog.recipes.get(recipe_name, {})
     prototype = catalog.machines.get(machine.get('name'), {})
     ingredients = recipe.get('ingredients', [])
@@ -1521,8 +1552,7 @@ def _recipe_input_transfer_start_evidence(snapshot, catalog, plan, *, path_root=
             or provenance.get('observed_tick') != snapshot.tick
             or type(machine.get('unit_number')) is not int or machine['unit_number'] <= 0
             or provenance.get('source_unit') != machine['unit_number']
-            or source.get('state') != 'owned'
-            or source.get('source_unit') != machine['unit_number']
+            or not _recipe_source_matches(snapshot, catalog, role, machine)
             or recipe.get('name') != recipe_name or recipe.get('hidden')
             or not catalog.enabled(recipe, snapshot.researched or [])
             or not bool(prototype.get('categories', {}).get(recipe.get('category')))
@@ -1705,13 +1735,10 @@ def _output_pickup_start_evidence(snapshot, catalog, plan, *, path_root=None,
         return None
     factory = snapshot.factory
     entities = factory.get('entities')
-    sites = factory.get('production_sites')
-    if not isinstance(entities, dict) or not isinstance(sites, dict):
+    if not isinstance(entities, dict):
         return None
     machine = entities.get(role)
-    sources = sites.get('sources')
-    source = sources.get(role) if isinstance(sources, dict) else None
-    if not isinstance(machine, dict) or not isinstance(source, dict):
+    if not isinstance(machine, dict):
         return None
     unit = machine.get('unit_number')
     output = machine.get('output')
@@ -1722,7 +1749,7 @@ def _output_pickup_start_evidence(snapshot, catalog, plan, *, path_root=None,
     expected_path_root = local.get('item') if path_root is None else path_root
     if (not isinstance(expected_path_root, str) or not expected_path_root
             or type(unit) is not int or unit <= 0
-            or source.get('state') != 'owned' or source.get('source_unit') != unit
+            or not _recipe_source_matches(snapshot, catalog, role, machine)
             or not isinstance(recipe, dict) or recipe.get('name') != recipe_name
             or recipe.get('hidden') or not catalog.enabled(recipe, snapshot.researched or [])
             or not any(product.get('type') == 'item' and product.get('name') == item
