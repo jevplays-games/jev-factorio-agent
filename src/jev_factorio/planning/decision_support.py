@@ -856,46 +856,6 @@ def _utility_power_prerequisite_start_evidence(
             if capital_marker['spec']['role'] != role:
                 return None
 
-        def same_current_plan(current):
-            if current is None or current.id != plan.id:
-                return False
-            if current.steps == plan.steps:
-                return True
-            # BackgroundWorkLoop receipt-tracks a narrow class of one-step
-            # handcrafts after ordinary planning. Reproduce only that exact
-            # structural conversion without minting a receipt here.
-            if (len(current.steps) != 1 or len(plan.steps) != 1
-                    or current.steps[0].action != 'factory_craft'
-                    or plan.steps[0].action != 'factory_craft_job'):
-                return False
-            source_step, tracked_step = current.steps[0], plan.steps[0]
-            source_parameters = dict(source_step.parameters or {})
-            tracked_parameters = dict(tracked_step.parameters or {})
-            receipt = tracked_parameters.pop('receipt', None)
-            if (not isinstance(receipt, str) or len(receipt) != 32
-                    or any(char not in '0123456789abcdef' for char in receipt)
-                    or tracked_parameters != source_parameters
-                    or tracked_step.effect != 'craft_job_complete'):
-                return False
-            recipe = catalog.recipes.get(source_parameters.get('recipe'), {})
-            products, ingredients = recipe.get('products', []), recipe.get('ingredients', [])
-            if (len(products) != 1 or not isinstance(products[0], dict)
-                    or products[0].get('type') != 'item'
-                    or products[0].get('probability', 1) != 1
-                    or not isinstance(ingredients, list) or not ingredients
-                    or any(not isinstance(entry, dict) or entry.get('type') != 'item'
-                           for entry in ingredients)
-                    or any(entry.get('name') == products[0].get('name')
-                           for entry in ingredients)):
-                return False
-            try:
-                from dataclasses import asdict, replace
-                return replace(tracked_step, action='factory_craft',
-                               effect=source_step.effect,
-                               parameters=source_step.parameters) == source_step
-            except (TypeError, ValueError):
-                return False
-
         for planner_type in (FactoryPlanner, ReadyWorkPlanner, OutputBufferPlanner,
                              InputRoutePlanner, MiningOutpostPlanner):
             if issubclass(planner_type, OutputBufferPlanner):
@@ -925,7 +885,7 @@ def _utility_power_prerequisite_start_evidence(
             if (capital_marker is not None
                     and (current.materials or {}).get(capital.MARKER) != capital_marker):
                 continue
-            if same_current_plan(current):
+            if _same_current_steps(catalog, current, plan):
                 current_annotation = (current.materials or {}).get('utility_power_prerequisite')
                 if current_annotation == annotation:
                     rebuilt = current
@@ -3089,6 +3049,46 @@ def _native_research_trigger_start_evidence(snapshot, catalog, plan, gather_star
         'basis': 'typed_native_research_trigger_plus_direct_current_recipe_input',
     }
 
+def _same_current_steps(catalog, current, plan):
+    if current is None or current.id != plan.id:
+        return False
+    if current.steps == plan.steps:
+        return True
+    # BackgroundWorkLoop receipt-tracks a narrow class of one-step
+    # handcrafts after ordinary planning. Reproduce only that exact
+    # structural conversion without minting a receipt here.
+    if (len(current.steps) != 1 or len(plan.steps) != 1
+            or current.steps[0].action != 'factory_craft'
+            or plan.steps[0].action != 'factory_craft_job'):
+        return False
+    source_step, tracked_step = current.steps[0], plan.steps[0]
+    source_parameters = dict(source_step.parameters or {})
+    tracked_parameters = dict(tracked_step.parameters or {})
+    receipt = tracked_parameters.pop('receipt', None)
+    if (not isinstance(receipt, str) or len(receipt) != 32
+            or any(char not in '0123456789abcdef' for char in receipt)
+            or tracked_parameters != source_parameters
+            or tracked_step.effect != 'craft_job_complete'):
+        return False
+    recipe = catalog.recipes.get(source_parameters.get('recipe'), {})
+    products, ingredients = recipe.get('products', []), recipe.get('ingredients', [])
+    if (len(products) != 1 or not isinstance(products[0], dict)
+            or products[0].get('type') != 'item'
+            or products[0].get('probability', 1) != 1
+            or not isinstance(ingredients, list) or not ingredients
+            or any(not isinstance(entry, dict) or entry.get('type') != 'item'
+                   for entry in ingredients)
+            or any(entry.get('name') == products[0].get('name')
+                   for entry in ingredients)):
+        return False
+    try:
+        from dataclasses import replace
+        return replace(tracked_step, action='factory_craft',
+                       effect=source_step.effect,
+                       parameters=source_step.parameters) == source_step
+    except (TypeError, ValueError):
+        return False
+
 
 def _input_route_kit_parent_purpose(snapshot, catalog, plan):
     """Recompile a bounded kit need from the current owned route and parent path."""
@@ -3129,19 +3129,24 @@ def _input_route_kit_parent_purpose(snapshot, catalog, plan):
                 or type(marker.get('source_unit')) is not int
                 or marker['source_unit'] != row['source_unit']):
             return None
-        planner = InputRoutePlanner(catalog, snapshot, plan.goal)
-        matches = [candidate for candidate in planner.candidates()
-                   if candidate.id == plan.id and candidate.steps == plan.steps]
-        if len(matches) != 1:
-            return None
-        derived = matches[0]
-        if (derived.steps != plan.steps
-                or (derived.materials or {}).get('input_route_kit_prerequisite') != marker
-                or (derived.materials or {}).get('local_objective') != local
-                or (derived.materials or {}).get('raw_prerequisite') !=
-                    (plan.materials or {}).get('raw_prerequisite')
-                or (derived.materials or {}).get('craft_dependency') !=
-                    (plan.materials or {}).get('craft_dependency')):
+        # The controller can expose ordinary work after rejecting an optional
+        # capital proposal. Reproduce both bounded planner modes; neither mode
+        # authorizes capital, clears failures, or changes dispatch eligibility.
+        derived = None
+        for ordinary in (False, True):
+            planner = InputRoutePlanner(catalog, snapshot, plan.goal)
+            planner._economic_acquiring = ordinary
+            matches = [candidate for candidate in planner.candidates()
+                       if _same_current_steps(catalog, candidate, plan)
+                       and all((candidate.materials or {}).get(key) ==
+                               (plan.materials or {}).get(key)
+                               for key in ('input_route_kit_prerequisite',
+                                           'local_objective', 'raw_prerequisite',
+                                           'craft_dependency'))]
+            if len(matches) == 1:
+                derived = matches[0]
+                break
+        if derived is None:
             return None
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
