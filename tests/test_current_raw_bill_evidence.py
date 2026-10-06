@@ -4,8 +4,11 @@ from dataclasses import replace
 import pytest
 
 from jev_factorio.judgments import question_batch, select_plan
+from jev_factorio import launch_readiness
 from jev_factorio.jev_client import MockJevClient
 from jev_factorio.planning.decision_support import add_current_raw_bill_evidence, candidate_evidence
+from jev_factorio.planning.demand import SupplyLedger
+from test_launch_readiness import scenario as launch_scenario
 from test_bill_overlap_evidence import bill_case
 from test_factory import machine, recipe
 
@@ -26,6 +29,26 @@ def case():
     return state, data, plans, rows, gather
 
 
+def _enable_supported_launch_payload(state, data):
+    """Use the complete launch observer row and matching craft actor contract."""
+    _, observed = launch_scenario(inventory={'raw-fish': 1})
+    row = deepcopy(observed.factory['launch_readiness'])
+    state.factory['launch_readiness'] = row
+    state.factory['entities'][launch_readiness.SILO] = deepcopy(
+        observed.factory['entities'][launch_readiness.SILO])
+    state.factory['craft_jobs_protocol'] = 1
+    state.factory['craft_job_actor'] = {
+        'session_id': state.session_id,
+        'player_index': 1,
+        'unit_number': row['actor_unit'],
+        'surface_index': row['surface_index'],
+        'force_index': row['force_index'],
+    }
+    state.world_kind = 'fle'
+    state.game_version = data.version
+    return row
+
+
 def test_recomputed_bill_separates_carried_from_collectible_supply():
     state, data, plans, rows, gather = case()
     before = deepcopy((state, plans, rows))
@@ -40,7 +63,7 @@ def test_recomputed_bill_separates_carried_from_collectible_supply():
     assert proof['remaining_recipe_batches_after_supply_credit']['iron-plate'] == 5
 
 
-@pytest.mark.parametrize('change', ['stale','wrong_target','wrong_session','unknown','quantity','already_supplied','active_job','queue','fluid','probability','queued','reserved','version'])
+@pytest.mark.parametrize('change', ['stale','wrong_target','wrong_session','unknown','quantity','already_supplied','active_job','queue','fluid','probability','queued','version'])
 def test_missing_or_unsupported_witness_suppresses_proof(change):
     state, data, plans, rows, gather = case()
     if change == 'stale': rows[gather.id]['raw_prerequisite']['observed_tick'] -= 1
@@ -54,10 +77,59 @@ def test_missing_or_unsupported_witness_suppresses_proof(change):
     elif change == 'fluid': data.recipes['lab']['ingredients'][0]['type'] = 'fluid'
     elif change == 'probability': data.recipes['lab']['products'][0]['probability'] = .5
     elif change == 'queued': state.factory['entities']['recipe:iron-plate'].update(recipe='iron-plate',input={'iron-ore':1})
-    elif change == 'reserved': state.factory['launch_readiness'] = {}; state.inventory['raw-fish'] = 1
     elif change == 'version': state.game_version = 'different'
     add_current_raw_bill_evidence(state, data, plans, rows)
     assert all('current_raw_material_bill' not in row for row in rows.values())
+
+
+def test_supported_payload_reservation_suppresses_current_raw_bill():
+    state, data, plans, rows, gather = case()
+    state.inventory['raw-fish'] = 1
+    launch_row = _enable_supported_launch_payload(state, data)
+
+    assert launch_row['session_id'] == state.session_id
+    assert launch_row['tick'] == state.tick
+    assert launch_row['version'] == state.game_version == data.version
+    assert state.factory['craft_job_actor'] == {
+        'session_id': state.session_id,
+        'player_index': 1,
+        'unit_number': launch_row['actor_unit'],
+        'surface_index': launch_row['surface_index'],
+        'force_index': launch_row['force_index'],
+    }
+    assert launch_readiness.reserved(state) == {'raw-fish': 1}
+
+    ledger = SupplyLedger.capture(state, data)
+    assert ledger.reserved == {'raw-fish': 1}
+    assert ledger.carried['raw-fish'] == 0
+    add_current_raw_bill_evidence(state, data, plans, rows)
+    assert all('current_raw_material_bill' not in row for row in rows.values())
+    assert state.inventory['raw-fish'] == 1
+
+
+@pytest.mark.parametrize('change', ['absent', 'malformed', 'unsupported'])
+def test_invalid_launch_profile_does_not_infer_hold_or_hide_current_raw_bill(change):
+    state, data, plans, rows, gather = case()
+    state.inventory['raw-fish'] = 1
+    launch_row = _enable_supported_launch_payload(state, data)
+    if change == 'absent':
+        state.factory.pop('launch_readiness')
+    elif change == 'malformed':
+        launch_row['actor_unit'] = True
+    else:
+        launch_row['supported'] = False
+
+    assert launch_readiness.reserved(state) == {}
+    inferred = SupplyLedger.capture(state, data)
+    assert inferred.reserved.get('raw-fish', 0) == 0
+    assert inferred.carried['raw-fish'] == 1
+    add_current_raw_bill_evidence(state, data, plans, rows)
+    assert 'current_raw_material_bill' in rows[gather.id]
+
+    # Invalid inferred evidence cannot erase an already-paid explicit hold.
+    retained = SupplyLedger.capture(state, data, reserved={'raw-fish': 1})
+    assert retained.reserved['raw-fish'] == 1
+    assert retained.carried['raw-fish'] == 0
 
 
 def test_only_named_target_is_expanded_and_collectible_alias_is_not_double_counted():

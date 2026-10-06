@@ -167,11 +167,16 @@ def permits(action: str, parameters: dict, snapshot) -> bool:
     if str(parameters.get('role', '')).startswith('outpost:'):
         return False
     if action == COMMAND:
-        # Never race construction of a direct ore route for this same resource.
+        # A live proposal is enough to supersede an unpaid outpost selection.
+        # Once the chest is paid, keep the receipt-bound prefix continuable.
         direct = snapshot.factory.get('input_routes', {}).get('sources', {}).get(
             RESOURCES.get(parameters.get('resource')))
-        if direct and direct.get('state') != 'proposed':
-            return False
+        if direct:
+            if direct.get('state') != 'proposed':
+                return False
+            outpost = rows.get(parameters.get('resource'))
+            if not outpost or not outpost['parts']:
+                return False
     if action == 'factory_input_build':
         resource = next((ore for ore, source in RESOURCES.items() if source == parameters.get('source')), None)
         if resource in rows and rows[resource]['state'] != 'proposed':
