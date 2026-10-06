@@ -13,7 +13,7 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from uuid import uuid4
 from pathlib import Path
@@ -23,6 +23,11 @@ from urllib.parse import urlsplit
 from .provenance import CONTEXT_ENV, append_audit, digest_json, identifier, source_revision
 from .operational_safety import SafetyStateError, read_json, safety_dir
 from .recovery_policy import classify, current_exit, repair_quota_exhausted
+from .research_log import (
+    RESEARCH_ROOT_FD_ENV,
+    open_research_output_parent,
+    validate_research_output_parent,
+)
 
 
 _CANONICAL_REPOSITORY = "jevplays-games/jev-factorio-agent"
@@ -82,6 +87,189 @@ def _validate_runtime_exclusions(cwd: Path, state_dir: Path, checkpoint: Path) -
     return resolved
 
 
+class ResearchOutputPathError(ValueError):
+    """A research destination cannot be proven safe for source snapshots."""
+
+
+def _git_marker_identity(path: Path) -> tuple[Path | None, tuple | None]:
+    """Return the nearest checkout marker and a replacement-sensitive identity."""
+    for parent in (path, *path.parents):
+        marker = parent / ".git"
+        try:
+            info = marker.lstat()
+        except OSError:
+            continue
+        content_digest = None
+        try:
+            if marker.is_symlink():
+                content_digest = hashlib.sha256(os.fsencode(os.readlink(marker))).hexdigest()
+            elif marker.is_file():
+                content_digest = hashlib.sha256(marker.read_bytes()).hexdigest()
+        except OSError:
+            return parent, None
+        return parent, (info.st_dev, info.st_ino, info.st_mode & 0o170000, content_digest)
+    return None, None
+
+
+def _discover_checkout_identity(cwd: Path) -> tuple[Path | None, tuple | None]:
+    marker_root, marker_identity = _git_marker_identity(cwd)
+    environment = os.environ.copy()
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        environment.pop(name, None)
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=cwd,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=5, check=False, env=environment,
+        )
+        if result.returncode == 0:
+            return Path(os.fsdecode(result.stdout).strip()).resolve(strict=True), marker_identity
+    except (OSError, RuntimeError, subprocess.SubprocessError, ValueError):
+        pass
+    return marker_root, marker_identity
+
+
+def _validate_research_output_path(
+        cwd: Path, research_dir: Path | None, *,
+        known_checkout: Path | None = None,
+        known_marker: tuple | None = None) -> tuple[Path | None, Path | None, tuple | None]:
+    """Prove a checkout-local research directory is an ignored output boundary.
+
+    External destinations remain available. Within the active checkout, the
+    complete output directory must be ignored and contain no tracked paths;
+    the supervisor never hides an arbitrary source subtree from its snapshot.
+    """
+    if research_dir is None:
+        return None, known_checkout, known_marker
+    try:
+        working_root = cwd.resolve(strict=True)
+        target = Path(research_dir).resolve(strict=False)
+        if target == working_root or working_root.is_relative_to(target):
+            raise ResearchOutputPathError(
+                "research output cannot be the checkout or an ancestor of the checkout; "
+                "choose an external output directory"
+            )
+        if target.exists() and not target.is_dir():
+            raise ResearchOutputPathError("research output path must name a directory")
+    except ResearchOutputPathError:
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
+        raise ResearchOutputPathError(
+            "research output path cannot be resolved safely; choose a new external directory"
+        ) from error
+
+    marker_root, marker_identity = _git_marker_identity(working_root)
+    if (known_checkout is not None and target.is_relative_to(known_checkout)
+            and marker_identity != known_marker):
+        raise ResearchOutputPathError(
+            "the Git checkout marker changed after research output was configured; "
+            "restore the original checkout or choose an external directory"
+        )
+
+    deadline = time.monotonic() + 5.0
+    environment = os.environ.copy()
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        environment.pop(name, None)
+
+    def git(*arguments: str) -> subprocess.CompletedProcess:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(["git", *arguments], 5.0)
+        return subprocess.run(
+            ["git", *arguments], cwd=working_root, check=False,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            timeout=remaining, env=environment,
+        )
+
+    try:
+        root_result = git("rev-parse", "--show-toplevel")
+    except (OSError, subprocess.SubprocessError) as error:
+        probable_root = marker_root or known_checkout
+        if probable_root is not None and target.is_relative_to(probable_root):
+            raise ResearchOutputPathError(
+                "cannot verify an in-checkout research output path because Git is unavailable "
+                "or timed out; restore Git or choose an external directory"
+            ) from error
+        return target, known_checkout, known_marker
+
+    if root_result.returncode != 0:
+        probable_root = marker_root or known_checkout
+        if probable_root is not None and target.is_relative_to(probable_root):
+            raise ResearchOutputPathError(
+                "cannot verify an in-checkout research output path; restore the Git checkout "
+                "or choose an external directory"
+            )
+        return target, known_checkout, known_marker
+
+    try:
+        checkout = Path(os.fsdecode(root_result.stdout).strip()).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise ResearchOutputPathError(
+            "Git returned an unsafe checkout root for research output validation"
+        ) from error
+
+    if (known_checkout is not None and checkout != known_checkout
+            and (target.is_relative_to(known_checkout) or target.is_relative_to(checkout))):
+        raise ResearchOutputPathError(
+            "the Git checkout root changed after research output was configured; "
+            "restore the original checkout or choose an external directory"
+        )
+
+    if target == checkout or checkout.is_relative_to(target):
+        raise ResearchOutputPathError(
+            "research output cannot be the checkout or an ancestor of the checkout; "
+            "choose an external output directory"
+        )
+    if not target.is_relative_to(checkout):
+        return target, checkout, marker_identity
+    if working_root != checkout:
+        raise ResearchOutputPathError(
+            "in-checkout research output requires supervisor cwd to be the repository root; "
+            "set cwd to that root or choose an external directory"
+        )
+
+    relative = target.relative_to(checkout)
+    if not relative.parts:
+        raise ResearchOutputPathError("research output cannot be the checkout root")
+    relative_name = relative.as_posix()
+    if (relative_name.startswith(":(")
+            or any(character in relative_name for character in "*?[\\")):
+        raise ResearchOutputPathError(
+            "research output path uses ambiguous Git path syntax; choose another directory"
+        )
+    try:
+        tracked_result = git("ls-files", "-z", "--cached", "--", ":(literal)" + relative_name)
+        if tracked_result.returncode != 0:
+            raise ResearchOutputPathError(
+                "cannot verify tracked files beneath the research output path; "
+                "choose an external directory"
+            )
+        if tracked_result.stdout:
+            raise ResearchOutputPathError(
+                "research output contains tracked source files; move those files or "
+                "choose an external output directory"
+            )
+        ignored = git("check-ignore", "-q", "--no-index", "--", relative_name)
+    except ResearchOutputPathError:
+        raise
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ResearchOutputPathError(
+            "cannot verify Git ignore status for in-checkout research output; "
+            "restore Git or choose an external directory"
+        ) from error
+    if ignored.returncode == 1:
+        raise ResearchOutputPathError(
+            "in-checkout research output must be covered by a Git ignore rule; "
+            "add this output directory to .gitignore or choose an external directory"
+        )
+    if ignored.returncode != 0:
+        raise ResearchOutputPathError(
+            "Git could not verify the in-checkout research output ignore rule; "
+            "choose an external directory"
+        )
+    return target, checkout, marker_identity
+
+
 @dataclass
 class SupervisorConfig:
     state_dir: Path
@@ -114,6 +302,9 @@ class SupervisorConfig:
     coverage_margin_lookahead: bool = False
     production_treatment: Path | None = None
     max_repair_attempts: int = 3
+    _research_checkout_root: Path | None = field(default=None, init=False, repr=False, compare=False)
+    _research_git_marker: tuple | None = field(default=None, init=False, repr=False, compare=False)
+    _research_checkout_checked: bool = field(default=False, init=False, repr=False, compare=False)
 
     def validate(self) -> None:
         if type(self.max_repair_attempts) is not int or not 1 <= self.max_repair_attempts <= 10:
@@ -167,6 +358,21 @@ class SupervisorConfig:
             if isinstance(error, ValueError) and "runtime exclusion" in str(error):
                 raise
             raise ValueError("Supervisor runtime exclusion paths cannot be resolved safely") from error
+        if self.research_dir is not None:
+            _, checkout, marker = _validate_research_output_path(
+                self.cwd, self.research_dir,
+                known_checkout=self._research_checkout_root,
+                known_marker=self._research_git_marker,
+            )
+            if checkout is not None:
+                self._research_checkout_root = checkout
+            if marker is not None:
+                self._research_git_marker = marker
+            self._research_checkout_checked = True
+        elif not self._research_checkout_checked:
+            self._research_checkout_root, self._research_git_marker = (
+                _discover_checkout_identity(self.cwd))
+            self._research_checkout_checked = True
 
 
 class Supervisor:
@@ -833,39 +1039,121 @@ class Supervisor:
     def launch(self, command: list[str], phase: str, prompt: Path | None = None) -> None:
         if self.remaining() <= 0 or self.stop_requested:
             return
-        environment = (self.gameplay_environment() if phase == "gameplay"
-                       else os.environ.copy())
-        if phase == "gameplay":
-            self._check_gameplay_model_binding(environment)
-        execution_id = str(uuid4())
-        if not self.transition("process_prepared", phase=phase, execution_id=execution_id):
-            return
-        self.output = (self.config.state_dir / f"{phase}.log").open("ab")
-        input_stream = prompt.open("rb") if prompt else subprocess.DEVNULL
-        temporary = self.config.cwd / "runs" / "tmp"
-        temporary.mkdir(parents=True, exist_ok=True)
-        environment["TMPDIR"] = str(temporary)
-        environment["PYTHONPATH"] = str(self.config.cwd / "src")
-        # Do not leak a gameplay context into repair tests or Git verification.
-        environment.pop(CONTEXT_ENV, None)
-        if phase == "gameplay":
-            environment[CONTEXT_ENV] = json.dumps({
-                "run_id": self.state["run_id"], "segment_id": self.state["segment_id"],
-                "execution_id": execution_id, "code_revision": self.state["code_revision"],
-            }, sort_keys=True)
+        binding_fd = None
         try:
-            self.process = self.popen(
-                command, cwd=self.config.cwd, stdin=input_stream,
-                stdout=self.output, stderr=subprocess.STDOUT, start_new_session=True,
-                env=environment,
-            )
+            if phase == "gameplay":
+                self.config.validate()
+                self._validate_selected_research_path(command)
+                binding_fd = self._pin_research_output_parent(command)
+            environment = (self.gameplay_environment() if phase == "gameplay"
+                           else os.environ.copy())
+            if phase == "gameplay":
+                environment.pop(RESEARCH_ROOT_FD_ENV, None)
+                if binding_fd is not None:
+                    environment[RESEARCH_ROOT_FD_ENV] = str(binding_fd)
+                    selected = self._selected_research_run_directory(command)
+                    try:
+                        validate_research_output_parent(selected, binding_fd)
+                    except ValueError as error:
+                        raise ResearchOutputPathError(str(error)) from error
+                self._check_gameplay_model_binding(environment)
+            execution_id = str(uuid4())
+            if not self.transition("process_prepared", phase=phase, execution_id=execution_id):
+                return
+            self.output = (self.config.state_dir / f"{phase}.log").open("ab")
+            input_stream = prompt.open("rb") if prompt else subprocess.DEVNULL
+            temporary = self.config.cwd / "runs" / "tmp"
+            temporary.mkdir(parents=True, exist_ok=True)
+            environment["TMPDIR"] = str(temporary)
+            environment["PYTHONPATH"] = str(self.config.cwd / "src")
+            # Do not leak a gameplay context into repair tests or Git verification.
+            environment.pop(CONTEXT_ENV, None)
+            if phase == "gameplay":
+                environment[CONTEXT_ENV] = json.dumps({
+                    "run_id": self.state["run_id"], "segment_id": self.state["segment_id"],
+                    "execution_id": execution_id, "code_revision": self.state["code_revision"],
+                }, sort_keys=True)
+            popen_options = {
+                "cwd": self.config.cwd, "stdin": input_stream,
+                "stdout": self.output, "stderr": subprocess.STDOUT,
+                "start_new_session": True, "env": environment,
+            }
+            if binding_fd is not None:
+                popen_options["pass_fds"] = (binding_fd,)
+            try:
+                self.process = self.popen(command, **popen_options)
+            finally:
+                if prompt:
+                    input_stream.close()
+            if binding_fd is not None:
+                os.close(binding_fd)
+                binding_fd = None
+            self.save(phase=phase, execution_id=execution_id, process={"pid": self.process.pid,
+                                          "identity": self.process_identity(self.process.pid)})
+            self.event("process_started", phase=phase, pid=self.process.pid,
+                       execution_id=execution_id, code_revision=self.state.get("code_revision"))
         finally:
-            if prompt:
-                input_stream.close()
-        self.save(phase=phase, execution_id=execution_id, process={"pid": self.process.pid,
-                                      "identity": self.process_identity(self.process.pid)})
-        self.event("process_started", phase=phase, pid=self.process.pid,
-                   execution_id=execution_id, code_revision=self.state.get("code_revision"))
+            if binding_fd is not None:
+                os.close(binding_fd)
+
+    def _selected_research_run_directory(self, command: list[str]) -> Path:
+        indices = [index for index, value in enumerate(command) if value == "--run-dir"]
+        if len(indices) != 1 or indices[0] + 1 >= len(command):
+            raise ResearchOutputPathError(
+                "gameplay command does not contain exactly one configured research output path"
+            )
+        return Path(command[indices[0] + 1])
+
+    def _pin_research_output_parent(self, command: list[str]) -> int | None:
+        if self.config.research_dir is None:
+            return None
+        if os.name == "nt":
+            raise ResearchOutputPathError(
+                "supervised research output binding is unavailable on Windows; "
+                "choose a supported POSIX runtime or run the CLI directly"
+            )
+        selected = self._selected_research_run_directory(command)
+        try:
+            parent_fd = open_research_output_parent(selected.parent)
+        except (OSError, ValueError) as error:
+            raise ResearchOutputPathError(
+                f"research output destination cannot be pinned safely ({type(error).__name__})"
+            ) from error
+        try:
+            # The descriptor is the launch binding. Revalidate policy against
+            # the now-existing directory and require the selected path to name
+            # that exact directory before environment resolution can run hooks.
+            self.config.validate()
+            self._validate_selected_research_path(command)
+            validate_research_output_parent(selected, parent_fd)
+            return parent_fd
+        except (OSError, ValueError) as error:
+            os.close(parent_fd)
+            if isinstance(error, ResearchOutputPathError):
+                raise
+            raise ResearchOutputPathError(
+                f"research output destination changed while it was being pinned ({type(error).__name__})"
+            ) from error
+
+    def _validate_selected_research_path(self, command: list[str]) -> None:
+        configured = self.config.research_dir
+        if configured is None:
+            return
+        selected = self._selected_research_run_directory(command)
+        try:
+            expected_parent = Path(configured).resolve(strict=False)
+            selected_parent = selected.parent.resolve(strict=False)
+            exists = selected.exists()
+        except (OSError, RuntimeError, TypeError, ValueError) as error:
+            raise ResearchOutputPathError(
+                "selected research output path changed or cannot be resolved safely"
+            ) from error
+        if (not selected.is_absolute() or selected_parent != expected_parent
+                or not selected.name.startswith("invocation-") or exists):
+            raise ResearchOutputPathError(
+                "selected research output path changed after command selection; "
+                "rebuild the gameplay command before launch"
+            )
 
     def stop_process(self) -> None:
         if self.process is not None:
@@ -992,6 +1280,7 @@ class Supervisor:
             raise ValueError("Live Jev credentials are required before gameplay can launch")
 
     def watch_game(self) -> str:
+        self.config.validate()
         checkpoint = self.checkpoint()
         revision = self.snapshot_revision()
         source_before = self.state.get("code_revision")
@@ -1005,16 +1294,20 @@ class Supervisor:
         if checkpoint["status"] != "running":
             self.save(last_valid_checkpoint=checkpoint)
             return checkpoint["status"]
+        command = self.gameplay_command()
         self.save(last_valid_checkpoint=checkpoint)
+        self.config.validate()
+        self._validate_selected_research_path(command)
         if not self.record_revision(revision, "gameplay_start",
                                     actor_type="unknown", intervention_type="unattributed_change"):
             return "stopped"
-        self.launch(self.gameplay_command(), "gameplay")
+        self.launch(command, "gameplay")
         if self.process is None:
             return "stopped" if self.stop_requested else "cutoff"
         last_change = self.clock()
         signature = self.config.checkpoint.stat().st_mtime_ns
         while self.remaining() > 0 and not self.stop_requested:
+            self.config.validate()
             try:
                 checkpoint = self.checkpoint()
                 changed = self.config.checkpoint.stat().st_mtime_ns
@@ -1757,6 +2050,9 @@ Only report repaired when every acceptance requirement is verified.
                         source_after=revision)
 
     def repair(self, reason: str) -> bool:
+        # A bad evidence destination must stop recovery before an interrupted
+        # attempt is closed or a new attempt is charged.
+        self.config.validate()
         self.close_interrupted_attempt()
         self.begin_repair(reason)
         if self.stop_requested:
@@ -1931,6 +2227,10 @@ Only report repaired when every acceptance requirement is verified.
                     else:
                         try:
                             reason = self.watch_game()
+                        except ResearchOutputPathError as error:
+                            print(f"Research output path rejected; stopping without repair ({error})",
+                                  file=sys.stderr, flush=True)
+                            return 2
                         except (OSError, ValueError) as error:
                             reason = f"gameplay_error: {error}"
                         finally:
@@ -1941,19 +2241,32 @@ Only report repaired when every acceptance requirement is verified.
                         return 1 if self.audit_failed else 0
                     if reason in {"cutoff", "stopped"}:
                         break
+                    try:
+                        self.config.validate()
+                    except ResearchOutputPathError as error:
+                        print(f"Research output path rejected; stopping without repair ({error})",
+                              file=sys.stderr, flush=True)
+                        return 2
                     failure_class = self.recovery_class(reason)
                     if failure_class != "source_defect":
                         return self.block_recovery(reason, failure_class)
                     self.begin_repair(reason)
                     accepted = False
                     while self.remaining() > 0 and not self.stop_requested and not accepted:
+                        research_path_invalid = False
                         try:
                             accepted = self.repair(reason)
+                        except ResearchOutputPathError as error:
+                            research_path_invalid = True
+                            print(f"Research output path rejected; stopping without another repair "
+                                  f"attempt ({error})", file=sys.stderr, flush=True)
+                            return 2
                         except (OSError, ValueError) as error:
                             self.event("repair_error", error=str(error))
                         finally:
                             self.stop_process()
-                            self.close_interrupted_attempt()
+                            if not research_path_invalid:
+                                self.close_interrupted_attempt()
                         if self.state.get("repair_account_blocked"):
                             return self.block_recovery(reason, "account_quota_blocked")
                         if (not accepted and self.state.get("incident_repair_attempts", 0)
