@@ -395,6 +395,14 @@ def attach(loop: Any, writer: EventWriter) -> None:
     class BackendObserver:
         def __init__(self, backend):
             self.backend = backend
+            # Async controller admission keys known MockBackend instances by
+            # their concrete session and transport. Keep that identity visible
+            # through this observer only for the explicitly supported mock
+            # type; an arbitrary wrapped backend must still fail closed.
+            from .backends.mock import MockBackend
+            if isinstance(backend, MockBackend):
+                self.actor_unit = 0
+                self._shared = backend
 
         def __getattr__(self, key):
             value = getattr(self.backend, key)
