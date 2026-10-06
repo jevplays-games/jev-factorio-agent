@@ -3934,6 +3934,10 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
         component_purpose = buffer_component_purpose(snapshot, catalog, plan)
         if component_purpose is not None:
             result[plan.id]['buffer_component_parent_purpose'] = component_purpose
+        from .buffer_demand import commissioning_purpose
+        commissioning = commissioning_purpose(snapshot, catalog, plan)
+        if commissioning is not None:
+            result[plan.id]['buffer_commissioning_parent_purpose'] = commissioning
         if bootstrap_pickup_start is not None:
             result[plan.id]['bootstrap_output_pickup_start_evidence'] = bootstrap_pickup_start
         construction = machine_construction_prerequisite(
