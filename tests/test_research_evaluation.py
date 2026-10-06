@@ -493,7 +493,15 @@ def test_reports_are_read_only_deterministic_and_typed(tmp_path, monkeypatch):
     for name, schema in TABLE_SCHEMAS.items():
         rows = [json.loads(line) for line in (output / "tables" / f"{name}.jsonl").read_text().splitlines()]
         assert all(set(row) == set(schema) for row in rows)
-    assert json.loads((output / "summary.json").read_text())["runs"][0] == result.summary
+    report_run = json.loads((output / "summary.json").read_text())["runs"][0]
+    assert report_run == result.summary
+    run_row = json.loads((output / "tables" / "runs.jsonl").read_text().splitlines()[0])
+    action_rows = [json.loads(line) for line in
+                   (output / "tables" / "actions.jsonl").read_text().splitlines()]
+    assert run_row["preflight_rejected_actions"] is None
+    assert all(row["preflight_rejected"] is None
+               and row["preflight_rejection_code"] is None for row in action_rows)
+    assert json.loads((output / "table_schema.json").read_text())["schema"] == "jev-factorio.tables.v2"
     assert 'CAST(NULL AS' in (output / "views.sql").read_text()
     assert not any("secret-sentinel" in p.read_text() for p in output.rglob("*") if p.is_file())
     with pytest.raises(EvidenceError, match="already exists"):

@@ -43,6 +43,49 @@ _OWNERSHIP_FIELDS = (
     "coal_supply_schema", "coal_kit_policy", "coal_economic_admission",
     "coal_targets", "coal_epoch", "coal_commitments", "coal_funding",
 )
+
+
+def _resolve_research_output_prefix(path: Path) -> Path:
+    """Resolve every existing path component strictly, retaining a missing suffix.
+
+    ``Path.resolve(strict=False)`` can suppress symlink-loop errors on newer
+    Python versions.  Research outputs may be new, so strict resolution of the
+    whole path is too restrictive; instead, resolve existing components one by
+    one and append only a suffix whose parents do not exist yet.
+    """
+    target = Path(path)
+    if not target.is_absolute():
+        target = Path.cwd() / target
+
+    prefix = Path(target.anchor)
+    prefix = prefix.resolve(strict=True)
+
+    missing: list[str] = []
+    for component in target.parts[1:]:
+        if component in ("", "."):
+            continue
+        if missing:
+            if component == "..":
+                raise ValueError(
+                    "research output path cannot traverse above a missing component"
+                )
+            missing.append(component)
+            continue
+        if component == "..":
+            prefix = (prefix / component).resolve(strict=True)
+            continue
+
+        candidate = prefix / component
+        try:
+            candidate.lstat()
+        except FileNotFoundError:
+            missing.append(component)
+            continue
+        prefix = candidate.resolve(strict=True)
+
+    if missing:
+        return prefix.joinpath(*missing)
+    return prefix
 _OWNERSHIP_FAMILIES = {
     "connector": {"connector_ownership"},
     "capital": {"capital_investment"},
@@ -143,7 +186,7 @@ def _validate_research_output_path(
         return None, known_checkout, known_marker
     try:
         working_root = cwd.resolve(strict=True)
-        target = Path(research_dir).resolve(strict=False)
+        target = _resolve_research_output_prefix(Path(research_dir))
         if target == working_root or working_root.is_relative_to(target):
             raise ResearchOutputPathError(
                 "research output cannot be the checkout or an ancestor of the checkout; "

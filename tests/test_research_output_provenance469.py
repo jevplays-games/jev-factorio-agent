@@ -347,6 +347,8 @@ def test_symlink_replacement_between_command_selection_and_launch_is_rejected(
     first = repo / "runs" / "first"
     second = repo / "runs" / "second"
     first.parent.mkdir(parents=True)
+    first.mkdir()
+    second.mkdir()
     alias = tmp_path / "research-alias"
     try:
         alias.symlink_to(first, target_is_directory=True)
@@ -417,6 +419,43 @@ def test_symlink_loop_is_rejected_as_ambiguous_research_path(tmp_path):
     config = make_config(tmp_path, repo, loop)
     with pytest.raises(ValueError, match="research.*resolve|research.*safe|path"):
         config.validate()
+
+
+def test_intermediate_symlink_loop_is_rejected_as_ambiguous_research_path(tmp_path):
+    repo = make_repo(tmp_path)
+    first = tmp_path / "loop-a"
+    second = tmp_path / "loop-b"
+    try:
+        first.symlink_to(second, target_is_directory=True)
+        second.symlink_to(first, target_is_directory=True)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip(f"symlink creation is unavailable on this platform: {error}")
+    config = make_config(tmp_path, repo, first / "future-run")
+    with pytest.raises(ValueError, match="research.*resolve|research.*safe|path"):
+        config.validate()
+
+
+def test_dangling_research_symlink_is_rejected_as_ambiguous_path(tmp_path):
+    repo = make_repo(tmp_path)
+    dangling = tmp_path / "dangling-output"
+    try:
+        dangling.symlink_to(tmp_path / "not-created", target_is_directory=True)
+    except (OSError, NotImplementedError) as error:
+        pytest.skip(f"symlink creation is unavailable on this platform: {error}")
+    config = make_config(tmp_path, repo, dangling)
+    with pytest.raises(ValueError, match="research.*resolve|research.*safe|path"):
+        config.validate()
+
+
+def test_nonexistent_nested_external_research_directory_remains_supported(tmp_path):
+    repo = make_repo(tmp_path)
+    external = tmp_path / "new-evidence" / "not-created" / "campaign"
+    config = make_config(tmp_path, repo, external)
+
+    config.validate()
+
+    assert not external.exists()
+    assert external.parent == tmp_path / "new-evidence" / "not-created"
 
 
 def test_path_invalidated_after_initialize_stops_without_repair_or_obligation_mutation(

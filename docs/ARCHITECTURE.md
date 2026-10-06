@@ -94,6 +94,36 @@ a cent per call.
    inventory changed). Failures go into `alerts`, which the next Jev call
    sees as state.
 
+### Native item transfers
+
+For ordinary factory roles, `NativeFactory` approaches the entity and calls the
+bundled Lua `campaign.transfer` endpoint inside a `transfer_rpc` phase. The
+endpoint uses explicit inventories: inserts draw from the bound character's
+main inventory; extracts draw from the machine output inventory (or its chest
+inventory fallback) and deliver to character main. Coal sent to a burner goes
+to its fuel inventory before the furnace-source rule; other furnace ingredients
+go to furnace source, lab items to lab input, assembler and rocket-silo items to
+their input inventory, and other burner items to fuel. The qualified bootstrap
+output extractor is a separate endpoint.
+
+Lua checks reach, source quantity, and full requested destination capacity
+before removing or inserting items. A short destination therefore causes no
+inventory mutation and creates no receipt at that endpoint. A later partial
+insert attempts to refund the unaccepted amount; when that refund succeeds, Lua
+records the inserted quantity in the receipt and then raises. A failed refund
+can happen before receipt creation, so an absent receipt after dispatch is not
+proof of no effect. The Python controller does not yet expose capacity
+rejection as a typed native result: generic transfer errors remain ambiguous
+until exact evidence permits reconciliation. See [prepared transfer
+reconciliation](prepared-transfer-reconciliation.md) for the current recovery
+rules. Typed capacity classification and transfer-budget followups are tracked
+separately in [#478](https://github.com/jevplays-games/jev-factorio-agent/issues/478)
+and [#479](https://github.com/jevplays-games/jev-factorio-agent/issues/479);
+this description makes no native-acceptance claim. The endpoint is in
+[`factory.lua`](../src/jev_factorio/lua/factory.lua#L253-L303), its ordinary
+adapter call is in [`NativeFactory`](../src/jev_factorio/backends/native_factory.py#L387-L408),
+and the controller's receipt checks are in [`controller.py`](../src/jev_factorio/controller.py#L1228-L1310).
+
 ### Frequency and cost
 - Cadence: one decision every ~2 s game time; slow to 5-10 s when
   `urgency` is "fine as-is" and nothing changed, wake immediately on
