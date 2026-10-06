@@ -58,7 +58,7 @@ directories instead of starting another controller on the idle dedicated VM.
 6. Continue the [persistent progress monitor](PERSISTENT_PROGRESS_MONITOR.md)
    and active investigation across later production stages. Distinguish a
    monitor alert, policy hold and process exit. Monitor expiry ends the watch,
-   not an until-complete game. Never restart a shared host or WSL to repair an
+not an until-complete game. Never restart a shared host or WSL to repair an
    individual service.
 
 ## Verified deployment and limits
@@ -123,3 +123,6 @@ multi-day reliability remained unproven. The later disk expansion below succeede
 without restarting the controller and did not release this JEV hold.
 
 For multi-day capacity planning, see [storage headroom and guarded online expansion](CONTINUOUS_STORAGE_HEADROOM.md).
+
+For the separately reproduced missing belt-craft witness, see
+[bounded research-horizon evidence](HORIZON_BILL_EVIDENCE.md).

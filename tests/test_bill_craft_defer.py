@@ -187,7 +187,9 @@ def test_deferment_refuses_gather_of_craft_byproduct_locked_by_native_job():
     data.recipes['transport-belt']['products'].append(
         {'type': 'item', 'name': 'iron-ore', 'amount': 1, 'probability': 1})
     support = context(state, data, plans)
-    assert support['candidate_evidence'][plans[1].id]['shared_bill_craft']
+    # The altered byproduct makes this material expansion unsupported. Native
+    # craft output can remain known, but the shared bill must fail closed.
+    assert support['candidate_evidence'][plans[1].id]['shared_bill_craft'] is None
     assert support['candidate_evidence'][plans[1].id]['craft_start_evidence'][
         'expected_products_after_native_verification'] == {
             'transport-belt': 4, 'iron-ore': 2}

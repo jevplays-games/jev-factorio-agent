@@ -1447,6 +1447,35 @@ def _receiver_capacity_start_evidence(snapshot, catalog, role, item, quantity, s
     }
 
 
+def _current_shared_bill(snapshot, catalog, plan, local):
+    """Recompute the ready-work horizon, independently of the immediate plan bill.
+
+    ``materials.batches`` describes the first recursive local plan. Ready-work
+    targets can also cover the existing bounded research horizon. That smaller
+    bill cannot authenticate (or disprove) a horizon craft's batch count.
+    """
+    from .demand import SupplyLedger, horizon_demands
+
+    try:
+        item, amount = local['item'], local['inventory_target']
+        if (not isinstance(item, str) or not item or type(amount) is not int
+                or amount <= 0 or local.get('ultimate_goal') != plan.goal
+                or not isinstance((plan.materials or {}).get('batches'), dict)):
+            return None
+        demands = horizon_demands(snapshot, catalog, plan.goal, item, amount)
+        bill = catalog.material_demands(
+            demands, SupplyLedger.capture(snapshot, catalog).forecast_stock(),
+            snapshot.researched)
+        craft_item = plan.steps[0].item
+        target = sum(math.ceil(ingredient['amount'] * batches)
+                     for name, batches in bill.batches.items()
+                     for ingredient in catalog.recipes[name]['ingredients']
+                     if ingredient['type'] == 'item' and ingredient['name'] == craft_item)
+        return {'demands': demands, 'batches': bill.batches, 'target': target}
+    except (KeyError, TypeError, ValueError, AttributeError, ArithmeticError):
+        return None
+
+
 def _recipe_input_transfer_start_evidence(snapshot, catalog, plan, *, path_root=None,
                                           require_receiver_capacity=False, include_dependency_chain=False):
     """Bind a paid recipe input transfer to current native facts, not future output."""
@@ -3483,8 +3512,7 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
             bill_inventory_target = bill.get('bill_inventory_target')
             carried = bill.get('inventory_now')
             produced = craft_start['expected_products_after_native_verification'].get(step.item)
-            bill_batches = (plan.materials or {}).get('batches')
-            bill_batches = bill_batches if isinstance(bill_batches, dict) else {}
+            current_bill = _current_shared_bill(snapshot, catalog, plan, local)
             if (step.action == 'factory_craft_job'
                     and isinstance(parameters.get('receipt'), str)
                     and bool(parameters['receipt'])
@@ -3500,7 +3528,9 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
                     and bill.get('craft_item') == step.item
                     and type(bill.get('local_target_amount')) is int
                     and bill['local_target_amount'] > 0
-                    and bill_batches.get(parameters.get('recipe')) == parameters.get('batches')
+                    and current_bill is not None
+                    and current_bill['target'] == bill_inventory_target
+                    and current_bill['batches'].get(parameters.get('recipe')) == parameters.get('batches')
                     and type(bill_inventory_target) is int and bill_inventory_target > 0
                     and type(carried) is int and 0 <= carried < bill_inventory_target
                     and snapshot.inventory.get(step.item, 0) == carried
@@ -3516,6 +3546,7 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
                     'unfilled_bill_units': bill_inventory_target - carried,
                     'expected_products_after_native_verification': produced,
                     'basis': 'current_catalog_shared_material_bill_and_native_recipe',
+                    'bounded_workload_demands': dict(current_bill['demands']),
                     'forecast_is_not_paid_stock_or_completed_output': True,
                     'background_overlap_requires_native_admission': True,
                 }
