@@ -4422,19 +4422,11 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
             plan, evidence.get(plan.id), snapshot.tick, goal)
         if target is not None:
             candidate_targets[plan.id] = target
-    try:
-        current_science_targets = {
-            row['item'] for row in research_schedule(snapshot, catalog) if row.get('due') is True
-        }
-    except (ValueError, KeyError, TypeError, AttributeError):
-        current_science_targets = set()
-    current_multi_science = (
-        goal == 'rocket_launch' and len(current_science_targets) > 1)
     target_identities = {
         json.dumps(target, sort_keys=True, ensure_ascii=False, allow_nan=False)
         for target in candidate_targets.values()
     }
-    candidate_target_mode = (current_multi_science and bool(plans) and (
+    candidate_target_mode = (bool(plans) and (
         len(candidate_targets) != len(plans) or len(target_identities) != 1))
     if candidate_target_mode:
         primary = None
@@ -4456,5 +4448,6 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
         'candidate_evidence': evidence,
         'deterministic_ranking': sorted(evidence, key=lambda key: ranking_key(evidence[key])),
         'selection_contract': {'schema': 1, 'observed_tick': snapshot.tick,
+                               'candidate_objective_binding': 2,
                                'heuristics_are_not_native_timing_measurements': True},
     }

@@ -29,6 +29,23 @@ Gathering, pickup and crafting can retain the same component purpose as stock
 changes. Utility-power prerequisites keep their existing dedicated evidence.
 This does not establish construction, flow, science output or a JEV approval.
 
+V32 then exposed another request inconsistency. After filtering, a science-pack
+craft retained the earlier burner-inserter primary objective and construction
+instruction. JEV accepted the craft's usefulness but returned choice confidence
+0.43, below the unchanged 0.45 floor. The existing controller later resumed
+without intervention. The contradictory request is proven; its exact effect on
+JEV's confidence cannot be established from that single response.
+
+New scheduling requests version candidate-objective binding. Different component
+and production targets receive separate, current candidate entries even when
+only one science type is due. After an alternative batch, byte/candidate limit,
+or assessment rejection removes candidates, the retained targets are revalidated.
+A shared remaining target replaces the removed candidate's objective and wording;
+missing or mismatched targets are never borrowed. Qualified shared-parent
+comparisons retain their independent evidence requirements. Unversioned saved
+requests still reconstruct exactly as originally sent, including any old defect;
+answers, hashes and uncertain provider calls are never rewritten or replayed.
+
 ## Efficient diagnosis and recovery
 
 1. Read the owner status, current checkpoint and last settled decision. Distinguish
@@ -37,7 +54,9 @@ This does not establish construction, flow, science output or a JEV approval.
    failure counters. Limit guest-agent responses; never return entire logs.
 3. Replay candidate compilation offline with the composed production planner,
    retained capital failures and the changed-source planning boundary. Inspect
-   each rejection and the recipe or ownership proof it lacks.
+   each rejection and the recipe or ownership proof it lacks. Compare the final
+   choice request's objective with every retained candidate's own target; inspect
+   both stages rather than assuming their contexts stayed aligned.
 4. Verify the corrected request under the actual 48,000-byte bound. Test negative
    ownership, receipt, catalog, stock and demand cases as well as hypothetical
    receipt-qualified continuations. A mock answer is not native acceptance.

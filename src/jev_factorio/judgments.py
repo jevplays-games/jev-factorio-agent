@@ -1627,6 +1627,12 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
             and contract.get('heuristics_are_not_native_timing_measurements') is True)
         qualified_shared_parent = _qualified_shared_parent_comparison(
             facts, selected, evidence)
+        # Version the projection in saved requests. Unmarked durable decisions
+        # must still reconstruct their original questions exactly on restart.
+        bind_retained_targets = (
+            current_contract
+            and type(contract.get('candidate_objective_binding')) is int
+            and contract['candidate_objective_binding'] == 2)
         candidate_targets = {}
         if current_contract and isinstance(source_goal, str):
             for plan in selected:
@@ -1639,7 +1645,7 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
             for target in candidate_targets.values()
         }
         candidate_target_mode = (
-            qualified_shared_parent is None and had_candidate_targets
+            qualified_shared_parent is None and (had_candidate_targets or bind_retained_targets)
             and (not candidate_targets or len(candidate_targets) != len(selected)
                  or len(target_identities) != 1))
         if isinstance(local, dict):
@@ -1655,14 +1661,17 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     '`primary_target` applies to all candidates; a missing or mismatched entry '
                     'does not establish a target. Native preconditions, receipts and fresh '
                     'postconditions remain authoritative.')
-            elif (qualified_shared_parent is None and had_candidate_targets
+            elif (qualified_shared_parent is None
+                  and (had_candidate_targets or bind_retained_targets)
                   and len(candidate_targets) == len(selected)
                   and len(target_identities) == 1):
-                local['primary_target'] = deepcopy(next(iter(candidate_targets.values())))
-                local['instruction'] = (
-                    'The retained candidates share this current local target. Judge each plan '
-                    'against `primary_target` together with its own matching candidate evidence; '
-                    'native preconditions, receipts and fresh postconditions remain authoritative.')
+                retained_target = next(iter(candidate_targets.values()))
+                if had_candidate_targets or local.get('primary_target') != retained_target:
+                    local['primary_target'] = deepcopy(retained_target)
+                    local['instruction'] = (
+                        'The retained candidates share this current local target. Judge each plan '
+                        'against `primary_target` together with its own matching candidate evidence; '
+                        'native preconditions, receipts and fresh postconditions remain authoritative.')
             elif had_candidate_targets and not candidate_targets and local.get('primary_target') is None:
                 local['instruction'] = (
                     'No current candidate-local target is qualified for the offered plans. '
