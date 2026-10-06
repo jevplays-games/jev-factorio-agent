@@ -224,7 +224,7 @@ def frontier(loop, snapshot):
             or boiler and boiler.get('fuel', {}).get('coal', 0) < 5):
         return safe, blocker
     evidence = candidate_evidence(snapshot, loop.catalog, safe)
-    urgent = [p for p in safe if evidence[p.id]['urgency'] >= 2]
+    urgent = capital.urgent_frontier(safe, evidence)
     if urgent:
         return urgent, blocker
     if state:
