@@ -9,6 +9,7 @@ import math
 from types import SimpleNamespace
 from typing import Any
 
+from ..craft_jobs import parse_craft_actor_observation_failure
 from ..observation import parse_snapshot
 from ..state import GameSnapshot
 
@@ -20,6 +21,35 @@ EXPANDED_ANCHOR_BOUNDS = {
     **BOUNDS, 'anchor_radius': 1024, 'water_radius': 256,
     'oil_query_radii': [256, 512, 1024],
 }
+
+
+def _actor_guarded_command(command: str) -> str:
+    """Bind the paid-craft marker to the fair.actor call at this command boundary."""
+    return '''local storage=jev_fle_runtime
+local actor_ok, actor_or_error=pcall(storage.fair.actor)
+if not actor_ok then
+    local message=type(actor_or_error)=="string" and actor_or_error or ""
+    local code
+    if string.find(message,"Fair play requires the original connected character",1,true) then
+        code="actor_unavailable"
+    elseif string.find(message,"Fair player binding changed",1,true) then
+        code="actor_changed"
+    elseif string.find(message,"Fair play requires normal game speed",1,true) then
+        code="actor_policy_changed"
+    end
+    local jobs=storage.campaign and storage.campaign.craft_jobs
+    local job=type(jobs)=="table" and jobs.job or nil
+    if code and type(job)=="table" and job.paid==true
+            and type(job.id)=="string" and #job.id>0 and #job.id<=128 then
+        rcon.print("JEV_CRAFT_OBSERVATION_FAILURE|"..helpers.table_to_json({
+            schema=1,receipt=job.id,code=code
+        }))
+    else
+        error(actor_or_error)
+    end
+else
+''' + command + '''
+end'''
 
 
 def _map(value: Any, label: str, limit: int = 4096) -> dict:
@@ -122,7 +152,11 @@ def observe_atomic(native: Any, snapshot: GameSnapshot) -> GameSnapshot:
     from .native_bootstrap_output import decode as decode_bootstrap
     from .native_actor_capacity import observation_command as actor_capacity_command
     from .native_actor_capacity import decode as decode_actor_capacity
-    raw = native.command(actor_capacity_command(bootstrap_command(observation_command(native))))
+    command = actor_capacity_command(bootstrap_command(observation_command(native)))
+    raw = native.command(_actor_guarded_command(command))
+    actor_failure = parse_craft_actor_observation_failure(raw)
+    if actor_failure is not None:
+        raise actor_failure
     result = parse_snapshot(raw, backend._observation_profile, schemas=(2,))
     session = result.get('session_id')
     if not isinstance(session, str) or not session or len(session) > 128:

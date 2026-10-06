@@ -11,7 +11,9 @@ from pathlib import Path
 from uuid import uuid4
 
 from .controller import HierarchicalLoop
-from .craft_jobs import CraftJob, InvalidCraftEvidence
+from .craft_jobs import (
+    CraftActorObservationFailure, CraftJob, InvalidCraftEvidence,
+)
 from .memory import CampaignMemory, retain_latest_craft
 from .planning.background_work import (
     RESEARCH_PREFETCH_BINDING, background_wait, independent_candidates,
@@ -22,6 +24,9 @@ from .skills import Plan, Step
 from .telemetry import fingerprint, phase, utc_now, validate_attempt
 
 _BACKGROUND_WAIT_ROLLOVER = "background_wait_rollover"
+_CRAFT_ACTOR_OBSERVATION_REASON = (
+    "Original craft actor could not be observed; preserve the craft obligation for reconciliation"
+)
 
 
 def _craft_job_step_fingerprint(job: CraftJob) -> str:
@@ -208,10 +213,87 @@ class BackgroundWorkLoop(HierarchicalLoop):
         data = self.memory.background_job if self.memory else None
         return CraftJob.from_dict(data) if data is not None else None
 
+    def _craft_actor_observation_context(self) -> dict | None:
+        """Return only a checkpoint-bound paid craft obligation eligible for this failure."""
+        memory = self.memory
+        if memory is None:
+            return None
+        if memory.background_job is not None:
+            try:
+                job = CraftJob.from_dict(memory.background_job)
+                attempt = memory.background_attempt
+                if (not isinstance(attempt, dict)
+                        or attempt.get("action") != "factory_craft_job"
+                        or attempt.get("receipt") != job.parameters["receipt"]
+                        or attempt.get("plan_id") != job.plan_id):
+                    return None
+                validate_attempt(attempt)
+                return {"kind": "background", "receipt": job.parameters["receipt"],
+                        "plan_id": job.plan_id, "attempt_id": attempt["id"]}
+            except (InvalidCraftEvidence, KeyError, TypeError, ValueError):
+                return None
+        pending, attempt, active_plan = memory.pending, memory.attempt, memory.active_plan
+        if (not isinstance(pending, dict) or pending.get("action") != "factory_craft_job"
+                or pending.get("dispatch") not in {"ambiguous", "returned"}
+                or not isinstance(attempt, dict) or not isinstance(active_plan, dict)):
+            return None
+        try:
+            plan = Plan.from_dict(active_plan)
+            if not 0 <= memory.step_index < len(plan.steps):
+                return None
+            step = plan.steps[memory.step_index]
+            parameters = step.parameters
+            receipt = parameters.get("receipt") if isinstance(parameters, dict) else None
+            if (step.action != "factory_craft_job" or not isinstance(receipt, str)
+                    or not receipt or len(receipt) > 128 or attempt.get("action") != step.action
+                    or attempt.get("plan_id") != plan.id
+                    or attempt.get("step_index") != memory.step_index
+                    or attempt.get("receipt") != receipt):
+                return None
+            validate_attempt(attempt)
+            return {"kind": "pending", "receipt": receipt, "plan_id": plan.id,
+                    "attempt_id": attempt["id"]}
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return None
+
+    def _retain_craft_actor_observation_failure(self, context: dict, code: str) -> None:
+        """Persist uncertainty without resolving, rewriting, or releasing the craft obligation."""
+        if (self.memory.status == "uncertain"
+                and self.memory.reason == _CRAFT_ACTOR_OBSERVATION_REASON):
+            return
+        prior_reason = self.memory.reason if self.memory.status == "uncertain" else ""
+        self.memory.status = "uncertain"
+        self.memory.reason = _CRAFT_ACTOR_OBSERVATION_REASON
+        self.memory.event(
+            "craft_actor_observation_uncertain", receipt=context["receipt"],
+            plan=context["plan_id"], attempt_id=context["attempt_id"],
+            obligation=context["kind"], code=code, tick=self.memory.last_tick,
+            prior_reason=prior_reason,
+        )
+        self._save()
+
     def _observe(self, stage="observe"):
         if self._save_poisoned:
             raise RuntimeError("Checkpoint persistence failed; reconstruct before continuing")
-        snapshot = super()._observe(stage)
+        context = self._craft_actor_observation_context()
+        try:
+            snapshot = super()._observe(stage)
+        except Exception as error:
+            code = error.code if isinstance(error, CraftActorObservationFailure) else None
+            if (context is None or code is None
+                    or isinstance(error, CraftActorObservationFailure)
+                    and error.receipt is not None and error.receipt != context["receipt"]):
+                raise
+            self._retain_craft_actor_observation_failure(context, code)
+            raise CraftActorObservationFailure(code, context["receipt"]) from error
+        if (self.memory.status == "uncertain"
+                and self.memory.reason == _CRAFT_ACTOR_OBSERVATION_REASON):
+            # A later readable snapshot cannot adopt completion after the actor
+            # binding failed. Keep every receipt and attempt byte-for-byte held.
+            self._last_background_observation = {
+                "background_state": "uncertain", "verified_attempt_added": False,
+            }
+            return snapshot
         job = self._job()
         if job:
             attempt = self.memory.background_attempt
@@ -301,7 +383,10 @@ class BackgroundWorkLoop(HierarchicalLoop):
 
     def _execution_barrier(self, snapshot) -> bool:
         job = self._job()
-        return (self._save_poisoned or bool(job and job.failed)
+        return (self._save_poisoned
+                or (self.memory.status == "uncertain"
+                    and self.memory.reason == _CRAFT_ACTOR_OBSERVATION_REASON)
+                or bool(job and job.failed)
                 or super()._execution_barrier(snapshot))
 
     def _step_allowed(self, step, snapshot) -> bool:

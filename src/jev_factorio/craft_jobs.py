@@ -5,12 +5,69 @@ production. No function here contacts the game or authorizes replay.
 """
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 
 
 class InvalidCraftEvidence(ValueError):
     """Missing, inconsistent or regressed native evidence."""
+
+
+_ACTOR_OBSERVATION_CODES = frozenset({
+    "actor_unavailable", "actor_changed", "actor_policy_changed",
+})
+_ACTOR_OBSERVATION_MARKER = "JEV_CRAFT_OBSERVATION_FAILURE|"
+
+
+class CraftActorObservationFailure(InvalidCraftEvidence):
+    """A native observation could not pass the original-player safety guard."""
+
+    def __init__(self, code: str, receipt: str | None = None) -> None:
+        if type(code) is not str or code not in _ACTOR_OBSERVATION_CODES:
+            raise ValueError("Unknown craft actor observation failure")
+        if receipt is not None:
+            identifier(receipt)
+        self.code = code
+        self.receipt = receipt
+        super().__init__("Original craft actor could not be observed")
+
+
+def craft_actor_observation_failure(value: object) -> CraftActorObservationFailure:
+    """Parse the bounded native failure marker without accepting raw Lua errors."""
+    if (not isinstance(value, dict) or set(value) != {"schema", "receipt", "code"}
+            or type(value.get("schema")) is not int or value["schema"] != 1
+            or type(value.get("code")) is not str
+            or value["code"] not in _ACTOR_OBSERVATION_CODES):
+        raise InvalidCraftEvidence("Invalid craft actor observation marker")
+    return CraftActorObservationFailure(value["code"], identifier(value["receipt"]))
+
+
+def parse_craft_actor_observation_failure(raw: object) -> CraftActorObservationFailure | None:
+    """Decode one exact marker line; never infer actor failures from free-form errors."""
+    if not isinstance(raw, str):
+        return None
+    lines = [line for line in raw.splitlines() if line.strip()]
+    marker_lines = [line for line in lines if line.startswith(_ACTOR_OBSERVATION_MARKER)]
+    if not marker_lines:
+        return None
+    if len(lines) != 1 or len(marker_lines) != 1 or len(raw) > 4096:
+        raise InvalidCraftEvidence("Ambiguous craft actor observation marker")
+
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("Duplicate craft actor marker field")
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(
+            marker_lines[0][len(_ACTOR_OBSERVATION_MARKER):], object_pairs_hook=unique_object)
+    except (RecursionError, TypeError, ValueError) as error:
+        raise InvalidCraftEvidence("Invalid craft actor observation marker") from error
+    return craft_actor_observation_failure(value)
 
 
 def natural(value: object, *, positive: bool = False) -> int:

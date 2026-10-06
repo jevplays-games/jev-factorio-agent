@@ -10,7 +10,29 @@ local function finish(timer, name)
 end
 campaign.observation_snapshot = function(generation)
     assert(type(generation) == "number" and generation >= 0 and generation % 1 == 0)
-    local player = storage.fair.actor() -- original character, connected, non-cheat, speed=1
+    local actor_ok, player = pcall(storage.fair.actor)
+    if not actor_ok then
+        local message = type(player) == "string" and player or ""
+        local code
+        if string.find(message, "Fair play requires the original connected character", 1, true) then
+            code = "actor_unavailable"
+        elseif string.find(message, "Fair player binding changed", 1, true) then
+            code = "actor_changed"
+        elseif string.find(message, "Fair play requires normal game speed", 1, true) then
+            code = "actor_policy_changed"
+        end
+        local job = storage.campaign.craft_jobs and storage.campaign.craft_jobs.job
+        if (code and type(job) == "table" and job.paid == true
+                and type(job.id) == "string" and #job.id > 0 and #job.id <= 128) then
+            rcon.print("JEV_CRAFT_OBSERVATION_FAILURE|" .. helpers.table_to_json({
+                schema = 1, receipt = job.id, code = code
+            }))
+            return
+        end
+        error(player)
+    end
+    -- This is still the original character observation; the paid-craft marker
+    -- above contains no replacement snapshot and does not relax fair.actor.
     local timer = profiler()
     local factory = campaign.observe() -- includes all currently enabled capability wrappers
     finish(timer, "campaign_snapshot")
