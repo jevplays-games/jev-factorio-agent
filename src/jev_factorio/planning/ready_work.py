@@ -78,12 +78,10 @@ class ReadyWorkPlanner(EconomicProduction, FactoryPlanner):
         if (sites.get('protocol') != 1 or sites.get('session_id') != self.snapshot.session_id
                 or sites.get('tick') != self.snapshot.tick):
             raise ValueError('Furnace ownership observation is stale')
-        sources = sites.get('sources')
-        owned = sources.get(role) if isinstance(sources, dict) else None
-        unit = machine.get('unit_number')
-        if (not isinstance(owned, dict) or owned.get('state') != 'owned'
-                or type(unit) is not int or unit <= 0
-                or owned.get('source_unit') != unit):
+        # Ore-site surveys cover only ore furnaces. Other registered recipe
+        # furnaces retain native role identity and catalog capability checks.
+        from .decision_support import _recipe_source_matches
+        if not _recipe_source_matches(self.snapshot, self.catalog, role, machine):
             raise ValueError('Furnace fuel service requires current owned source identity')
         fuel = machine.get('fuel')
         if (not isinstance(fuel, dict) or type(fuel.get('coal', 0)) is not int

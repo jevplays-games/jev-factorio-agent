@@ -13,6 +13,7 @@ from .telemetry import fingerprint, make_attempt, validate_attempt
 _BLOCKED_REEVALUATION_REASONS = frozenset({
     "Candidate evidence insufficient", "low choice confidence",
     "Current native boiler identity and coal stock are required",
+    "Furnace fuel service requires current owned source identity",
 })
 
 
