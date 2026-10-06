@@ -16,6 +16,7 @@ from jev_factorio.backends.native_attachment import (
     PINNED_ASSETS, PINNED_SOURCE_COMMIT, PINNED_SOURCE_TREE, PROBE,
     readback, require_asset, prepare_install_command, NATIVE_SCHEMA,
     _installer_scripts,
+    _asset_source,
 )
 from jev_factorio.backends.output_buffers import OutputBufferFactory
 from jev_factorio.backends.input_routes import InputRouteFactory
@@ -94,7 +95,16 @@ def test_preflight_is_fixed_read_only_query_and_rejects_partial_chain(tmp_path, 
 
 
 def test_resume_skips_fair_bind_and_outer_lua_reinstallation():
-    backend = SimpleNamespace(_native_attachment=qualified())
+    attachment = qualified()
+    # A current-source positive control needs an exact installed manifest.
+    # The historic pinned installation retains its original Lua revision.
+    attachment['native_installation'] = {
+        'schema': NATIVE_SCHEMA, 'profile': False,
+        'session_id': attachment['session_id'], 'actor_unit': attachment['actor_unit'],
+        'assets': {name: hashlib.sha256(_asset_source(name).read_bytes()).hexdigest()
+                   for name, present in attachment['modules'].items() if present},
+    }
+    backend = SimpleNamespace(_native_attachment=attachment)
     backend._native_attachment['solid_intents'] = []
     fair = FairActions(backend)
     assert fair.backend is backend
@@ -117,16 +127,23 @@ def test_resume_skips_fair_bind_and_outer_lua_reinstallation():
 
 def test_source_change_or_missing_capability_cannot_reattach(monkeypatch):
     attachment = qualified()
-    assert require_asset(attachment, 'fair_actions') is True
+    # The actor-cleanup revision must not silently replace a pinned installation.
+    with pytest.raises(RuntimeError, match='Lua source differs'):
+        require_asset(attachment, 'fair_actions')
     # PR #155 changed factory.lua; the retained e759 source-bound path cannot
-    # silently acquire those connector changes.
+    # silently acquire those connector changes either.
     with pytest.raises(RuntimeError, match='Lua source differs'):
         require_asset(attachment, 'factory')
+    attachment['native_installation'] = {
+        'assets': {'fair_actions': hashlib.sha256(
+            files('jev_factorio').joinpath('lua/fair_actions.lua').read_bytes()).hexdigest()},
+    }
+    assert require_asset(attachment, 'fair_actions') is True
     attachment['modules']['fair_actions'] = False
     with pytest.raises(RuntimeError, match='not installed'):
         require_asset(attachment, 'fair_actions')
     attachment['modules']['fair_actions'] = True
-    monkeypatch.setitem(PINNED_ASSETS, 'fair_actions', '0' * 64)
+    monkeypatch.setitem(attachment['native_installation']['assets'], 'fair_actions', '0' * 64)
     with pytest.raises(RuntimeError, match='Lua source differs'):
         require_asset(attachment, 'fair_actions')
 

@@ -44,6 +44,10 @@ fair.actor = function()
     assert(player and player.connected and character and character.valid,
         "Fair play requires the original connected character")
     assert(player.character == character, "Fair player binding changed")
+    local controller, controllers = player.controller_type, defines.controllers
+    assert(controller == nil or controller == controllers.character
+        or controller == controllers.god or controller == controllers.editor,
+        "Fair player controller does not support input")
     assert(game.speed == 1 and not player.cheat_mode, "Fair play requires normal game speed")
     return player
 end

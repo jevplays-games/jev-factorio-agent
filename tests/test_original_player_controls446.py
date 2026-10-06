@@ -401,6 +401,36 @@ def test_cleanup_setter_fault_is_reported_after_failed_job_is_terminal(
     assert runtime.eval("player.mining_state.mining") is False
 
 
+@pytest.mark.parametrize("mode", ["spectator", "ghost", "remote", "cutscene"])
+@pytest.mark.parametrize("kind", ["walk", "mine"])
+def test_unsupported_controller_with_original_character_fails_before_active_input_write(
+    fair_runtime, mode, kind
+):
+    runtime = fair_runtime
+    if kind == "walk":
+        _start_walking(runtime)
+    else:
+        runtime.execute('storage.fair.begin_mine({x = 2, y = 0}, "coal", 2)')
+    runtime.execute(f"""
+        original_unit = storage.fair.job.unit
+        original_lease = storage.fair.job.lease
+        original_request = storage.fair.job.request
+        setter_attempts = {{}}
+        player.controller_type = defines.controllers.{mode}
+        handler_ok = pcall(handlers[1], {{}})
+    """)
+    assert runtime.eval("handler_ok") is True
+    assert runtime.eval("storage.fair.job.status") == "failed"
+    assert runtime.eval("storage.fair.job.error") == "Fair player/session invariant failed"
+    assert runtime.eval("storage.fair.job.unit == original_unit") is True
+    assert runtime.eval("storage.fair.job.lease == original_lease") is True
+    assert runtime.eval("storage.fair.job.request == original_request") is True
+    assert runtime.eval("player.character == character") is True
+    assert runtime.eval("storage.agent_characters[1] == character") is True
+    assert runtime.eval("#setter_attempts") == 0
+    assert runtime.eval("storage.fair.job.cleanup_result") == "skipped:unsupported_controller"
+
+
 def test_cleanup_fault_cannot_turn_reached_goal_into_completed_job(fair_runtime):
     runtime = fair_runtime
     _start_walking(runtime)
