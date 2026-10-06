@@ -84,6 +84,10 @@ def settled_factory_guards(output_commitments=None):
     if not output_commitments:
         return SETTLED_FACTORY_GUARDS
     from .native_paid_output_attachment import PAID_OUTPUT_GUARDS
+    from .native_unspent_input_attachment import UNSPENT_INPUT_GUARDS
     empty_buffers = 'assert(b and b.protocol==1 and empty(b.cells) and type(b.offers)=="table")'
+    empty_inputs = 'assert(i and i.protocol==1 and empty(i.cells) and empty(i.offers))'
     assert SETTLED_FACTORY_GUARDS.count(empty_buffers) == 1
-    return SETTLED_FACTORY_GUARDS.replace(empty_buffers, PAID_OUTPUT_GUARDS)
+    assert SETTLED_FACTORY_GUARDS.count(empty_inputs) == 1
+    return SETTLED_FACTORY_GUARDS.replace(empty_buffers, PAID_OUTPUT_GUARDS).replace(
+        empty_inputs, UNSPENT_INPUT_GUARDS)

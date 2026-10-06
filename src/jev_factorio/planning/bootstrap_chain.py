@@ -161,6 +161,14 @@ def catalog_projection(snapshot, catalog, plans):
                 hand[category] = bool(catalog.hand_categories.get(category))
         if 'output_pickup' in (plan.materials or {}):
             role = marker.get('source_role', '')
+            if role.startswith('output-chest:'):
+                from .buffer_pickup import identity
+                owner = identity(snapshot, role, marker.get('item'))
+                if owner is not None:
+                    role = owner['source_role']
+                    machine = snapshot.factory.get('entities', {}).get(role, {})
+                    if machine.get('name') in catalog.machines:
+                        machines[machine['name']] = deepcopy(catalog.machines[machine['name']])
             source_recipe = catalog.recipes.get(role.removeprefix('recipe:'))
             if source_recipe is not None:
                 recipes[source_recipe['name']] = deepcopy(source_recipe)

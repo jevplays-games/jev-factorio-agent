@@ -1741,7 +1741,7 @@ def _output_pickup_start_evidence(snapshot, catalog, plan, *, path_root=None,
             or provenance.get('observed_tick') != snapshot.tick):
         return None
     role, item, quantity = p.get('role'), p.get('item'), p.get('quantity')
-    if (not isinstance(role, str) or not role.startswith('recipe:')
+    if (not isinstance(role, str) or not role.startswith(('recipe:', 'output-chest:'))
             or not isinstance(item, str) or not item
             or type(quantity) is not int or not 1 <= quantity <= 200):
         return None
@@ -1755,13 +1755,21 @@ def _output_pickup_start_evidence(snapshot, catalog, plan, *, path_root=None,
     unit = machine.get('unit_number')
     output = machine.get('output')
     available = output.get(item) if isinstance(output, dict) else None
-    recipe_name = role.removeprefix('recipe:')
+    buffer_identity = None
+    source_role = role
+    if role.startswith('output-chest:'):
+        from .buffer_pickup import identity
+        buffer_identity = identity(snapshot, role, item)
+        if buffer_identity is None:
+            return None
+        source_role = buffer_identity['source_role']
+    recipe_name = source_role.removeprefix('recipe:')
     recipe = catalog.recipes.get(recipe_name)
     path = provenance.get('planner_item_path')
     expected_path_root = local.get('item') if path_root is None else path_root
     if (not isinstance(expected_path_root, str) or not expected_path_root
             or type(unit) is not int or unit <= 0
-            or not _recipe_source_matches(snapshot, catalog, role, machine)
+            or not _recipe_source_matches(snapshot, catalog, source_role, entities.get(source_role, {}))
             or not isinstance(recipe, dict) or recipe.get('name') != recipe_name
             or recipe.get('hidden') or not catalog.enabled(recipe, snapshot.researched or [])
             or not any(product.get('type') == 'item' and product.get('name') == item
@@ -1791,6 +1799,9 @@ def _output_pickup_start_evidence(snapshot, catalog, plan, *, path_root=None,
         'basis': 'current_planner_output_and_owned_native_machine',
         'native_pickup_and_inventory_delta_require_verification': True,
     }
+    if buffer_identity is not None:
+        evidence['basis'] = 'current_planner_output_and_paid_native_buffer'
+        evidence['paid_buffer_identity'] = buffer_identity
     if include_dependency_chain and path_root is None and len(path) > 1:
         try:
             from .bootstrap_chain import dependency_chain
