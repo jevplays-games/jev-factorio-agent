@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .research_events import EvidenceError, MixedTreatmentError, VerifiedRun, canonical, digest, text, utc
 from .research_evaluation import NON_WORK_ACTIONS, RunEvaluation, _duration, _usage
+from .preflight_codes import CONNECTION_PREFLIGHT_CODES
 from .telemetry import WAIT_ACTIONS
 
 
@@ -16,7 +17,9 @@ def reduce_core_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -
     observations, decisions, calls, actions, milestones = {}, {}, {}, {}, {}
     native_victory_observations, native_victory_milestones = set(), set()
     goal_checks = {}
-    observation_decisions, action_payloads, action_returns, steps = {}, {}, {}, {}
+    observation_decisions, action_payloads, action_returns = {}, {}, {}
+    action_return_payloads, action_prepared_sessions, action_return_sessions = {}, {}, {}
+    action_prepared_ticks, action_return_ticks, steps = {}, {}, {}
     finished_steps = set()
     sessions, worlds, traces, models, requested_models = set(), set(), set(), set(), set()
     problems = set()
@@ -66,7 +69,7 @@ def reduce_core_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -
         tables["events"].append(row)
         if kind in {"observation", "observation_validated", "model_request", "model_response",
                     "decision", "action_prepared", "action_returned", "verification",
-                    "goal_checked", "goal_completed"}:
+                    "connection_preflight_rejected", "goal_checked", "goal_completed"}:
             step_key = identity(payload, "decision_id")
             if step_key not in steps or step_key in finished_steps:
                 raise EvidenceError("Causal event lacks an active controller step")
@@ -161,7 +164,10 @@ def reduce_core_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -
                 "prepared_sequence": sequence, "returned_sequence": None,
                 "acknowledged": None, "verified": False, "verification_count": 0,
                 "verified_sequence": None, "duration_ms": None,
+                "preflight_rejected": False, "preflight_rejection_code": None,
             }
+            action_prepared_sessions[key] = event.get("session_id")
+            action_prepared_ticks[key] = event["time"].get("factorio_tick")
         elif kind == "action_returned":
             key = identity(payload, "action_id")
             if key not in actions or actions[key]["returned_sequence"] is not None:
@@ -176,6 +182,9 @@ def reduce_core_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -
                    for field in ("plan_id", "step_index", "attempt_id", "role")):
                 raise EvidenceError("Causal action return changes preparation identity")
             action_returns[key] = payload["status"]
+            action_return_payloads[key] = payload
+            action_return_sessions[key] = event.get("session_id")
+            action_return_ticks[key] = event["time"].get("factorio_tick")
             actions[key].update(returned_sequence=sequence,
                                 duration_ms=_duration(payload))
             warnings.add("backend_acknowledgment_unavailable")
@@ -189,6 +198,8 @@ def reduce_core_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -
             key = identity(payload, "action_id")
             if key not in actions:
                 raise EvidenceError("Verification references unknown causal action")
+            if actions[key]["preflight_rejected"]:
+                raise EvidenceError("Preflight-rejected action has contradictory verification")
             observation_key = identity(payload, "observation_id")
             observation = observations.get(observation_key)
             returned = actions[key]["returned_sequence"]
@@ -241,6 +252,65 @@ def reduce_core_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -
                 }
             if goal == "rocket_launch" and identity(payload, "observation_id") in native_victory_observations:
                 native_victory_milestones.add(goal)
+        elif kind == "connection_preflight_rejected":
+            key = identity(payload, "action_id")
+            action = actions.get(key)
+            prepared = action_payloads.get(key)
+            returned = action_return_payloads.get(key)
+            event_session = event.get("session_id")
+            identity_fields = ("decision_id", "plan_id", "step_index", "attempt_id")
+            valid = (
+                action is not None and prepared is not None and returned is not None
+                and action["action"] == "factory_connect"
+                and config["controller"] == "hierarchical"
+                and prepared.get("controller") == returned.get("controller")
+                == payload.get("controller") == "hierarchical"
+                and prepared.get("role") == returned.get("role") == "plan"
+                and prepared.get("dispatch") == "prepared"
+                and action_returns.get(key) == "error"
+                and action["returned_sequence"] is not None
+                and sequence > action["returned_sequence"]
+                and action["verification_count"] == 0
+                and not action["verified"] and not action["preflight_rejected"]
+                and event_session is not None
+                and action_prepared_sessions.get(key) == event_session
+                and action_return_sessions.get(key) == event_session
+                and prepared.get("session_id") == returned.get("session_id")
+                == payload.get("session_id") == event_session
+                and prepared.get("world_kind") == returned.get("world_kind")
+                == payload.get("world_kind")
+                and prepared.get("action") == returned.get("action")
+                == payload.get("action") == "factory_connect"
+                and type(prepared.get("parameters")) is dict
+                and returned.get("parameters") == prepared.get("parameters")
+                and prepared.get("observation_id") is not None
+                and returned.get("observation_id") == payload.get("observation_id")
+                == prepared.get("observation_id")
+                and identity(payload, "decision_id") in decisions
+                and type(prepared.get("plan_id")) is str and bool(prepared["plan_id"])
+                and type(prepared.get("attempt_id")) is str and bool(prepared["attempt_id"])
+                and type(prepared.get("step_index")) is int
+                and prepared["step_index"] >= 0
+                and all(prepared.get(field) is not None
+                        and payload.get(field) == prepared[field] == returned.get(field)
+                        for field in identity_fields)
+                and type(event["time"].get("factorio_tick")) is int
+                and event["time"]["factorio_tick"] >= 0
+                and event["time"].get("factorio_tick") == payload.get("factorio_tick")
+                == action_prepared_ticks.get(key) == action_return_ticks.get(key)
+                and type(payload.get("action_origin")) is str
+                and payload["action_origin"] == "current_trace"
+                and payload.get("mutation_started") is False
+                and type(payload.get("code")) is str
+                and payload["code"] in CONNECTION_PREFLIGHT_CODES
+                and type(returned.get("error")) is dict
+                and returned["error"] == {"category": "invalid_data", "http_status": None}
+            )
+            if not valid:
+                raise EvidenceError(
+                    "Connection preflight rejection lacks matching returned pre-mutation evidence")
+            action.update(preflight_rejected=True,
+                          preflight_rejection_code=payload["code"])
         elif kind not in passive:
             unknown_events.add(kind)
         if kind == "run_finished":
@@ -311,7 +381,10 @@ def reduce_core_run(run: VerifiedRun, *, allow_mixed_treatments: bool = False) -
                                 for action in actions.values()),
         "verified_waits": sum(action["verified"] and action["action"] in non_work_actions
                               for action in actions.values()),
-        "unverified_actions": sum(not action["verified"] for action in actions.values()),
+        "unverified_actions": sum(not action["verified"] and not action["preflight_rejected"]
+                                   for action in actions.values()),
+        "preflight_rejected_actions": sum(action["preflight_rejected"]
+                                           for action in actions.values()),
         "models": sorted(models), "milestones": sorted(milestones), "interventions": {},
         "requested_models": sorted(requested_models),
         "wall_elapsed_seconds": elapsed, "event_head_hash": run.integrity["head_hash"],
