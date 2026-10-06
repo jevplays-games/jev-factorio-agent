@@ -157,7 +157,10 @@ python -m jev_factorio --controller hierarchical --backend fle --resume \
 needed; `jev` remains strict. The agent carries solids between machines and builds
 physical fluid and electricity connections. Native crafting, inventories,
 research, and the force rocket-launch counter verify progress. Movement and
-resource gathering still use FLE acceleration, not keyboard/mouse gameplay.
+resource gathering use tick-driven native walking and mining through the fair
+action layer, with original-player binding and normal interaction reach checks.
+The controller issues these actions through FLE/RCON rather than keyboard/mouse
+input; it still carries solids between machines rather than automating every haul.
 
 For an authorized hierarchical campaign without a step or duration cutoff, use
 `--until-complete`:
