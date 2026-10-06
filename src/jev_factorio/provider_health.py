@@ -105,6 +105,88 @@ class ProviderCircuit:
             health_state_sha256=health_state_sha256,
         )
 
+    def acknowledge_decision_consumed(self, lease) -> None:
+        """Durably bind health acknowledgment to an already-consumed exact WAL result.
+
+        The controller calls this only after its selected-plan or no-action
+        disposition is checkpointed and the WAL consume transition succeeds.
+        Repeating the acknowledgment after a crash is idempotent.
+        """
+        from dataclasses import replace
+
+        with self._decision_health_writer_lock():
+            self._refresh_decision_health_state()
+            record = lease.inspect()
+            if record.state != "consumed":
+                raise SafetyStateError("Provider result must be WAL-consumed before health acknowledgment")
+            outcome = self.state.get("decision_outcome")
+            if outcome is None:
+                # Cancellation can land after the async client durably saved its
+                # response but before this circuit finished its normal success
+                # transition. The controller validates the exact archived
+                # answers before calling us; reconstruct only that successful
+                # health transition from the same consumed WAL receipt.
+                flight = self.state.get("in_flight")
+                if not self._flight_matches(lease, flight) or record.result is None:
+                    raise SafetyStateError(
+                        "Consumed provider result has no matching health reservation")
+                from dataclasses import replace
+
+                response_record = replace(record, state="response_received")
+                result = lease.recover_result(response_record)
+                if (result.identity != lease.request_identity
+                        or result.requested_model != lease.model_id
+                        or result.request_payload_sha256 != lease.request_payload_sha256):
+                    raise SafetyStateError(
+                        "Consumed provider result differs from its exact health reservation")
+                self._finish_decision_success(
+                    lease, response_record, flight, lease.request_identity)
+                record = lease.inspect()
+                if record.state != "consumed":
+                    raise SafetyStateError("Consumed provider WAL receipt changed during recovery")
+                outcome = self.state.get("decision_outcome")
+            consumed = self._outcome_for(lease, record)
+            if outcome == consumed:
+                return
+            response_record = replace(record, state="response_received")
+            if outcome != self._outcome_for(lease, response_record):
+                raise SafetyStateError("Consumed provider result differs from its durable health outcome")
+            before = deepcopy(self.state)
+            self.state["decision_outcome"] = consumed
+            self._save_decision_state(before)
+
+    def abandon_unstarted_decision(self, lease) -> None:
+        """Close only a proven NOT_SENT reservation after stale local admission.
+
+        This never changes MAY_HAVE_BEEN_SENT, ambiguous, or response-bearing
+        WAL records. Those require their exact archived request for recovery.
+        """
+        from .async_provider import AsyncProviderLocalError, NOT_SENT
+
+        with self._decision_health_writer_lock():
+            self._refresh_decision_health_state()
+            record = lease.inspect_optional()
+            if record is None:
+                return
+            if record.state == "reserved":
+                lease.record_failure(
+                    AsyncProviderLocalError(
+                        "The archived request became stale before transport admission",
+                        lease.request_identity,
+                    ),
+                    NOT_SENT,
+                )
+                record = lease.inspect()
+            if (record.state != "failed" or record.phase != NOT_SENT
+                    or record.error_category != "local_admission"):
+                raise SafetyStateError("Only a proven unstarted provider request can be abandoned")
+            flight = self.state.get("in_flight")
+            if flight is None:
+                return
+            if not self._flight_matches(lease, flight):
+                raise SafetyStateError("A different provider decision owns the health reservation")
+            self._restore_decision_before(lease, flight)
+
     def _prepare_decision_authorization_locked(self, wal):
         """Durably admit a pending operator probe before hashing a WAL baseline."""
         if self.state.get("in_flight") is not None:

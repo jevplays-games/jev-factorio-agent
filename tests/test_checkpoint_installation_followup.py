@@ -291,7 +291,10 @@ def test_snapshot_excludes_transient_verification_counters(tmp_path):
     expected.pop('capital_investment', None)
     expected.pop('blocked_recovery', None)
     expected.pop('blocked_recovery_archive', None)
+    if expected.get('async_decision') is None:
+        expected.pop('async_decision', None)  # historical wire format omits optional null extensions
     assert persisted == expected == checkpoint_data(memory)
+    assert 'async_decision' not in persisted
     assert not any('verification' in key or 'sync_calls' in key for key in persisted)
 
 

@@ -17,10 +17,15 @@ DISPATCH_STAGES = {"dispatch", "entity_lookup", "approach", "transfer_rpc"}
 STAGES = DISPATCH_STAGES | {"observe", "reconcile", "pre_dispatch_observe", "post_dispatch_observe",
                             "selection", "verification", "planning"}
 ERROR_CODES = ({"timeout", "connection", "http", "invalid_data", "io", "interrupted", "execution",
-                "storage_preflight_rejected", "maintenance_preflight_rejected"}
+                "storage_preflight_rejected", "maintenance_preflight_rejected",
+                "cancelled_before_entry"}
                | {"connection_preflight:" + code for code in CONNECTION_PREFLIGHT_CODES})
 WAIT_ACTIONS = {"idle", "factory_wait"}
 Trace = Callable[[dict], None]
+
+
+class DispatchCancelledBeforeEntry(Exception):
+    """Exact internal proof that the async dispatch gate suppressed operation entry."""
 
 
 def utc_now() -> str:
@@ -32,6 +37,9 @@ def error_code(error: BaseException) -> str:
     import requests
     from .backends.errors import ConnectionPreflightRejected
     from .operational_safety import MaintenanceAdmissionClosed, StoragePressure
+
+    if type(error) is DispatchCancelledBeforeEntry:
+        return "cancelled_before_entry"
 
     # Mirror the controller's exact rejection contracts. Generic errors and a
     # ConnectionPreflightRejected subclass remain ambiguous, not local proof.
@@ -180,12 +188,18 @@ def validate_attempt(attempt: dict, *, finished: bool = False) -> None:
             "verified", "wait_replanned", "wait_expired", "partial_transfer_reconciled",
             "zero_effect_transfer_reconciled", "rejected_transfer_reconciled",
             "connection_preflight_rejected", "storage_preflight_rejected", "maintenance_preflight_rejected",
+            "cancelled_before_dispatch",
         }
         or (attempt["outcome"] not in {"verified", "partial_transfer_reconciled",
                                         "zero_effect_transfer_reconciled",
                                         "rejected_transfer_reconciled", "connection_preflight_rejected",
-                                        "storage_preflight_rejected", "maintenance_preflight_rejected"}
+                                        "storage_preflight_rejected", "maintenance_preflight_rejected",
+                                        "cancelled_before_dispatch"}
             and attempt["action"] not in WAIT_ACTIONS)
+        or (attempt["outcome"] == "cancelled_before_dispatch"
+            and (set(stages) != {"dispatch"}
+                 or stages["dispatch"]["status"] != "failed"
+                 or stages["dispatch"]["error_code"] != "cancelled_before_entry"))
         or (attempt["outcome"] in {"partial_transfer_reconciled", "zero_effect_transfer_reconciled"}
             and attempt["action"] not in {"factory_insert", "factory_extract"})
         or (attempt["outcome"] == "rejected_transfer_reconciled"

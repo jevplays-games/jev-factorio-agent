@@ -18,12 +18,29 @@ _BLOCKED_REEVALUATION_REASONS = frozenset({
 
 
 def retain_latest_craft(rows: list[dict], *, events: bool = False) -> list[dict]:
-    """Keep the latest craft witness inside, never in addition to, the 64 slots."""
+    """Retain bounded craft and async-settlement witnesses within 64 slots."""
+    protected = set()
     key, value = ("kind", "background_job_completed") if events else ("action", "factory_craft_job")
-    latest = next((i for i in range(len(rows)-1, -1, -1) if rows[i].get(key) == value), None)
-    if latest is None or latest >= len(rows)-64:
-        return rows[-64:]
-    return [rows[latest], *rows[-63:]]
+    latest = next((i for i in range(len(rows) - 1, -1, -1)
+                   if rows[i].get(key) == value), None)
+    if latest is not None:
+        protected.add(latest)
+    if events:
+        settled = next((i for i in range(len(rows) - 1, -1, -1)
+                        if rows[i].get("kind") == "async_decision_settled"), None)
+        if settled is not None:
+            protected.add(settled)
+        lineage = next((i for i in range(len(rows) - 1, -1, -1)
+                        if rows[i].get("kind") == "async_plan_lineage"), None)
+        if lineage is not None:
+            protected.add(lineage)
+    if len(rows) <= 64:
+        return rows
+    selected = set(range(max(0, len(rows) - 64), len(rows))) | protected
+    while len(selected) > 64:
+        removable = min(index for index in selected if index not in protected)
+        selected.remove(removable)
+    return [rows[index] for index in sorted(selected)]
 
 
 def _history_partition(history: object) -> tuple[list[dict], list[dict]]:
@@ -87,6 +104,9 @@ class CampaignMemory:
     # CampaignMemory construction retains its historical argument order.
     blocked_recovery_archive: dict | None = None
     compatible_source_recoveries: list[dict] = field(default_factory=list)
+    # Optional exact-request pointer used only by explicit async decisions.
+    # Appending it keeps legacy positional CampaignMemory construction stable.
+    async_decision: dict | None = None
 
     def event(self, kind: str, **details) -> None:
         validate_history_authority(self, archive_index=getattr(self, "_blocked_recovery_archive_index", None))
@@ -100,6 +120,20 @@ class CampaignMemory:
             validate_representation_budget_carry(self, administrative[0],
                 archive_index=getattr(self, "_blocked_recovery_archive_index", None))
         ordinary = [row for row in proposed if row.get("kind") != "paid_duplicate_selection_reconciled"]
+        if kind == "async_decision_settled":
+            # The newest row carries the bounded cumulative archive lineage;
+            # retaining older copies would make a valid checkpoint ambiguous.
+            newest_settlement = ordinary[-1]
+            ordinary = [row for row in ordinary
+                        if row.get("kind") != "async_decision_settled"]
+            ordinary.append(newest_settlement)
+        elif kind == "async_plan_lineage":
+            # Verified attempts remain tied to their exact archived selection
+            # even after the bounded general history window advances.
+            newest_lineage = ordinary[-1]
+            ordinary = [row for row in ordinary
+                        if row.get("kind") != "async_plan_lineage"]
+            ordinary.append(newest_lineage)
         self.history = retain_latest_craft(ordinary, events=True) + administrative
 
     def reserve(self, owner: str, costs: dict[str, float], inventory: dict[str, int]) -> None:
@@ -157,6 +191,9 @@ class CampaignMemory:
             if data["version"] == 2 and not {"attempt", "attempt_outcomes"} <= data.keys():
                 raise ValueError("Version 2 checkpoint is missing attempt fields")
             memory = cls(**data)
+            if memory.async_decision is not None:
+                from .async_decision_archive import validate_pointer
+                validate_pointer(memory.async_decision)
             if memory.transfer_recovery is not None and not isinstance(memory.transfer_recovery, dict):
                 raise ValueError("Invalid transfer recovery reference")
             if memory.transfer_recovery is not None and memory.pending is None:
