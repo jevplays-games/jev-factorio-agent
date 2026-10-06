@@ -250,7 +250,7 @@ campaign.pipe_source = function(source_role, target_role, fluid_name)
     rcon.print(helpers.table_to_json(closest and closest.position or {}))
 end
 
-campaign.transfer = function(role, item, quantity, receipt, extracting)
+campaign.transfer = function(role, item, quantity, receipt, extracting, preflight_context)
     if campaign.guard_mining_outpost_transfer then
         campaign.guard_mining_outpost_transfer(role, item, quantity, receipt, extracting)
     end
@@ -258,33 +258,123 @@ campaign.transfer = function(role, item, quantity, receipt, extracting)
     local agent = storage.agent_characters[1]
     local machine = entity_for(role)
     local player = storage.fair.actor()
-    assert(player.can_reach_entity(machine), "Transfer is out of reach")
+    local reachable = player.can_reach_entity(machine)
+    assert(reachable, "Transfer is out of reach")
     local function destination_inventory()
         if extracting then
-            return agent.get_inventory(defines.inventory.character_main)
+            return agent.get_inventory(defines.inventory.character_main), "actor_main"
         elseif item == "coal" and machine.burner then
             -- Furnace source inventories accept smeltable ingredients, not
             -- burner fuel.  Fuel service plans intentionally use the same
             -- fair transfer path as every other item, so select the native
             -- fuel inventory before the furnace-source branch.
-            return machine.get_inventory(defines.inventory.fuel)
+            return machine.get_inventory(defines.inventory.fuel), "machine_fuel"
         elseif machine.type == "furnace" then
-            return machine.get_inventory(defines.inventory.furnace_source)
+            return machine.get_inventory(defines.inventory.furnace_source), "furnace_source"
         elseif machine.type == "lab" then
-            return machine.get_inventory(defines.inventory.lab_input)
+            return machine.get_inventory(defines.inventory.lab_input), "lab_input"
         elseif machine.type == "assembling-machine" or machine.type == "rocket-silo" then
-            return machine.get_inventory(defines.inventory.assembling_machine_input)
+            return machine.get_inventory(defines.inventory.assembling_machine_input),
+                "assembling_machine_input"
         elseif machine.burner then
-            return machine.get_inventory(defines.inventory.fuel)
+            return machine.get_inventory(defines.inventory.fuel), "machine_fuel"
         end
     end
     local source = extracting and
         (machine.get_output_inventory() or machine.get_inventory(defines.inventory.chest))
         or agent.get_inventory(defines.inventory.character_main)
-    local target = destination_inventory()
+    local target, target_kind = destination_inventory()
     assert(source and source.get_item_count(item) >= quantity, "Transfer source is short")
-    assert(target and target.get_insertable_count(item) >= quantity,
-        "Transfer destination capacity is short")
+    assert(target, "Transfer destination inventory is unavailable")
+    local source_count = source.get_item_count(item)
+    assert(type(source_count) == "number" and source_count % 1 == 0 and source_count >= quantity,
+        "Transfer source is short")
+    local insertable_count = target.get_insertable_count(item)
+    assert(type(insertable_count) == "number" and insertable_count % 1 == 0
+        and insertable_count >= 0, "Transfer destination capacity is unavailable")
+    if insertable_count < quantity and preflight_context == nil then
+        -- Keep the legacy public transfer path fail-before-mutation. Typed
+        -- nonmutation evidence is reserved for the explicitly bound controller
+        -- call below; ordinary NativeFactory/ObservedFactory calls still reject.
+        assert(insertable_count >= quantity, "Transfer destination capacity is short")
+    end
+    if insertable_count < quantity then
+        -- The request is accepted only for the current controller attempt and
+        -- exact observed actor/entity. All assertions precede any inventory or
+        -- receipt mutation, so the returned envelope is a narrow nonmutation
+        -- result, not inference from a failed RCON command or absent receipt.
+        local expected_keys = {
+            schema=true, attempt_id=true, session_id=true, plan_id=true, step_index=true,
+            step_sha256=true, action=true, started_tick=true, observed_tick=true,
+            receipt=true, item=true, quantity=true, direction=true, role=true,
+            machine_unit_number=true, machine_name=true, actor_unit_number=true,
+            actor_player_index=true, surface_index=true, force_index=true,
+        }
+        assert(type(preflight_context) == "table", "Invalid transfer preflight request")
+        local field_count = 0
+        for key in pairs(preflight_context) do
+            assert(expected_keys[key], "Invalid transfer preflight request field")
+            field_count = field_count + 1
+        end
+        assert(field_count == 20 and preflight_context.schema == 1
+            and type(preflight_context.attempt_id) == "string"
+            and string.match(preflight_context.attempt_id, "^[0-9a-f]+$")
+            and #preflight_context.attempt_id == 32
+            and type(preflight_context.session_id) == "string"
+            and preflight_context.session_id == storage.jev_session_id
+            and type(preflight_context.plan_id) == "string" and #preflight_context.plan_id > 0
+            and type(preflight_context.step_index) == "number"
+            and preflight_context.step_index % 1 == 0
+            and type(preflight_context.step_sha256) == "string"
+            and string.match(preflight_context.step_sha256, "^[0-9a-f]+$")
+            and #preflight_context.step_sha256 == 64
+            and preflight_context.action == (extracting and "factory_extract" or "factory_insert")
+            and preflight_context.started_tick <= preflight_context.observed_tick
+            and preflight_context.observed_tick <= game.tick
+            and preflight_context.receipt == receipt
+            and preflight_context.item == item
+            and preflight_context.quantity == quantity
+            and preflight_context.direction == (extracting and "extract" or "insert")
+            and preflight_context.role == role
+            and preflight_context.machine_unit_number == machine.unit_number
+            and preflight_context.machine_name == machine.name
+            and preflight_context.actor_unit_number == agent.unit_number
+            and preflight_context.actor_player_index == player.index
+            and preflight_context.surface_index == agent.surface.index
+            and preflight_context.force_index == agent.force.index
+            and machine.surface == agent.surface and machine.force == agent.force
+            and player.character == agent and player.surface == agent.surface
+            and machine.unit_number and machine.unit_number > 0
+            and agent.unit_number and agent.unit_number > 0
+            and player.index and player.index > 0
+            and not campaign.receipts[receipt]
+            and source_count >= quantity and reachable == true,
+            "Transfer preflight request identity or checks changed")
+        local source_endpoint, target_endpoint
+        if extracting then
+            source_endpoint = {kind="machine_output_or_chest", role=role,
+                name=machine.name, unit_number=machine.unit_number, quantity=source_count}
+            target_endpoint = {kind="actor_main", role="@agent", name=agent.name,
+                unit_number=agent.unit_number, insertable_count=insertable_count}
+        else
+            source_endpoint = {kind="actor_main", role="@agent", name=agent.name,
+                unit_number=agent.unit_number, quantity=source_count}
+            target_endpoint = {kind=target_kind, role=role, name=machine.name,
+                unit_number=machine.unit_number, insertable_count=insertable_count}
+        end
+        return {
+            schema="jev.transfer-capacity-preflight.v1",
+            result="destination_capacity_short",
+            request=preflight_context,
+            tick=game.tick,
+            actor={name=agent.name, unit_number=agent.unit_number, player_index=player.index,
+                surface_index=agent.surface.index, force_index=agent.force.index},
+            machine={role=role, name=machine.name, unit_number=machine.unit_number,
+                surface_index=machine.surface.index, force_index=machine.force.index},
+            source=source_endpoint, target=target_endpoint,
+            checks={reachable=true, receipt_absent=true, source_sufficient=true, capacity_short=true},
+        }
+    end
     local removed = source.remove{name = item, count = quantity}
     local inserted = target.insert{name = item, count = removed}
     if inserted < removed then

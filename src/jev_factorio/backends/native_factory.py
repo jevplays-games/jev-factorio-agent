@@ -10,10 +10,21 @@ from ..iteration_timing import native_io, decode_native, span, request_size
 from ..factory_contract import validate_command
 from ..planning.catalog import Catalog
 from ..state import GameSnapshot
-from ..telemetry import Trace, phase
+from ..telemetry import (Trace, phase, validate_transfer_preflight_context,
+                         validate_transfer_preflight_proof)
 from .errors import ConnectionPreflightRejected, require_native_success
 
 MAX_NATIVE_FLUID_PORTS = 16
+TRANSFER_PREFLIGHT_MARKER = "JEV_TRANSFER_PREFLIGHT_V1|"
+
+
+class TransferPreflightRejected(Exception):
+    """Exact server-produced evidence that a transfer was rejected before mutation."""
+
+    def __init__(self, proof: dict) -> None:
+        validate_transfer_preflight_proof(proof)
+        self.proof = proof
+        super().__init__("Native transfer destination capacity is short")
 
 
 def _fluid_port_search_exhausted() -> ConnectionPreflightRejected:
@@ -333,8 +344,62 @@ class NativeFactory:
         )
         return Position(**decode_native(raw))
 
-    def execute(self, action: str, parameters: dict, *, trace: Trace | None = None) -> str:
+    def _execute_transfer_with_preflight(self, action: str, parameters: dict,
+                                        context: dict) -> str:
+        validate_transfer_preflight_context(context)
+        extracting = action == "factory_extract"
+        if (context["action"] != action or context["role"] != parameters["role"]
+                or context["item"] != parameters["item"]
+                or context["quantity"] != parameters["quantity"]
+                or context["receipt"] != parameters["receipt"]
+                or context["direction"] != ("extract" if extracting else "insert")):
+            raise ValueError("Transfer preflight request differs from the selected command")
+        values = (parameters["role"], parameters["item"], parameters["quantity"],
+                  parameters["receipt"], extracting, context)
+        encoded = ", ".join(
+            "helpers.json_to_table(" + json.dumps(json.dumps(value, allow_nan=False)) + ")"
+            if isinstance(value, (dict, list)) else json.dumps(value, allow_nan=False)
+            for value in values
+        )
+        script = (
+            "local result=storage.campaign.transfer(" + encoded + ");"
+            "if result~=nil then rcon.print(" + json.dumps(TRANSFER_PREFLIGHT_MARKER)
+            + "..helpers.table_to_json(result)) end"
+        )
+        response = self.command(script)
+        if not isinstance(response, str):
+            raise ValueError("Malformed native transfer response")
+        if not response.startswith(TRANSFER_PREFLIGHT_MARKER):
+            return ""
+        try:
+            proof = decode_native(response[len(TRANSFER_PREFLIGHT_MARKER):])
+            validate_transfer_preflight_proof(proof, context)
+        except (TypeError, ValueError, KeyError) as error:
+            raise ValueError("Malformed or mismatched native transfer preflight response") from error
+        raise TransferPreflightRejected(proof)
+
+    def execute_transfer_preflight(self, action: str, parameters: dict,
+                                   trace: Trace | None, context: dict) -> str:
+        """Run a controller transfer through the common native mutation path.
+
+        ObservedFactory overrides ``execute`` to invalidate its discovery epoch
+        for topology-changing actions. Transfers are deliberately excluded from
+        that invalidation set, so dispatch the shared NativeFactory
+        implementation explicitly while retaining its typed preflight path.
+        """
+        return NativeFactory.execute(self, action, parameters, trace=trace,
+                                     transfer_preflight=context)
+
+    def execute(self, action: str, parameters: dict, *, trace: Trace | None = None,
+                transfer_preflight: dict | None = None) -> str:
         validate_command(action, parameters)
+        if transfer_preflight is not None:
+            if action not in {"factory_insert", "factory_extract"}:
+                raise ValueError("Transfer preflight context supplied for a non-transfer action")
+            from ..bootstrap_output import ROLE as BOOTSTRAP_ROLE
+            if parameters["role"] == BOOTSTRAP_ROLE:
+                raise ValueError("Bootstrap transfer does not use the campaign transfer preflight")
+            validate_transfer_preflight_context(transfer_preflight)
         from ..launch_readiness import COMMANDS
         if action in COMMANDS:
             from .launch_readiness import execute
@@ -403,8 +468,11 @@ class NativeFactory:
             with phase("approach", trace):
                 self.approach_role(parameters["role"])
             with phase("transfer_rpc", trace):
-                self.call("transfer", parameters["role"], parameters["item"],
-                          parameters["quantity"], parameters["receipt"], action == "factory_extract")
+                if transfer_preflight is None:
+                    self.call("transfer", parameters["role"], parameters["item"],
+                              parameters["quantity"], parameters["receipt"], action == "factory_extract")
+                else:
+                    self._execute_transfer_with_preflight(action, parameters, transfer_preflight)
             return f"Transferred {parameters['quantity']} {parameters['item']} ({parameters['receipt']})"
         if action == "factory_connect":
             attachment = getattr(self.backend, '_native_attachment', None)
