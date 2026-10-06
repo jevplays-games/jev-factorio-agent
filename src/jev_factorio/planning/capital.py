@@ -307,6 +307,16 @@ def offers(planner):
     return result
 
 
+def frontier_active(status, persistent_blocked, source_reevaluation):
+    """Apply intent/deadline/cost guards during an admitted source evaluation.
+
+    This is candidate policy, not restart or dispatch authority. The controller
+    supplies source_reevaluation only inside its already validated planning call.
+    """
+    return status == 'running' or (status == 'blocked' and
+        (persistent_blocked is True or source_reevaluation is True))
+
+
 def urgent_frontier(plans, evidence):
     """Keep current work visible when only speculative supply claims urgency.
 
