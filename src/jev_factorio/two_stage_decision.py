@@ -9,6 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 import hashlib
 import json
+import math
 import re
 
 import requests
@@ -19,6 +20,7 @@ from .provider_health import ProviderBlocked
 from .skills import Plan
 
 PROTOCOL = "jev-assess-then-choose-v1"
+NATIVE_PROJECTION = "boiler-fluid-presence-v1"
 MAX_RECORD_BYTES = 1_048_576
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _PHASES = {"assessment_ready", "assessment_pending", "assessment_received",
@@ -37,7 +39,35 @@ def digest(value):
     return hashlib.sha256(encoded(value)).hexdigest()
 
 
-def native_digest(snapshot):
+def selection_facts(facts, projection=None):
+    """Versioned model/freshness projection; native observations stay complete.
+
+    Boiler fluid amounts are passive telemetry, not a planner/native action
+    quantity predicate. Expose only empty/present stock to both JEV and its
+    freshness check. Identity, ports, fuel, status and all other facts remain.
+    """
+    if projection is None:
+        return facts  # Original saved decisions retain their exact contract.
+    if projection != NATIVE_PROJECTION:
+        raise ValueError("Unknown native decision projection")
+    result = deepcopy(facts)
+    boiler = result.get('factory', {}).get('entities', {}).get('utility:boiler')
+    if (not isinstance(boiler, dict) or boiler.get('name') != 'boiler'
+            or type(boiler.get('unit_number')) is not int or boiler['unit_number'] <= 0):
+        return result
+    fluids = boiler.get('fluids')
+    if not isinstance(fluids, dict):
+        return result
+    if ('fluid_presence' in boiler or any(
+            type(amount) not in (int, float) or not math.isfinite(amount) or amount < 0
+            for amount in fluids.values())):
+        raise ValueError("Invalid boiler fluid telemetry projection")
+    boiler['fluid_presence'] = {name: amount > 0 for name, amount in fluids.items()}
+    del boiler['fluids']
+    return result
+
+
+def native_digest(snapshot, projection=None):
     """Use the established semantic clock normalization, never elapsed time."""
     from .blocked_persistence import _stable
     facts = snapshot.for_jev()
@@ -45,7 +75,7 @@ def native_digest(snapshot):
     for key in ("acceptance_runtime", "consumed", "observation_snapshot_schema",
                 "observation_query_bounds", "inventory_insertable_evidence"):
         facts.get("factory", {}).pop(key, None)
-    return digest(_stable({"facts": facts}, current_tick=snapshot.tick))
+    return digest(_stable({"facts": selection_facts(facts, projection)}, current_tick=snapshot.tick))
 
 
 def prepare(*, binding, context, questions, offered, input_candidate_ids,
@@ -167,6 +197,8 @@ def validate(record, session_id, target):
             or record["prepared_sha256"] != digest({"binding": binding, "prepared": prepared})):
         raise ValueError("Two-stage prepared request identity mismatch")
     plans = [Plan.from_dict(p) for p in prepared["plans"]]
+    if prepared['context'].get('native_freshness_projection') not in (None, NATIVE_PROJECTION):
+        raise ValueError("Unknown native decision projection")
     ids = [p.id for p in plans]
     inputs = prepared["input_candidate_ids"]
     if (len(set(ids)) != len(ids) or not isinstance(inputs, list)
