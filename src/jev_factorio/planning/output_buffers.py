@@ -226,11 +226,22 @@ class OutputBufferPlanner(ReadyWorkPlanner):
         self._buffer_service = False
 
     def _prerequisite(self, item: str, count: int, path) -> Plan | None:
+        acquiring = self._acquiring_buffer
+        prefix = self._recipe_cycle_prefix
         self._acquiring_buffer = True
+        self._recipe_cycle_prefix = tuple(path)
         try:
+            # Commissioning is a separate bounded demand. Its kit can require
+            # the same intermediate as the suspended production goal (gears
+            # for an inserter while planning science gears). Retaining that
+            # outer path mistakes this agenda change for a recipe cycle.
+            # Disable nested acquisition and scope cycle detection to this
+            # component. Keep the complete path for power/demand evidence;
+            # genuine cycles inside the component still reach _visit normally.
             return super()._need(item, count, path)
         finally:
-            self._acquiring_buffer = False
+            self._acquiring_buffer = acquiring
+            self._recipe_cycle_prefix = prefix
 
     def _buffer(self, row: dict, amount: int, path) -> Plan | None:
         parts = row.get("parts", {})

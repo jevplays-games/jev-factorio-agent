@@ -54,12 +54,19 @@ _CONTRACT_PATHS = (
     "src/jev_factorio/planning/solid_routes.py",
     "src/jev_factorio/planning/successors.py",
 )
+# Absent in historical revisions. Omitting absent optional paths preserves the
+# exact historical digest; present modules are fully blob-bound for recovery.
+_OPTIONAL_CONTRACT_PATHS = (
+    "src/jev_factorio/two_stage_decision.py",
+    "src/jev_factorio/two_stage_controller.py",
+)
 _BLOCKED_REASONS = {
     "Candidate evidence insufficient", "low choice confidence",
     # A reviewed planner contract change may repair this exact idle failure.
     # This does not make it eligible for unchanged automatic polling/retries.
     "Current native boiler identity and coal stock are required",
     "Furnace fuel service requires current owned source identity",
+    "Native buffer component dependency cycle",
 }
 
 
@@ -82,7 +89,9 @@ def _git(root: Path, *args: str) -> bytes:
 
 def _contract_sha256(files: dict[str, bytes]) -> str:
     digest = hashlib.sha256(b"jev-factorio.blocked-decision-contract.v1\0")
-    for name in _CONTRACT_PATHS:
+    for name in (*_CONTRACT_PATHS, *_OPTIONAL_CONTRACT_PATHS):
+        if name not in files and name in _OPTIONAL_CONTRACT_PATHS:
+            continue
         data = files[name]
         encoded_name = name.encode("ascii")
         digest.update(len(encoded_name).to_bytes(4, "big"))
@@ -135,7 +144,15 @@ def validate_source_revision(blocked_source_revision: str,
             raise ValueError("Blocked source revision is not an ancestor of current HEAD")
         current_files = {}
         old_files = {}
-        for name in _CONTRACT_PATHS:
+        for name in (*_CONTRACT_PATHS, *_OPTIONAL_CONTRACT_PATHS):
+            current_present = bool(_git(checkout, "ls-tree", "--name-only", head, "--", name))
+            previous_present = bool(_git(checkout, "ls-tree", "--name-only", old, "--", name))
+            if name in _OPTIONAL_CONTRACT_PATHS and not current_present:
+                if (checkout / name).exists() or (checkout / name).is_symlink():
+                    raise ValueError("Untracked optional decision contract module is present")
+                if previous_present:
+                    old_files[name] = _git(checkout, "show", f"{old}:{name}")
+                continue
             path = checkout / name
             if path.is_symlink() or not path.is_file():
                 raise ValueError("Decision contract source file is unavailable")
@@ -144,7 +161,8 @@ def validate_source_revision(blocked_source_revision: str,
             if working_bytes.replace(b"\r\n", b"\n") != head_blob:
                 raise ValueError("Decision contract working file differs from its HEAD blob")
             current_files[name] = head_blob
-            old_files[name] = _git(checkout, "show", f"{old}:{name}")
+            if previous_present or name not in _OPTIONAL_CONTRACT_PATHS:
+                old_files[name] = _git(checkout, "show", f"{old}:{name}")
         current_contract = _contract_sha256(current_files)
         old_contract = _contract_sha256(old_files)
         if require_changed_contract and current_contract == old_contract:
@@ -216,6 +234,9 @@ def validate_blocked_memory(memory, max_stalled_decisions: int, *,
     """
     if type(allow_model_abstention) is not bool:
         raise ValueError("Invalid model-abstention eligibility flag")
+    from .planner_fault_recovery import REASON, validate_record
+    if memory.reason == REASON:
+        validate_record(memory)
     eligible_reasons = _BLOCKED_REASONS | ({"model abstention"} if allow_model_abstention else set())
     ledger = memory.blocked_recovery
     persistent_block = isinstance(ledger, dict) and bool(ledger.get("attempts"))

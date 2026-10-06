@@ -58,7 +58,7 @@ _OPTIONAL_CONFIGURATION_FIELDS = _TREATMENT_FIELDS | {
     "treatment_sha256", "until_complete", "reconcile_only",
     "reevaluate_blocked_once", "exact_checkpoint_sha256", "blocked_source_revision",
     "profile_latency", "persist_recoverable_blocks", "persistent_idle_observations",
-    "initialize_persistent_campaign",
+    "initialize_persistent_campaign", "two_stage_decisions",
 }
 
 
@@ -137,6 +137,7 @@ class RunConfiguration:
     initialize_persistent_campaign: bool = False
     # None means this setting was inapplicable or absent in a historical run.
     persistent_idle_observations: int | None = None
+    two_stage_decisions: bool = False
 
 
 def canonical_bytes(value: object) -> bytes:
@@ -420,10 +421,11 @@ def _configuration(configuration: dict) -> None:
         raise ValueError("Run configuration has conflicting limits")
     for key in ("resume", "resume_controller", "adopt_session", "mock_model",
                 "legacy_log_enabled", "checkpoint_enabled", "until_complete", "reconcile_only",
-                "reevaluate_blocked_once", "persist_recoverable_blocks", "initialize_persistent_campaign"):
+                "reevaluate_blocked_once", "persist_recoverable_blocks", "initialize_persistent_campaign",
+                "two_stage_decisions"):
         value = (configuration.get(key, False)
                  if key in {"until_complete", "reconcile_only", "reevaluate_blocked_once",
-                            "persist_recoverable_blocks", "initialize_persistent_campaign"}
+                            "persist_recoverable_blocks", "initialize_persistent_campaign", "two_stage_decisions"}
                  else configuration[key])
         if type(value) is not bool:
             raise ValueError("Invalid run configuration flag")
@@ -432,6 +434,8 @@ def _configuration(configuration: dict) -> None:
     reevaluate_blocked_once = configuration.get("reevaluate_blocked_once", False)
     persist_recoverable_blocks = configuration.get("persist_recoverable_blocks", False)
     initialize_persistent_campaign = configuration.get("initialize_persistent_campaign", False)
+    if configuration.get("two_stage_decisions", False) and not persist_recoverable_blocks:
+        raise ValueError("Two-stage decisions require persistent strict JEV control")
     if initialize_persistent_campaign and (
             not persist_recoverable_blocks or configuration["resume"]
             or configuration["resume_controller"] or configuration["adopt_session"]
