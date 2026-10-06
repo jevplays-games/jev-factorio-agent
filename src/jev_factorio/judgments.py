@@ -2798,8 +2798,9 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 and isinstance(pickup_step.parameters, dict)
                 and row.get('work_scope') == 'immediate' and row.get('unknowns') == []
                 and isinstance(pickup_start, dict) and pickup_start.get('observed_tick') == tick
-                and pickup_start.get('basis') ==
-                    'current_planner_output_and_owned_native_machine'
+                and (pickup_start.get('basis') == 'current_planner_output_and_owned_native_machine'
+                     or (pickup_start.get('basis') == 'current_planner_output_and_paid_native_buffer'
+                         and _qualified_output_pickup_chain(plan, facts, row)))
                 and pickup_start.get('player_connected_and_bound_now') is True
                 and pickup_start.get('native_pickup_and_inventory_delta_require_verification') is True
                 and pickup_start.get('owned_source_role') == pickup_step.parameters.get('role')
