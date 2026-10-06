@@ -15,6 +15,33 @@ class NativePathNotFound(RuntimeError):
     """The native path request terminated before walking could begin."""
 
 
+MAX_FLUID_PORT_PAIRS = 64
+MAX_PIPE_PREFLIGHT_QUERIES = 128
+MAX_PIPE_PREFLIGHT_CELLS = 65_536
+
+
+def _pipe_search_exhausted() -> ConnectionPreflightRejected:
+    error = ConnectionPreflightRejected("no_connection_route")
+    error.search_exhausted = True
+    return error
+
+
+class _PipePreflightBudget:
+    """One finite read-only budget shared across port pairs and final planning."""
+
+    def __init__(self) -> None:
+        self.queries = 0
+        self.cells = 0
+
+    def consume_query(self, cells: int = 0) -> None:
+        if (type(cells) is not int or cells < 0
+                or self.queries >= MAX_PIPE_PREFLIGHT_QUERIES
+                or self.cells + cells > MAX_PIPE_PREFLIGHT_CELLS):
+            raise _pipe_search_exhausted()
+        self.queries += 1
+        self.cells += cells
+
+
 class FairActions:
     def __init__(self, backend: Any) -> None:
         self.backend = backend
@@ -389,12 +416,146 @@ class FairActions:
     def _pole_fallback_rectangles(start: dict, end: dict, *, searched: int) -> list[tuple[int, int, int, int]]:
         return FairActions._fallback_rectangles(start, end, searched=searched, margin=16)
 
+    def _pipe_route(self, start: dict, end: dict, fluid: str, *,
+                    budget: _PipePreflightBudget | None = None) -> tuple[list, set]:
+        from ..planning.connections import shortest_pipe_path
+
+        route = None
+        existing: set = set()
+        searched = 0
+        for horizontal_first in (True, False):
+            rectangles = self._connection_corridor(
+                start, end, horizontal_first=horizontal_first,
+            )
+            searched += sum((right - left + 1) * (bottom - top + 1)
+                            for left, right, top, bottom in rectangles)
+            try:
+                if budget is None:
+                    buildable, existing = self._connection_cells("pipe", fluid, rectangles)
+                else:
+                    buildable, existing = self._connection_cells(
+                        "pipe", fluid, rectangles, budget=budget,
+                    )
+            except ValueError as error:
+                if budget is None or str(error) != "Connection search exceeds bounded area":
+                    raise
+                continue
+            try:
+                route = shortest_pipe_path(
+                    (start["x"], start["y"]), (end["x"], end["y"]),
+                    buildable, existing,
+                )
+                break
+            except ValueError:
+                continue
+
+        if route is None:
+            buildable, existing = set(), set()
+            complete = True
+            for rectangle in self._pipe_fallback_rectangles(
+                start, end, searched=searched,
+            ):
+                try:
+                    if budget is None:
+                        chunk_buildable, chunk_existing = self._connection_cells(
+                            "pipe", fluid, [rectangle],
+                        )
+                    else:
+                        chunk_buildable, chunk_existing = self._connection_cells(
+                            "pipe", fluid, [rectangle], budget=budget,
+                        )
+                except ValueError as error:
+                    if budget is None or str(error) != "Connection search exceeds bounded area":
+                        raise
+                    complete = False
+                    break
+                buildable.update(chunk_buildable)
+                existing.update(chunk_existing)
+            if complete:
+                try:
+                    route = shortest_pipe_path(
+                        (start["x"], start["y"]), (end["x"], end["y"]),
+                        buildable, existing,
+                    )
+                except ValueError:
+                    route = None
+        if route is None:
+            raise ConnectionPreflightRejected("no_connection_route")
+        return route, existing
+
+    @staticmethod
+    def _fluid_port_position(point: Any) -> dict:
+        values = (getattr(point, "x", None), getattr(point, "y", None))
+        coordinates = []
+        for value in values:
+            if type(value) not in (int, float):
+                raise ValueError("Invalid native fluid pipe port")
+            try:
+                coordinate = float(value)
+            except (OverflowError, ValueError) as error:
+                raise ValueError("Invalid native fluid pipe port") from error
+            if (not math.isfinite(coordinate) or abs(coordinate) > 1_000_000
+                    or not (coordinate * 2).is_integer()
+                    or coordinate - math.floor(coordinate) != 0.5):
+                raise ValueError("Invalid native fluid pipe port")
+            coordinates.append(coordinate)
+        return {"x": coordinates[0], "y": coordinates[1]}
+
+    def select_feasible_pipe_pair(self, source_points: list[Any],
+                                  target_points: list[Any], fluid: str
+                                  ) -> tuple[Any, Any, _PipePreflightBudget]:
+        """Choose the nearest deterministic native port pair with a proven route.
+
+        Candidate evaluation is read-only. The returned budget is passed into
+        ``connect`` so final route revalidation and the inventory check share
+        the same global query and cell limits.
+        """
+        if not isinstance(source_points, list) or not isinstance(target_points, list):
+            raise ValueError("Native fluid ports must be lists")
+        if not source_points or not target_points:
+            raise ConnectionPreflightRejected("missing_fluid_port")
+        budget = _PipePreflightBudget()
+        if len(source_points) * len(target_points) > MAX_FLUID_PORT_PAIRS:
+            raise _pipe_search_exhausted()
+
+        candidates = []
+        for source in source_points:
+            start = self._fluid_port_position(source)
+            for target in target_points:
+                end = self._fluid_port_position(target)
+                candidates.append((
+                    math.dist((start["x"], start["y"]), (end["x"], end["y"])),
+                    start["x"], start["y"], end["x"], end["y"], source, target,
+                ))
+        candidates.sort(key=lambda row: row[:5])
+
+        for _, _, _, _, _, source, target in candidates:
+            start = self._fluid_port_position(source)
+            end = self._fluid_port_position(target)
+            try:
+                self._pipe_route(start, end, fluid, budget=budget)
+            except ConnectionPreflightRejected as error:
+                if getattr(error, "search_exhausted", False):
+                    raise
+                if error.code == "no_connection_route":
+                    continue
+                raise
+            except ValueError as error:
+                if str(error) != "Connection search exceeds bounded area":
+                    raise
+                continue
+            return source, target, budget
+        raise ConnectionPreflightRejected("no_connection_route")
+
     def _connection_cells(self, name: str, fluid: str,
-                          rectangles: list[tuple[int, int, int, int]]) -> tuple[set, set]:
+                          rectangles: list[tuple[int, int, int, int]], *,
+                          budget: _PipePreflightBudget | None = None) -> tuple[set, set]:
         searched = sum((right - left + 1) * (bottom - top + 1)
                        for left, right, top, bottom in rectangles)
         if searched > 16_384:
             raise ValueError("Connection search exceeds bounded area")
+        if budget is not None:
+            budget.consume_query(searched)
         loops = "".join(
             f"for horizontal={left},{right} do for vertical={top},{bottom} do "
             "include(horizontal, vertical) end end; "
@@ -447,17 +608,61 @@ class FairActions:
             "then table.insert(result.buildable, position) end; end; "
             + loops + "rcon.print(helpers.table_to_json(result))"
         ))
-        return (
-            {(point["x"], point["y"]) for point in cells["buildable"]},
-            {(point["x"], point["y"]) for point in cells["existing"]},
-        )
+        if not isinstance(cells, dict) or set(cells) != {"buildable", "existing"}:
+            raise ValueError("Malformed native connection cell response")
+
+        def parse_cells(field: str) -> set[tuple[float, float]]:
+            values = cells[field]
+            # Factorio's table_to_json encodes an empty Lua table as an empty
+            # object; non-empty sequential tables are JSON arrays.
+            if isinstance(values, dict) and not values:
+                return set()
+            if not isinstance(values, list) or len(values) > searched:
+                raise ValueError("Malformed native connection cell list")
+
+            parsed: set[tuple[float, float]] = set()
+            for value in values:
+                if not isinstance(value, dict) or set(value) != {"x", "y"}:
+                    raise ValueError("Malformed native connection cell coordinate")
+                coordinates = []
+                for axis in ("x", "y"):
+                    raw = value[axis]
+                    if type(raw) not in (int, float):
+                        raise ValueError("Malformed native connection cell coordinate")
+                    try:
+                        coordinate = float(raw)
+                    except (OverflowError, ValueError) as error:
+                        raise ValueError("Malformed native connection cell coordinate") from error
+                    if (not math.isfinite(coordinate) or abs(coordinate) > 1_000_000
+                            or not (coordinate * 2).is_integer()
+                            or coordinate - math.floor(coordinate) != 0.5):
+                        raise ValueError("Malformed native connection cell coordinate")
+                    coordinates.append(coordinate)
+
+                point = (coordinates[0], coordinates[1])
+                tile_x, tile_y = math.floor(point[0]), math.floor(point[1])
+                if not any(
+                    left <= tile_x <= right and top <= tile_y <= bottom
+                    for left, right, top, bottom in rectangles
+                ):
+                    raise ValueError("Native connection cell lies outside its query bounds")
+                if point in parsed:
+                    raise ValueError("Duplicate native connection cell")
+                parsed.add(point)
+            return parsed
+
+        buildable = parse_cells("buildable")
+        existing = parse_cells("existing")
+        if buildable & existing or len(buildable) + len(existing) > searched:
+            raise ValueError("Inconsistent native connection cell classification")
+        return buildable, existing
 
     def connect(self, source: Any, target: Any, prototype: Any, fluid: str = "",
-                *, identity: dict | None = None) -> None:
+                *, identity: dict | None = None,
+                preflight_budget: _PipePreflightBudget | None = None) -> None:
         from fle.env import Direction, Position
         from ..planning.connections import (
             select_pole_positions,
-            shortest_pipe_path,
             shortest_wire_path,
             shortest_wire_path_between_regions,
         )
@@ -467,20 +672,23 @@ class FairActions:
             raise ValueError("Unsupported fair connection type")
         start = self.position(getattr(source, "position", source))
         end = self.position(getattr(target, "position", target))
-        route = None
-        route_error = None
-        searched = 0
-        for horizontal_first in (True, False):
-            rectangles = self._connection_corridor(
-                start, end, horizontal_first=horizontal_first,
+        if name == "pipe":
+            route, existing = self._pipe_route(
+                start, end, fluid, budget=preflight_budget,
             )
-            searched += sum((right - left + 1) * (bottom - top + 1)
-                            for left, right, top, bottom in rectangles)
-            buildable, existing = self._connection_cells(
-                name, fluid, rectangles,
-            )
-            origin, destination = (start["x"], start["y"]), (end["x"], end["y"])
-            if name == "small-electric-pole":
+        else:
+            route = None
+            route_error = None
+            searched = 0
+            for horizontal_first in (True, False):
+                rectangles = self._connection_corridor(
+                    start, end, horizontal_first=horizontal_first,
+                )
+                searched += sum((right - left + 1) * (bottom - top + 1)
+                                for left, right, top, bottom in rectangles)
+                buildable, existing = self._connection_cells(name, fluid, rectangles)
+                origin = (start["x"], start["y"])
+                destination = (end["x"], end["y"])
                 candidates = buildable | existing
                 if not candidates:
                     route_error = ValueError("No ordinary pole placement cells")
@@ -492,52 +700,38 @@ class FairActions:
                 ) > 3.5:
                     route_error = ValueError("No nearby ordinary pole placement")
                     continue
-            try:
-                if name == "small-electric-pole":
+                try:
                     route = shortest_wire_path(
                         origin, destination, buildable, existing, max_wire_distance=6
                     )
-                else:
-                    route = shortest_pipe_path(origin, destination, buildable, existing)
-                break
-            except ValueError as error:
-                route_error = error
-        if route is None and name == "pipe":
-            buildable, existing = set(), set()
-            for rectangle in self._pipe_fallback_rectangles(start, end, searched=searched):
-                chunk_buildable, chunk_existing = self._connection_cells(name, fluid, [rectangle])
-                buildable.update(chunk_buildable)
-                existing.update(chunk_existing)
-            try:
-                route = shortest_pipe_path(
-                    (start["x"], start["y"]), (end["x"], end["y"]), buildable, existing,
-                )
-            except ValueError as error:
-                route_error = error
-        if route is None and name == "small-electric-pole":
-            rectangles = self._pole_fallback_rectangles(start, end, searched=searched)
-            if rectangles:
-                buildable, existing = set(), set()
-                for rectangle in rectangles:
-                    chunk_buildable, chunk_existing = self._connection_cells(name, fluid, [rectangle])
-                    buildable.update(chunk_buildable)
-                    existing.update(chunk_existing)
-                candidates = buildable | existing
-                origin = (start["x"], start["y"])
-                destination = (end["x"], end["y"])
-                origins = {point for point in candidates if math.dist(point, origin) <= 3.5}
-                destinations = {point for point in candidates if math.dist(point, destination) <= 3.5}
-                try:
-                    route = shortest_wire_path_between_regions(
-                        origins, destinations, buildable, existing, max_wire_distance=6,
-                    )
+                    break
                 except ValueError as error:
                     route_error = error
-        if route is None:
-            raise ConnectionPreflightRejected("no_connection_route")
-        if name == "small-electric-pole":
+            if route is None:
+                rectangles = self._pole_fallback_rectangles(start, end, searched=searched)
+                if rectangles:
+                    buildable, existing = set(), set()
+                    for rectangle in rectangles:
+                        chunk_buildable, chunk_existing = self._connection_cells(name, fluid, [rectangle])
+                        buildable.update(chunk_buildable)
+                        existing.update(chunk_existing)
+                    candidates = buildable | existing
+                    origin = (start["x"], start["y"])
+                    destination = (end["x"], end["y"])
+                    origins = {point for point in candidates if math.dist(point, origin) <= 3.5}
+                    destinations = {point for point in candidates if math.dist(point, destination) <= 3.5}
+                    try:
+                        route = shortest_wire_path_between_regions(
+                            origins, destinations, buildable, existing, max_wire_distance=6,
+                        )
+                    except ValueError as error:
+                        route_error = error
+            if route is None:
+                raise ConnectionPreflightRejected("no_connection_route")
             route = select_pole_positions(route, max_wire_distance=6)
         required = sum(point not in existing for point in route)
+        if preflight_budget is not None:
+            preflight_budget.consume_query()
         available = decode_native(self.command(
             "rcon.print(helpers.table_to_json({count=storage.fair.actor().get_item_count("
             + json.dumps(name) + ")}))"

@@ -13,6 +13,14 @@ from ..state import GameSnapshot
 from ..telemetry import Trace, phase
 from .errors import ConnectionPreflightRejected, require_native_success
 
+MAX_NATIVE_FLUID_PORTS = 16
+
+
+def _fluid_port_search_exhausted() -> ConnectionPreflightRejected:
+    error = ConnectionPreflightRejected("no_connection_route")
+    error.search_exhausted = True
+    return error
+
 
 class NativeFactory:
     def __init__(self, backend: Any) -> None:
@@ -242,13 +250,28 @@ class NativeFactory:
             raise ConnectionPreflightRejected("missing_fluid_port")
         if not isinstance(points, list):
             raise ValueError("Invalid native fluid port response")
+        if len(points) > MAX_NATIVE_FLUID_PORTS:
+            raise _fluid_port_search_exhausted()
+        parsed = []
         for point in points:
+            if not isinstance(point, dict) or set(point) != {"x", "y"}:
+                raise ValueError("Invalid native fluid port response")
+            coordinates = {}
             for axis in ("x", "y"):
                 value = point[axis]
-                if (type(value) not in (int, float) or not math.isfinite(value)
-                        or not math.isclose(value - math.floor(value), 0.5)):
+                if type(value) not in (int, float):
                     raise ValueError("Invalid native pipe cell coordinate")
-        return [Position(**point) for point in points]
+                try:
+                    coordinate = float(value)
+                except (OverflowError, ValueError) as error:
+                    raise ValueError("Invalid native pipe cell coordinate") from error
+                if (not math.isfinite(coordinate) or abs(coordinate) > 1_000_000
+                        or not (coordinate * 2).is_integer()
+                        or coordinate - math.floor(coordinate) != 0.5):
+                    raise ValueError("Invalid native pipe cell coordinate")
+                coordinates[axis] = coordinate
+            parsed.append(Position(**coordinates))
+        return parsed
 
     def position(self, name: str, anchor: str) -> Any:
         from fle.env import Position
@@ -352,6 +375,7 @@ class NativeFactory:
             from fle.env import Position
 
             if parameters["kind"] == "pipe":
+                fair = self.backend._fair
                 branch = decode_native(self.call("pipe_source", parameters["source"],
                                               parameters["target"], parameters["fluid"]))
                 if branch:
@@ -364,19 +388,19 @@ class NativeFactory:
                 target_points = self.native_fluid_connection_points(
                     parameters["target"], parameters["fluid"], output=False
                 )
-                source, target = min(
-                    ((left, right) for left in source_points for right in target_points),
-                    key=lambda pair: math.dist(
-                        (pair[0].x, pair[0].y), (pair[1].x, pair[1].y)
-                    ),
+                source, target, preflight_budget = fair.select_feasible_pipe_pair(
+                    source_points, target_points, parameters["fluid"],
                 )
                 source = Position(x=source.x, y=source.y)
                 target = Position(x=target.x, y=target.y)
+                fair.connect(source, target, self.prototype(parameters["kind"]),
+                             parameters["fluid"], identity=parameters,
+                             preflight_budget=preflight_budget)
             else:
                 source, target = self.entity(parameters["source"]), self.entity(parameters["target"])
                 source, target = source.position, target.position
-            self.backend._fair.connect(source, target, self.prototype(parameters["kind"]),
-                                       parameters["fluid"], identity=parameters)
+                self.backend._fair.connect(source, target, self.prototype(parameters["kind"]),
+                                           parameters["fluid"], identity=parameters)
             return f"Constructed {parameters['kind']} connection; native topology must verify"
         if action == "factory_research":
             self.call("research", parameters["technology"])
