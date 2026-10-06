@@ -58,6 +58,9 @@ It preserves the blocked episode and completed-action age. A frozen counter,
 missing observation or stopped research restores the ordinary warning. Native
 uncertainty, unrelated holds, process stops and completion still take priority.
 This evidence grants no gameplay retry or research-completion credit.
+An observer gap as long as the stall interval resets the craft/research baseline:
+a larger counter after that gap cannot prove that the work happened recently.
+The original foreground-wait and completed-action timestamps are retained.
 
 By default, sample every 15 seconds, label heartbeats older than 30 seconds
 unknown, and flag 120 seconds without verified useful progress. Policy waits

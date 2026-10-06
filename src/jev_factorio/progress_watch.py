@@ -196,8 +196,12 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
                   progress_age_seconds=max(0, now - stamp) if stamp is not None else None,
                   pending=sample.get('pending') is True)
     craft_error = None
+    # After a long observer gap, a larger counter only proves work occurred
+    # sometime during that gap. Establish a fresh baseline before crediting it.
+    continuous_sample = number(prior.get('at')) and 0 <= now - prior['at'] < stall_seconds
     try:
-        craft = craft_progress(sample.get('background_craft'), prior.get('craft_progress'), now)
+        craft = craft_progress(sample.get('background_craft'),
+                               prior.get('craft_progress') if continuous_sample else None, now)
         result['craft_progress'] = craft
     except ValueError as error:
         craft = None
@@ -205,7 +209,8 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
     craft_stamp = craft.get('advanced_at') if craft else None
     research_error = None
     try:
-        research = research_progress(sample.get('native_research'), prior.get('research_progress'), now)
+        research = research_progress(sample.get('native_research'),
+                                     prior.get('research_progress') if continuous_sample else None, now)
         result['research_progress'] = research
     except ValueError as error:
         research = None

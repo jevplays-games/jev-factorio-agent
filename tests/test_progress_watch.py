@@ -324,3 +324,20 @@ def test_research_world_tick_alone_does_not_refresh_progress():
     first = classify(sample(native_research=research), {}, 1000, 'campaign')
     second = classify(sample(at=1100, native_research={**research, 'observed_tick': 999}), first, 1100, 'campaign')
     assert second['status'] == 'no_progress' and second['research_progress']['advanced_at'] is None
+
+
+@pytest.mark.parametrize('kind', ['native_research', 'background_craft'])
+def test_long_observer_gap_requires_new_baseline_before_progress_credit(kind):
+    if kind == 'native_research':
+        before = dict(technology='automation-2', force_index=1, progress=.2, observed_tick=100)
+        after = {**before, 'progress': .3, 'observed_tick': 101}
+    else:
+        before = craft()
+        after = {**before, 'finished': 9, 'last_progress_tick': 10928000, 'observed_tick': 10928001}
+    current = sample(checkpoint_status='blocked', reason='low choice confidence', **{kind: before})
+    first = classify(current, {}, 1000, 'campaign')
+    second = classify({**current, 'at': 1121, kind: after}, json.loads(json.dumps(first)), 1121, 'campaign')
+    assert second['status'] == 'blocked' and second['attention']
+    assert second['blocked_since'] == 1000
+    key = 'research_progress' if kind == 'native_research' else 'craft_progress'
+    assert second[key]['advanced_at'] is None
