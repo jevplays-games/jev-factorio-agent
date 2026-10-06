@@ -19,8 +19,8 @@ from test_capital_investments import Backend
 from test_registered_furnace_service import native
 
 
-def captured():
-    saved = json.loads((Path(__file__).parent/'fixtures/native-v31-buffer-demand.json').read_bytes())
+def captured(fixture='native-v31-buffer-demand.json'):
+    saved = json.loads((Path(__file__).parent/'fixtures'/fixture).read_bytes())
     state = GameSnapshot(**saved['snapshot'])
     _, catalog = native()
     assert saved['accepted_validation']['payload']['accepted'] is True
