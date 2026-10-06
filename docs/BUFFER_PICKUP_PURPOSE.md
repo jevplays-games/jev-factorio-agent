@@ -23,4 +23,21 @@ Replay the accepted capture with `tests/test_buffer_pickup_purpose.py`. Negative
 cases change ownership, stock, flow, timing, demand and catalog facts. A candidate
 and its forecast are not completion: strict JEV choice, native transfer checks
 and receipt verification still apply. Preserve the investment's original
-deadline, attempts and failures. No Lua changes or policy fallback are involved.
+deadline, attempts and failures. No installed runtime Lua changes or policy fallback are involved.
+
+## Attachment after the first completed buffer
+
+The V36-to-V37 preflight exposed a second boundary: the native input observer
+creates an unspent input-route proposal once output flow is proven. Attachment
+previously required both input cells and offers to be empty. Its assertion failed
+even though no input components were built or paid for. An empty RCON reply then
+surfaced as a JSON decoding error.
+
+For checkpoint-owned paid output buffers, qualify these unspent proposals with
+read-only guards. Require no input cells or paid parts, exact source and output
+identity, completed flow, bounded typed steps and geometry, and no registered
+input entities. Compare the proposal snapshot across connector readbacks.
+Malformed, paid, partial or changing proposals remain rejected. The qualifier
+never calls a stateful survey, clears offers, changes ownership, or installs Lua.
+`tests/test_native_unspent_input_attachment.py` executes the guards in Lua and
+checks that successful and rejected reads leave the native state unchanged.
