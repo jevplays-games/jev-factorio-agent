@@ -223,7 +223,9 @@ def _same_memory(memory, captured: dict) -> bool:
              and (field.name != 'blocked_recovery_archive'
                   or memory.blocked_recovery_archive is not None)
              and (field.name != 'blocked_recovery' or memory.blocked_recovery is not None)
-             and (field.name != 'async_decision' or memory.async_decision is not None)]
+             and (field.name != 'async_decision' or memory.async_decision is not None)
+             and (field.name != 'two_stage_decision' or memory.two_stage_decision is not None)
+             and (field.name != 'planner_fault_recovery' or memory.planner_fault_recovery is not None)]
     return (len(names) == len(captured)
             and all(name in captured and _same_value(getattr(memory, name), captured[name])
                     for name in names))
@@ -238,7 +240,7 @@ def checkpoint_data(memory) -> dict:
     """
     data = asdict(memory)
     for name in ('capital_investment', 'blocked_recovery_archive', 'blocked_recovery',
-                 'async_decision'):
+                 'async_decision', 'two_stage_decision', 'planner_fault_recovery'):
         if data.get(name) is None:
             data.pop(name, None)
     return data

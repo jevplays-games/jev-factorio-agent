@@ -387,7 +387,8 @@ class HierarchicalLoop(AgentLoop):
                  initialize_persistent_campaign: bool = False,
                  persistent_idle_observations: int = DEFAULT_IDLE_OBSERVATIONS,
                  async_decisions: bool = False,
-                 async_decision_timeout: float = 30.0):
+                 async_decision_timeout: float = 30.0,
+                 two_stage_decisions: bool = False):
         if factory_scheduling not in {"serial", "ready-work"}:
             raise ValueError("Unknown factory scheduling policy")
         self.factory_scheduling = factory_scheduling
@@ -396,6 +397,12 @@ class HierarchicalLoop(AgentLoop):
             raise ValueError("Unknown campaign policy")
         if policy != "deterministic" and jev is None:
             raise ValueError("Supply an explicit Jev client; mock use must be intentional")
+        if type(two_stage_decisions) is not bool:
+            raise ValueError("Two-stage decisions require an explicit boolean")
+        if two_stage_decisions and (policy != "jev" or not persist_recoverable_blocks
+                                    or checkpoint is None or async_decisions):
+            raise ValueError("Two-stage decisions require synchronous persistent strict JEV control")
+        self.two_stage_decisions = two_stage_decisions
         if type(async_decisions) is not bool:
             raise ValueError("Async decision mode must be explicitly enabled with a boolean")
         if (not isinstance(async_decision_timeout, (int, float))
@@ -2217,6 +2224,10 @@ class HierarchicalLoop(AgentLoop):
         an unseen candidate batch. Pending, provider, validation, and unknown
         outcomes remain one-use and stop this pass.
         """
+        if getattr(self, "two_stage_decisions", False):
+            from . import two_stage_controller
+            if two_stage_controller.pending(self):
+                return two_stage_controller.advance(self)
         from . import judgments
         from .blocked_persistence import (
             MAX_SELECTION_BATCHES_PER_STATE, is_recoverable_reason,
@@ -2381,6 +2392,16 @@ class HierarchicalLoop(AgentLoop):
                 "offered_candidate_count": len(offered),
                 "recorded_attempts": self._blocked_recovery_attempt_count(),
             }
+            if getattr(self, "two_stage_decisions", False):
+                from . import two_stage_controller
+                two_stage_controller.prepare(
+                    self, snapshot, state, remaining, context, questions, offered,
+                    metadata, input_sha256, source_authorized=batch_source_authorized,
+                    authorization_reason=authorization_reason)
+                result = two_stage_controller.advance(self)
+                # The existing caller durably finishes this batch. Subsequent
+                # polls may offer only the bounded, previously unseen remainder.
+                return result
             async_client = self.jev
             async_request = False
             if self.async_decisions:
@@ -2707,6 +2728,8 @@ class HierarchicalLoop(AgentLoop):
             validate_memory_state(
                 memory, self.provenance.get("code_revision"),
                 allow_source_change=self._reevaluate_blocked_once)
+        if memory.two_stage_decision is not None and not self.two_stage_decisions:
+            raise ValueError("Checkpoint requires its two-stage decision protocol")
         return memory
 
     def _consume_blocked_reevaluation(self, snapshot: GameSnapshot,
@@ -3985,6 +4008,9 @@ class HierarchicalLoop(AgentLoop):
                                      "does not justify waiting for speculative output."),
                         "ultimate_goal": self.memory.active_goal,
                     }
+                if self.two_stage_decisions:
+                    from .two_stage_decision import PROTOCOL
+                    state["decision_protocol"] = PROTOCOL
                 # Every resumable Jev selection is write-ahead persisted. Do
                 # not wait for the legacy stalled-decision threshold: a lost
                 # response on the first running request is already ambiguous.
