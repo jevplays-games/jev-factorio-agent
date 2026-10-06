@@ -144,7 +144,7 @@ def _qualified_output_pickup_chain(plan, facts, row):
         snapshot = SimpleNamespace(**{key: facts[key] for key in
             ('tick', 'session_id', 'world_kind', 'inventory', 'factory')},
             researched=facts.get('researched', []))
-        catalog = Catalog(observed['version'], observed['recipes'], {}, {},
+        catalog = Catalog(observed['version'], observed['recipes'], {}, observed.get('machines', {}),
                           observed['hand_categories'], observed['stack_sizes'])
         expected = _output_pickup_start_evidence(snapshot, catalog, plan)
         return (json.dumps(expected, sort_keys=True, allow_nan=False)

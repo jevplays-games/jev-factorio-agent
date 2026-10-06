@@ -154,7 +154,7 @@ def catalog_projection(snapshot, catalog, plans):
             source_recipe = catalog.recipes.get(role.removeprefix('recipe:'))
             if source_recipe is not None:
                 recipes[source_recipe['name']] = deepcopy(source_recipe)
-        if 'recipe_input_transfer' in (plan.materials or {}):
+        if any(key in (plan.materials or {}) for key in ('recipe_input_transfer', 'output_pickup')):
             machine = snapshot.factory.get('entities', {}).get(marker.get('source_role'), {})
             name = machine.get('name')
             if name in catalog.machines:machines[name] = deepcopy(catalog.machines[name])
