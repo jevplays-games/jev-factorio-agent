@@ -483,6 +483,8 @@ def cli() -> None:
     p.add_argument("--adopt-session", action="store_true",
                    help="Explicitly identify an older live FLE session without resetting it")
     args = p.parse_args()
+    if args.two_stage_decisions and args.async_decisions:
+        p.error("--two-stage-decisions cannot be combined with --async-decisions")
     duration_seconds = None
     if args.duration_hours is not None:
         if not math.isfinite(args.duration_hours) or args.duration_hours <= 0:

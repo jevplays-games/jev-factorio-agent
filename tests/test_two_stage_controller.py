@@ -152,6 +152,24 @@ def test_configuration_rejects_non_boolean_two_stage_mode(value):
         _configuration(config)
 
 
+def test_cli_rejects_combined_protocols_before_provider_or_backend(monkeypatch, capsys):
+    import sys
+    from jev_factorio import main, jev_client
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Combined protocols acquired a provider or backend")
+
+    monkeypatch.setattr(main, "make_backend", forbidden)
+    monkeypatch.setattr(jev_client, "make_client", forbidden)
+    monkeypatch.setattr(jev_client, "make_async_client", forbidden)
+    monkeypatch.setattr(sys, "argv", ["jev-factorio", "--two-stage-decisions",
+                                      "--async-decisions"])
+    with pytest.raises(SystemExit) as error:
+        main.cli()
+    assert error.value.code == 2
+    assert "cannot be combined" in capsys.readouterr().err
+
+
 def test_legacy_configuration_is_readable_but_new_mode_requires_persistence():
     from dataclasses import asdict
     from jev_factorio.research_log import RunConfiguration, _configuration
