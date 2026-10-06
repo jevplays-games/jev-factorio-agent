@@ -236,7 +236,7 @@ def test_sole_current_iron_ore_prerequisite_has_bounded_level_one_benefit_cue():
             .__setitem__('urgency', False),
         lambda rows: rows['candidate_evidence'][plan.id]
             .__setitem__('work_scope', 'lookahead'),
-        lambda rows: rows['local_objective']['primary_target']
+        lambda rows: rows['candidate_evidence'][plan.id]['local_target']
             .__setitem__('item', 'other'),
     ):
         altered = deepcopy(support)
@@ -1086,6 +1086,11 @@ def test_established_burner_bulk_gather_separates_current_need_from_refill():
         'fuel_prerequisite'] is None
     no_target = deepcopy(support)
     no_target['local_objective']['primary_target']['item'] = ''
+    assert not no_hint(no_target)  # Current binding rebuilds the retained candidate target.
+    no_target['selection_contract'].pop('candidate_objective_binding')
+    assert no_hint(no_target)  # Unmarked saved requests retain their old global semantics.
+    no_target = deepcopy(support)
+    no_target['candidate_evidence'][plan.id]['local_target']['item'] = ''
     assert no_hint(no_target)
     state.factory['production_sites']['sources'][role]['state'] = 'proposed'
     assert candidate_evidence(state, data, [plan])[plan.id]['fuel_prerequisite'] is None
@@ -1317,7 +1322,9 @@ def test_sole_current_iron_ore_input_transfer_has_bounded_level_one_benefit_cue(
     absent(lambda row: row.update(requires_investment=True))
     unsupported = deepcopy(support)
     unsupported['local_objective']['primary_target']['item'] = 'unrelated'
-    assert cue not in instructions(unsupported)
+    assert cue in instructions(unsupported)  # Rebind to the retained candidate's proof.
+    unsupported['selection_contract'].pop('candidate_objective_binding')
+    assert cue not in instructions(unsupported)  # Preserve historical unmarked requests.
     other = replace(plan, id=plan.id + ':other')
     assert cue not in instructions(support, (plan, other))
     altered = replace(plan, steps=(replace(plan.steps[0], parameters={
