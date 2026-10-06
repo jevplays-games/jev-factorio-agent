@@ -179,6 +179,44 @@ class NativeFactory:
                 self.prototype(state["name"]), Position(**state["position"])
             )
 
+    def native_pole_geometry(self, source_role: str, target_role: str) -> dict:
+        """Read actor-bound pole coverage geometry from the current native entities."""
+        if (not isinstance(source_role, str) or not source_role
+                or not isinstance(target_role, str) or not target_role
+                or source_role == target_role):
+            raise ValueError("Invalid native pole endpoint roles")
+        raw = self.command(
+            "local actor=assert(storage.fair.actor()); "
+            "assert(actor.character and actor.character.valid and actor.character.unit_number); "
+            "local function point(p) assert(p and p.x and p.y); return {x=p.x,y=p.y} end; "
+            "local function box(b) assert(b and b.left_top and b.right_bottom); "
+            "return {left_top=point(b.left_top),right_bottom=point(b.right_bottom),"
+            "orientation=b.orientation or 0} end; "
+            "local function endpoint(role) "
+            "local e=storage.campaign.entities[role]; "
+            "assert(e and e.valid and e.unit_number and e.surface==actor.surface "
+            "and e.force==actor.force); "
+            "return {role=role,name=e.name,unit_number=e.unit_number,position=point(e.position),"
+            "direction=e.direction,orientation=e.orientation,surface_index=e.surface.index,"
+            "force_index=e.force.index,quality=e.quality.name,bounding_box=box(e.bounding_box)} end; "
+            "local source=endpoint(" + json.dumps(source_role) + "); "
+            "local target=endpoint(" + json.dumps(target_role) + "); "
+            "assert(source.unit_number~=target.unit_number); "
+            "local pole=assert(prototypes.entity['small-electric-pole']); "
+            "local result={schema='jev.native-pole-geometry.v1',"
+            "base_version=script.active_mods.base,session_id=storage.jev_session_id,"
+            "tick=game.tick,actor_unit=actor.character.unit_number,"
+            "surface_index=actor.surface.index,force_index=actor.force.index,"
+            "supply_area_distance=pole.get_supply_area_distance('normal'),"
+            "maximum_wire_distance=pole.get_max_wire_distance('normal'),"
+            "source=source,target=target}; "
+            "rcon.print(helpers.table_to_json(result))"
+        )
+        result = decode_native(raw)
+        if not isinstance(result, dict):
+            raise ValueError("Malformed native pole geometry response")
+        return result
+
     @staticmethod
     def fluid_connection_points(entity: Any, fluid: str, *, output: bool) -> list[Any]:
         """Return FLE-observed pipe cells for one fluid without mutating the world."""
@@ -396,6 +434,21 @@ class NativeFactory:
                 fair.connect(source, target, self.prototype(parameters["kind"]),
                              parameters["fluid"], identity=parameters,
                              preflight_budget=preflight_budget)
+            elif parameters["kind"] == "small-electric-pole":
+                fair = self.backend._fair
+                geometry = fair.validate_pole_geometry(
+                    self.native_pole_geometry(parameters["source"], parameters["target"]),
+                    base_version=self.catalog.version,
+                    source_role=parameters["source"],
+                    target_role=parameters["target"],
+                )
+                source = Position(**geometry["source"]["position"])
+                target = Position(**geometry["target"]["position"])
+                fair.connect(
+                    source, target, self.prototype(parameters["kind"]),
+                    parameters["fluid"], identity=parameters,
+                    pole_geometry=geometry,
+                )
             else:
                 source, target = self.entity(parameters["source"]), self.entity(parameters["target"])
                 source, target = source.position, target.position

@@ -97,7 +97,7 @@ def test_unshared_helper_manager_is_not_claimed_as_profiled_rpc():
     assert backend.last_observation_profile['helper_retry_attempts'] is None
 
 
-def test_action_factory_connect_profiles_opaque_entity_helpers_and_preserves_error(monkeypatch):
+def test_native_entity_lookup_profiles_opaque_helpers_and_preserves_error(monkeypatch):
     from jev_factorio.backends.fle import FleBackend, SessionRcon
     from jev_factorio.backends.native_factory import NativeFactory
 
@@ -106,7 +106,6 @@ def test_action_factory_connect_profiles_opaque_entity_helpers_and_preserves_err
     expected_error = RuntimeError('private native detail')
     helper_calls = 0
     sent = []
-    connected = []
     entity_lookups = []
 
     def send_command(command):
@@ -132,13 +131,72 @@ def test_action_factory_connect_profiles_opaque_entity_helpers_and_preserves_err
     tools = NS(get_entity=get_entity)
     backend = FleBackend()
     backend._instance = NS(namespace=tools, rcon_client=session, _native_attachment=None)
-    backend._fair = NS(connect=lambda *args, **kwargs: connected.append((args, kwargs)))
     factory = NativeFactory.__new__(NativeFactory)
     factory.backend = backend
     factory.prototype = lambda name: name
+
+    ledger = timing.Ledger()
+    token = timing._CURRENT.set(ledger)
+    try:
+        with pytest.raises(RuntimeError) as caught:
+            with ledger.span('iteration'):
+                for role in ('source', 'target', 'source', 'target'):
+                    assert factory.entity(role).position.x in (1, 3)
+    finally:
+        timing._CURRENT.reset(token)
+
+    assert caught.value is expected_error
+    report = ledger.snapshot(1, 'error')
+    assert report['partition_complete'] is True
+    assert report['phases']['fle_helper']['calls'] == 4
+    assert report['phases']['fle_helper']['failed'] == 1
+    assert report['native_io']['command_calls'] == 8
+    assert report['native_io']['failed_calls'] == 1
+    assert len(sent) == 8
+    assert len(entity_lookups) == 4
+    assert 'private native detail' not in json.dumps(report)
+
+
+def test_action_factory_connect_profiles_native_geometry_and_preserves_error(monkeypatch):
+    from jev_factorio.backends.fair_actions import FairActions
+    from jev_factorio.backends.fle import FleBackend, SessionRcon
+    from jev_factorio.backends.native_factory import NativeFactory
+
+    monkeypatch.setitem(sys.modules, 'fle.env', NS(Position=lambda **values: NS(**values)))
+    expected_error = RuntimeError('private native geometry detail')
+    sent, connected = [], []
+
+    def endpoint(role, unit, x):
+        return {'role': role, 'name': 'assembling-machine-1', 'unit_number': unit,
+                'position': {'x': x, 'y': 0.5}, 'direction': 0, 'orientation': 0.0,
+                'surface_index': 1, 'force_index': 1, 'quality': 'normal',
+                'bounding_box': {'left_top': {'x': x - 1, 'y': -0.5},
+                                 'right_bottom': {'x': x + 1, 'y': 1.5},
+                                 'orientation': 0.0}}
+
+    geometry = {'schema': 'jev.native-pole-geometry.v1', 'base_version': '2.0.77',
+                'session_id': 'offline-geometry-profile', 'tick': 10, 'actor_unit': 7,
+                'surface_index': 1, 'force_index': 1,
+                'supply_area_distance': 2.5, 'maximum_wire_distance': 7.5,
+                'source': endpoint('source', 101, 0.5),
+                'target': endpoint('target', 202, 8.5)}
+
+    def send_command(command):
+        sent.append(command)
+        assert 'bounding_box=box(e.bounding_box)' in command
+        if len(sent) == 2:
+            raise expected_error
+        return json.dumps(geometry)
+
+    backend = FleBackend()
+    backend._instance = NS(namespace=NS(), rcon_client=SessionRcon(NS(send_command=send_command)))
+    backend._fair = NS(validate_pole_geometry=FairActions.validate_pole_geometry,
+                       connect=lambda *args, **kwargs: connected.append((args, kwargs)))
+    factory = NativeFactory.__new__(NativeFactory)
+    factory.backend, factory.catalog = backend, NS(version='2.0.77')
+    factory.prototype = lambda name: name
     parameters = {'source': 'source', 'target': 'target',
                   'kind': 'small-electric-pole', 'fluid': 'electricity'}
-
     ledger = timing.Ledger()
     token = timing._CURRENT.set(ledger)
     try:
@@ -153,14 +211,13 @@ def test_action_factory_connect_profiles_opaque_entity_helpers_and_preserves_err
     assert caught.value is expected_error
     report = ledger.snapshot(1, 'error')
     assert report['partition_complete'] is True
-    assert report['phases']['fle_helper']['calls'] == 4
-    assert report['phases']['fle_helper']['failed'] == 1
-    assert report['native_io']['command_calls'] == 8
+    assert report['native_io']['command_calls'] == 2
     assert report['native_io']['failed_calls'] == 1
-    assert len(sent) == 8
-    assert len(entity_lookups) == 4
-    assert len(connected) == 1
-    assert 'private native detail' not in json.dumps(report)
+    assert report['phases'].get('fle_helper', {}).get('calls', 0) == 0
+    assert len(sent) == 2 and len(connected) == 1
+    assert connected[0][1]['pole_geometry'] == geometry
+    assert connected[0][1]['identity'] == parameters
+    assert 'private native geometry detail' not in json.dumps(report)
 
 
 @pytest.mark.parametrize('amount,unit,nanos', [('2.5','ms',2500000), ('3','us',3000), ('1','s',1000000000)])
