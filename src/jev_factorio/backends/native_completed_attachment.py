@@ -53,6 +53,7 @@ def qualify_completed_connectors(client, result, checkpoint_binding, *, complete
         expected_fields = {'sites', 'output_offers', 'outpost_offers'}
         if output_commitments:
             expected_fields.add('output_cells')
+            expected_fields.add('input_offers')
         if (not isinstance(settled, dict)
                 or set(settled) != expected_fields):
             raise RuntimeError('Settled factory qualification is missing')
