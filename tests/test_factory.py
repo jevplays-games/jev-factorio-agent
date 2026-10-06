@@ -315,11 +315,17 @@ def test_native_pipe_connection_uses_native_fluid_handler_points(monkeypatch):
         position=fle.Position(x=-26.5, y=-28),
     )
     connections = []
+    preflight_budget = object()
     factory = object.__new__(NativeFactory)
     factory.backend = SimpleNamespace(
         _tools=SimpleNamespace(),
-        _fair=SimpleNamespace(connect=lambda *arguments, **keywords:
-                              connections.append((arguments, keywords))),
+        _fair=SimpleNamespace(
+            select_feasible_pipe_pair=lambda sources, targets, fluid: (
+                sources[0], targets[0], preflight_budget,
+            ),
+            connect=lambda *arguments, **keywords:
+                connections.append((arguments, keywords)),
+        ),
     )
     monkeypatch.setattr(factory, "entity", lambda role: pytest.fail("FLE port geometry used"))
     def native_points(role, fluid, *, output):
@@ -343,7 +349,7 @@ def test_native_pipe_connection_uses_native_fluid_handler_points(monkeypatch):
     ), {"identity": {
         "source": "utility:water", "target": "utility:boiler",
         "kind": "pipe", "fluid": "water",
-    }})]
+    }, "preflight_budget": preflight_budget})]
 
 
 def test_native_observation_admits_only_a_fair_native_wood_target(monkeypatch):
