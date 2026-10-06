@@ -7,7 +7,7 @@ import math
 from copy import deepcopy
 from dataclasses import asdict, replace
 
-from ..input_routes import COMMAND, flow_complete, remaining, sources
+from ..input_routes import COMMAND, current, flow_complete, remaining, sources
 from ..production_sites import sources as production_sites, summary as site_summary
 from ..output_buffers import flow_complete as output_flow_complete
 from .output_buffers import OutputBufferPlanner
@@ -56,18 +56,29 @@ class InputRoutePlanner(OutputBufferPlanner):
 
     def candidates(self):
         plans = super().candidates()
-        # An unstarted input-route kit is optional capacity investment. Keep
+        # An unstarted input route is optional capacity investment, including
+        # when its kit is complete and the first build is ready. Keep
         # its bounded proposal, but expose the existing manual production path
         # as an independent choice. Owned route service remains serial.
         marker = (plans[0].materials or {}).get('input_route_kit_prerequisite') if plans else None
-        if (marker and marker.get('state') == 'proposed'
+        proposed_build = False
+        if plans and len(plans[0].steps) == 1 and plans[0].steps[0].action == COMMAND:
+            parameters = plans[0].steps[0].parameters
+            row = sources(self.snapshot).get(parameters['source'])
+            proposed_build = bool(row and row['state'] == 'proposed' and not row['parts']
+                                  and row['layout'] == parameters['layout']
+                                  and current(row, self.snapshot))
+        if ((marker and marker.get('state') == 'proposed' or proposed_build)
                 and not getattr(self, '_defer_proposed_input_route', False)):
             worker = type(self)(self.catalog, self.snapshot, self.goal,
                                 self.collection_batch, self.max_candidates)
             worker._defer_proposed_input_route = True
+            worker._economic_acquiring = getattr(self, '_economic_acquiring', False)
             alternatives = super(InputRoutePlanner, worker).candidates()
             if not worker._buffer_service:
-                unique = {plan.id: plan for plan in plans}
+                # A ready optional build must not let old lookahead candidates
+                # fill the frontier before its ordinary production alternative.
+                unique = {plan.id: plan for plan in (plans[:1] if proposed_build else plans)}
                 for plan in alternatives:
                     step = plan.steps[0]
                     if step.allowed(self.snapshot) and not step.satisfied(self.snapshot):
@@ -81,6 +92,8 @@ class InputRoutePlanner(OutputBufferPlanner):
                             suffix = hashlib.sha256(encoded.encode()).hexdigest()
                             plan = replace(plan, id=f"{plan.id}:manual:{suffix}")
                         unique.setdefault(plan.id, plan)
+                for plan in plans:
+                    unique.setdefault(plan.id, plan)
                 plans = list(unique.values())[:self.max_candidates]
         sites = site_summary(self.snapshot)
         diagnostics = self.factory.get("input_routes", {}).get("diagnostics", {})
