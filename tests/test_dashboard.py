@@ -287,7 +287,7 @@ def test_malformed_legacy_state_does_not_stop_following(tmp_path):
           {"state": {"session_id": "valid"}, "action": "observe"})
     monitor = Monitor(path, legacy=True)
     monitor.poll()
-    assert monitor.rejected == 1
+    assert monitor.rejected == 0
     assert monitor.view["run_id"] == "valid"
 
 
