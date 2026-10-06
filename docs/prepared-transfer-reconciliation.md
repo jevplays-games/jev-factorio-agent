@@ -6,7 +6,8 @@ For ordinary native factory roles, `NativeFactory` records an `approach` phase,
 then a `transfer_rpc` phase around the Lua `campaign.transfer` call. The special
 qualified bootstrap-output extractor uses a separate endpoint and is not
 covered by this inventory map. See the [Lua endpoint](../src/jev_factorio/lua/factory.lua#L253-L303)
-and its [Python adapter](../src/jev_factorio/backends/native_factory.py#L387-L408).
+and its [Python adapter](../src/jev_factorio/backends/native_factory.py#L387-L408), plus the
+[controller's receipt-recovery gates](../src/jev_factorio/controller.py#L1228-L1380).
 
 The regular endpoint reads insert material from the bound agent's
 `character_main` inventory. For extraction, it reads the machine's output
@@ -108,12 +109,21 @@ not mark the step successful and does not call the transfer endpoint again.
 Unchanged ambiguous attempts retain their existing behavior.
 
 A prepared action with no transfer-RPC phase keeps the separate one-time retry
-path only when no receipt exists and the exact source remains reserved and
-available. Missing or mismatched receipts, future or pre-attempt ticks,
+path only when no receipt exists and the action-specific source condition
+still holds: an insert's full reservation and inventory are retained, or an
+extract's requested output remains at its machine under the empty-reservation
+condition. Absence alone does not authorize that retry: it requires this
+transfer step's original new FLE attempt for the same action and receipt, a
+dispatch phase of `started`, an approach phase of `started` or `returned`, no
+transfer-RPC phase or observation error, `player_bound: true`, the matching
+pinned machine unit, and a currently allowed step. Outside that narrowly gated
+no-RPC path, missing or mismatched receipts, future or pre-attempt ticks,
 observations with `player_bound` false, changed machine units, legacy attempts,
-and non-FLE observations remain uncertain with pending ownership retained. A
-malformed phase or session mismatch is rejected during checkpoint validation or
-by the controller's current-observation session check before another dispatch.
+and non-FLE observations do not reconcile the effect. Pending ownership
+remains; when the pending poll or timeout budget expires, the controller marks
+an unresolved non-idle action uncertain rather than replaying it. A malformed
+phase or session mismatch is rejected during checkpoint validation or by the
+controller's current-observation session check before another dispatch.
 These offline tests exercise the real `NativeFactory` phase wrapper
 and Lua transfer function through an in-memory Lua runtime; they do not claim a
 live Factorio run or native acceptance.
