@@ -1533,6 +1533,15 @@ Only report repaired when every acceptance requirement is verified.
                 digest.update(b"<missing>")
         return head, diff + "\n" + status + "\n" + digest.hexdigest()
 
+    @staticmethod
+    def _source_identity_digest(identity: tuple[str, str] | None) -> str | None:
+        """Bind a repair attempt to its starting legacy source identity."""
+        if (not isinstance(identity, tuple) or len(identity) != 2
+                or any(not isinstance(value, str) for value in identity)):
+            return None
+        encoded = json.dumps(identity, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
     def independent_review(self, result: dict, head: str) -> bool:
         path = result.get("independent_review")
         if not isinstance(path, str) or not result.get("repair_agent"):
@@ -2032,9 +2041,29 @@ Only report repaired when every acceptance requirement is verified.
                    for key, count in previous.get("failures", {}).items()):
                 return False
             if result.get("kind") == "operational":
+                if "attempt_source_identity_sha256" in self.state:
+                    incident = self.state.get("incident") or {}
+                    expected_revision = incident.get("code_revision")
+                    current_revision = self.snapshot_revision()
+                    expected_identity = self.state.get("attempt_source_identity_sha256")
+                    identity_matches = (
+                        isinstance(expected_identity, str)
+                        and re.fullmatch(r"[0-9a-f]{64}", expected_identity) is not None
+                        and self._source_identity_digest(self.source_identity()) == expected_identity
+                    )
+                    provenance_matches = (
+                        isinstance(expected_revision, dict)
+                        and current_revision is not None
+                        and current_revision == expected_revision
+                    )
+                else:
+                    # Keep direct legacy validator callers compatible. Actual
+                    # repair() attempts always carry the stricter durable witness.
+                    identity_matches = (source_before is not None
+                                        and self.source_identity() == tuple(source_before))
+                    provenance_matches = True
                 valid = (result.get("operational_verified") is True
-                         and source_before is not None
-                         and self.source_identity() == tuple(source_before))
+                         and identity_matches and provenance_matches)
                 if valid:
                     self._validated_repair_checkpoint_digest = checkpoint_digest
                 return valid
@@ -2081,16 +2110,22 @@ Only report repaired when every acceptance requirement is verified.
             return
         incident_id = self.state.get("attempt_incident_id")
         revision = self.snapshot_revision()
-        if not self.record_revision(revision, "interrupted_repair",
-                                    incident_id=incident_id, attempt=self.state["attempt"],
-                                    accepted=False, actor_type="unknown",
-                                    intervention_type="repair_attempt"):
-            return
-        self.transition("repair_interrupted", {"repair_attempt_open": False},
+        if revision is not None:
+            if not self.record_revision(
+                    revision, "interrupted_repair", incident_id=incident_id,
+                    attempt=self.state["attempt"], accepted=False,
+                    actor_type="unknown", intervention_type="repair_attempt"):
+                return
+        self.transition("repair_interrupted", {
+            "repair_attempt_open": False,
+            "attempt_source_identity_sha256": None,
+        },
                         incident_id=incident_id, attempt=self.state["attempt"],
                         accepted=False, outcome="unknown", intervention_type="repair_attempt",
                         source_before=self.state.get("attempt_source_before"),
-                        source_after=revision)
+                        source_after=revision,
+                        attempt_source_identity_sha256=self.state.get(
+                            "attempt_source_identity_sha256"))
 
     def repair(self, reason: str) -> bool:
         # A bad evidence destination must stop recovery before an interrupted
@@ -2111,13 +2146,16 @@ Only report repaired when every acceptance requirement is verified.
         previous, source_before = incident["checkpoint"], incident["source"]
         attempt = self.state["attempt"] + 1
         attempt_source_before = self.snapshot_revision()
+        attempt_source_identity_sha256 = self._source_identity_digest(self.source_identity())
         if not self.transition("repair_started", {
             "attempt": attempt, "repair_attempt_open": True,
             "repair_budget_incident_id": incident["incident_id"],
             "incident_repair_attempts": incident_attempts + 1,
             "attempt_incident_id": incident["incident_id"],
             "attempt_source_before": attempt_source_before,
-        }, attempt=attempt, actor_type="repair_agent", source_before=attempt_source_before):
+            "attempt_source_identity_sha256": attempt_source_identity_sha256,
+        }, attempt=attempt, actor_type="repair_agent", source_before=attempt_source_before,
+            attempt_source_identity_sha256=attempt_source_identity_sha256):
             return False
         result = self.config.state_dir / f"repair-{attempt}.json"
         prompt = self.config.state_dir / f"repair-{attempt}.txt"
@@ -2164,6 +2202,18 @@ Only report repaired when every acceptance requirement is verified.
         if (accepted and declared == "operational" and incident.get("code_revision") is not None
                 and revision is not None and incident["code_revision"] != revision):
             accepted = False
+        if accepted and declared == "operational":
+            # Recheck both witnesses after validation. A previously unknown
+            # Gitlink-era source may recover only to the trusted incident
+            # revision, with no identity change during this repair attempt.
+            accepted = (
+                revision is not None
+                and incident.get("code_revision") is not None
+                and revision == incident["code_revision"]
+                and attempt_source_identity_sha256 is not None
+                and self._source_identity_digest(self.source_identity())
+                == attempt_source_identity_sha256
+            )
         if accepted and declared == "code":
             accepted = (revision is not None and validated_source is not None
                         and revision == validated_source
@@ -2174,17 +2224,30 @@ Only report repaired when every acceptance requirement is verified.
                 final_checkpoint = self.checkpoint()
                 accepted = (validated_checkpoint_digest is not None
                             and self._last_checkpoint_digest == validated_checkpoint_digest)
-                if accepted and declared == "code":
-                    # The first final checkpoint read can overlap a source
-                    # change, so take the validated source fingerprint again
-                    # after that read. Then read the checkpoint once more: a
-                    # replacement during source hashing must also invalidate
-                    # the pair of witnesses before attribution is committed.
+                if accepted and declared in {"code", "operational"}:
+                    # Pair the final source and checkpoint reads. The first
+                    # checkpoint read may overlap a source change; the source
+                    # witness therefore follows it. A checkpoint replacement
+                    # during that source read must be seen by the second
+                    # checkpoint read before attribution can be committed.
+                    # These bounded observations detect drift across either
+                    # read; they do not claim a global filesystem lock.
                     final_revision = self.snapshot_revision()
                     revision = final_revision
-                    accepted = (validated_source is not None
-                                and final_revision == validated_source
-                                and final_revision.get("commit") == report.get("commit"))
+                    if declared == "code":
+                        accepted = (validated_source is not None
+                                    and final_revision == validated_source
+                                    and final_revision.get("commit") == report.get("commit"))
+                    else:
+                        final_source_identity = self._source_identity_digest(self.source_identity())
+                        expected_revision = incident.get("code_revision")
+                        accepted = (
+                            final_revision is not None
+                            and isinstance(expected_revision, dict)
+                            and final_revision == expected_revision
+                            and attempt_source_identity_sha256 is not None
+                            and final_source_identity == attempt_source_identity_sha256
+                        )
                     if accepted:
                         final_checkpoint = self.checkpoint()
                         accepted = (self._last_checkpoint_digest
@@ -2194,7 +2257,10 @@ Only report repaired when every acceptance requirement is verified.
         accepted = bool(accepted and not self.stop_requested)
         intervention = ("code_repair" if accepted and declared == "code" else
                         "operational_recovery" if accepted else "repair_attempt")
-        updates = {"repair_attempt_open": False}
+        updates = {
+            "repair_attempt_open": False,
+            "attempt_source_identity_sha256": None,
+        }
         if quota_blocked:
             updates.update(repair_account_blocked=True, phase="blocked")
         if accepted:
@@ -2206,6 +2272,7 @@ Only report repaired when every acceptance requirement is verified.
             "declared_kind": declared, "intervention_type": intervention,
             "actor_type": "repair_agent", "attempt_source_before": attempt_source_before,
             "source_before": attempt_source_before, "source_after": revision,
+            "attempt_source_identity_sha256": attempt_source_identity_sha256,
             "result_file": result.name,
             "result_sha256": hashlib.sha256(raw_result).hexdigest() if raw_result else None,
             "validation_seconds": validation_seconds,
@@ -2239,10 +2306,12 @@ Only report repaired when every acceptance requirement is verified.
                 result_fields["source_before"] = attempt_source_before
             durable = self.transition(event_kind, updates, **result_fields)
         else:
-            if not self.record_revision(revision, "repair_attempt", attempt=attempt,
-                                        incident_id=incident["incident_id"], accepted=False,
-                                        actor_type="repair_agent", intervention_type="repair_attempt"):
-                return False
+            if revision is not None:
+                if not self.record_revision(
+                        revision, "repair_attempt", attempt=attempt,
+                        incident_id=incident["incident_id"], accepted=False,
+                        actor_type="repair_agent", intervention_type="repair_attempt"):
+                    return False
             durable = self.transition("repair_finished", updates, **result_fields)
         return accepted and durable
 
