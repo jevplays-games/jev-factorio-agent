@@ -23,4 +23,4 @@ jobs:
         run: python -m pip install '.[dashboard-test]'
       - run: python -m playwright install --with-deps chromium
       - name: Reader, real controller equivalence, and live browser tests
-        run: python -m pytest tests/test_dashboard.py tests/test_dashboard_integration.py tests/test_dashboard_browser.py -q
+        run: python -m pytest tests/test_dashboard.py tests/test_dashboard_integration.py tests/test_dashboard_browser.py tests/test_dashboard_evidence_pr25.py tests/test_dashboard_evidence_pr25_browser.py -q
