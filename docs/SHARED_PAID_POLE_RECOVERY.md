@@ -18,6 +18,13 @@ another. Pipes and unknown same-force entities retain their previous checks.
 Later routes may reuse a directly paid cell of an already shared route; no
 recursive ownership inference is needed.
 
+The last pole-crafting receipt must also remain qualified during attachment.
+The previous completed-craft selector excluded every foreground pending action;
+this exact shared-pole boundary may retain its uniquely verified earlier craft.
+Its completion must precede the connector dispatch. The native recipe, original
+craft-step fingerprint, paid receipt, and completion clocks still have to match.
+No craft output is credited again, including output already spent on poles.
+
 ## Efficient recovery
 
 1. Preserve the held checkpoint, pending action, original attempt, terminal

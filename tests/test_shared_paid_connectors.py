@@ -23,6 +23,8 @@ def retained():
     data = json.loads(FIXTURE.read_text())
     memory = CampaignMemory(target='rocket_launch', **data['checkpoint'])
     memory.active_goal = memory.active_plan['goal']
+    memory.history = data['completed_craft_evidence']['history']
+    memory.attempt_outcomes = data['completed_craft_evidence']['attempt_outcomes']
     snapshot = GameSnapshot(**data['snapshot'])
     return memory, snapshot, Plan.from_dict(memory.active_plan).steps[0]
 
@@ -151,6 +153,7 @@ def test_attachment_compares_shared_and_donor_cells_without_mutation(tamper):
     from jev_factorio.backends.native_completed_attachment import qualify_completed_connectors
     from jev_factorio.backends.native_current_attachment import current_connector_snapshot_command
     from test_native_current_attachment import current
+    from jev_factorio.backends.native_completed_craft import checkpoint_completed_craft
     memory, snapshot, _ = retained()
     binding = deepcopy(memory.connector_ownership)
     result = current()
@@ -161,26 +164,33 @@ def test_attachment_compares_shared_and_donor_cells_without_mutation(tamper):
     if tamper == 'donor_page': donor['cells'][0]['unit_number'] += 999
     ownership = deepcopy(snapshot.factory['connector_ownership'])
     ownership.pop('active', None)
+    craft = checkpoint_completed_craft(asdict(memory))
+    assert craft['id'] == 'a366335a74754fa5a625dcbf3cba9f45'
+    # Earlier retained native catalog, same game version; no invented recipe.
+    catalog = json.loads(FIXTURE.with_name('native-v22-capital-power.json').read_text())
+    recipe = {k: catalog['catalog']['recipes']['small-electric-pole'][k]
+              for k in ('energy', 'ingredients', 'products')}
     reads = []
 
     class Client:
         def send_command(self, command):
             if 'connector_page(' in command:
                 return native.command(command)
-            assert command == current_connector_snapshot_command(result, completed_routes=True)
+            assert command == current_connector_snapshot_command(result, completed_routes=True, completed_craft=craft)
             reads.append(command)
             row = deepcopy(ownership)
             if tamper == 'second_summary' and len(reads) == 2:
                 row['routes'][donor['id']]['source_unit'] += 1
             return json.dumps(dict(schema=1, session_id=memory.session_id, actor_unit=2543,
-                                   tick=snapshot.tick, connector_ownership=row, completed_craft=False,
+                                   tick=snapshot.tick, connector_ownership=row,
+                                   completed_craft=snapshot.factory['craft_job'], completed_craft_recipe=recipe,
                                    settled_factory=dict(sites={}, output_offers={}, outpost_offers={})))
 
     if tamper:
         with pytest.raises((ValueError, RuntimeError)):
-            qualify_completed_connectors(Client(), result, binding)
+            qualify_completed_connectors(Client(), result, binding, completed_craft=craft)
     else:
-        assert qualify_completed_connectors(Client(), result, binding)['connector_snapshot_qualified']
+        assert qualify_completed_connectors(Client(), result, binding, completed_craft=craft)['connector_snapshot_qualified']
         assert len(reads) == 2 and len(native.calls) == 4
     assert binding == memory.connector_ownership
 
@@ -213,7 +223,8 @@ def test_installed_lua_shared_routes_attach_without_rewriting_ownership():
     from test_native_optional_profiles import _owner_state_json
     from jev_factorio.backends.native_attachment import readback
     lua, client, old_binding = installed_case()
-    memory, _, _ = retained()
+    from jev_factorio.backends.native_completed_craft import checkpoint_completed_craft
+    memory, snapshot, _ = retained()
     binding = deepcopy(memory.connector_ownership)
     owner = next(iter(old_binding['routes'].values()))
     binding['session_id'] = owner['session_id']
@@ -240,6 +251,34 @@ def test_installed_lua_shared_routes_attach_without_rewriting_ownership():
         if unit then return {valid=true,unit_number=unit,force=p.force} end
       end
     ''')
+    craft = checkpoint_completed_craft(asdict(memory))
+    job = deepcopy(snapshot.factory['craft_job'])
+    job.update(session_id=owner['session_id'], unit_number=owner['actor_unit'])
+    lua.globals().jev_fle_runtime.campaign.craft_jobs.job = lua.table_from(job, recursive=True)
+    catalog = json.loads(FIXTURE.with_name('native-v22-capital-power.json').read_text())
+    recipe = catalog['catalog']['recipes']['small-electric-pole']
+    lua.eval('jev_fle_runtime.agent_characters[1].force').recipes = lua.table_from(
+        {'small-electric-pole': recipe}, recursive=True)
+    lua.globals().game.tick = snapshot.tick
     before = _owner_state_json(lua)
-    assert readback(client, checkpoint_binding=binding)['connector_snapshot_qualified']
+    assert readback(client, checkpoint_binding=binding, completed_craft=craft)['connector_snapshot_qualified']
     assert _owner_state_json(lua) == before
+
+
+@pytest.mark.parametrize('change', ['ambiguous', 'background', 'unknown_pole', 'overlap'])
+def test_completed_craft_cannot_supply_authority_for_other_pending_boundaries(change):
+    from jev_factorio.backends.native_completed_craft import checkpoint_completed_craft
+    memory, _, step = retained()
+    data = asdict(memory)
+    if change == 'ambiguous': data['pending']['dispatch'] = 'ambiguous'
+    elif change == 'background': data['background_job'] = {}
+    elif change == 'unknown_pole':
+        data['connector_ownership']['routes'][connection_key(step.parameters)]['cells'][0]['unit_number'] += 999
+    elif change == 'overlap':
+        latest = max(data['attempt_outcomes'], key=lambda row: row['started_tick'])
+        latest['finished_tick'] = data['pending']['started_tick'] + 1
+    if change == 'overlap':
+        with pytest.raises(ValueError, match='overlaps'):
+            checkpoint_completed_craft(data)
+    else:
+        assert checkpoint_completed_craft(data) is None

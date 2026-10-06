@@ -2954,5 +2954,233 @@
     "victory": false,
     "victory_source": null,
     "world_kind": "fle"
+  },
+  "completed_craft_evidence": {
+    "history": [
+      {
+        "job": "cdfebb3f628e409786a47ca2ecc5f613",
+        "kind": "background_job_completed",
+        "outputs": {
+          "copper-cable": 6
+        },
+        "plan": "factory:factory_craft:copper-cable",
+        "tick": 12713900
+      },
+      {
+        "job": "a366335a74754fa5a625dcbf3cba9f45",
+        "kind": "background_job_completed",
+        "outputs": {
+          "small-electric-pole": 6
+        },
+        "plan": "factory:factory_craft:small-electric-pole",
+        "tick": 12714183
+      }
+    ],
+    "attempt_outcomes": [
+      {
+        "action": "factory_craft_job",
+        "dispatch_phases": {
+          "dispatch": {
+            "at_utc": "2026-10-05T18:19:59.158006+00:00",
+            "error_code": null,
+            "seconds": 0.23318595498858485,
+            "stage": "dispatch",
+            "status": "returned"
+          },
+          "transfer_rpc": {
+            "at_utc": "2026-10-05T18:19:59.263067+00:00",
+            "error_code": null,
+            "seconds": 0.031061435991432518,
+            "stage": "transfer_rpc",
+            "status": "returned"
+          }
+        },
+        "expected_unit_number": null,
+        "finished_at_utc": "2026-10-05T18:20:06.925920+00:00",
+        "finished_tick": 11352898,
+        "id": "9e7df052d4d142dd97462ab0a88b05bd",
+        "latency_seconds": null,
+        "observation_error": null,
+        "origin": "new",
+        "outcome": "verified",
+        "plan_id": "factory:factory_craft:iron-gear-wheel",
+        "process_id": "9d6c6e5b3e6449e2a9cfe669428a1627",
+        "receipt": "58771a43b92747d68b0831ef9d83a8a7",
+        "started_at_utc": "2026-10-05T18:19:59.063993+00:00",
+        "started_tick": 11352425,
+        "step_index": 0,
+        "step_sha256": "c938fcc2f13695632311c6bd1c3b210b19899e92eb50900a1f7ee50f7698bb7b"
+      },
+      {
+        "action": "factory_craft_job",
+        "dispatch_phases": {
+          "dispatch": {
+            "at_utc": "2026-10-05T18:20:55.926174+00:00",
+            "error_code": null,
+            "seconds": 0.1914463809953304,
+            "stage": "dispatch",
+            "status": "returned"
+          },
+          "transfer_rpc": {
+            "at_utc": "2026-10-05T18:20:55.993986+00:00",
+            "error_code": null,
+            "seconds": 0.022152998004457913,
+            "stage": "transfer_rpc",
+            "status": "returned"
+          }
+        },
+        "expected_unit_number": null,
+        "finished_at_utc": "2026-10-05T18:21:04.155932+00:00",
+        "finished_tick": 11356221,
+        "id": "69f7761780ac48a3952ca956ea1e31bb",
+        "latency_seconds": null,
+        "observation_error": null,
+        "origin": "new",
+        "outcome": "verified",
+        "plan_id": "factory:factory_craft:transport-belt",
+        "process_id": "9d6c6e5b3e6449e2a9cfe669428a1627",
+        "receipt": "85dbbdf37dae460d86b203c836f3cedd",
+        "started_at_utc": "2026-10-05T18:20:55.834208+00:00",
+        "started_tick": 11355725,
+        "step_index": 0,
+        "step_sha256": "61c3ee5e8eef1e3281e44c69b98d27c9dd7695738bb03c05b81aa24ee0549ff4"
+      },
+      {
+        "action": "factory_craft_job",
+        "dispatch_phases": {
+          "dispatch": {
+            "at_utc": "2026-10-05T18:24:47.776672+00:00",
+            "error_code": null,
+            "seconds": 0.23749696699087508,
+            "stage": "dispatch",
+            "status": "returned"
+          },
+          "transfer_rpc": {
+            "at_utc": "2026-10-05T18:24:47.873076+00:00",
+            "error_code": null,
+            "seconds": 0.03534089199092705,
+            "stage": "transfer_rpc",
+            "status": "returned"
+          }
+        },
+        "expected_unit_number": null,
+        "finished_at_utc": "2026-10-05T18:24:53.171283+00:00",
+        "finished_tick": 11369744,
+        "id": "5cb2887f4e3a424584f1abdd11d589a0",
+        "latency_seconds": null,
+        "observation_error": null,
+        "origin": "new",
+        "outcome": "verified",
+        "plan_id": "factory:factory_craft:iron-gear-wheel",
+        "process_id": "9d6c6e5b3e6449e2a9cfe669428a1627",
+        "receipt": "43b20789e9b44a999db214dfe0ba5d09",
+        "started_at_utc": "2026-10-05T18:24:47.721539+00:00",
+        "started_tick": 11369420,
+        "step_index": 0,
+        "step_sha256": "9d9756d7848b25e1cc43d63f968f0ebc824d27e35a47cf945d16c91ee5bb222f"
+      },
+      {
+        "action": "factory_craft_job",
+        "dispatch_phases": {
+          "dispatch": {
+            "at_utc": "2026-10-05T18:27:12.026082+00:00",
+            "error_code": null,
+            "seconds": 0.2832024149975041,
+            "stage": "dispatch",
+            "status": "returned"
+          },
+          "transfer_rpc": {
+            "at_utc": "2026-10-05T18:27:12.561017+00:00",
+            "error_code": null,
+            "seconds": 0.0309275460022036,
+            "stage": "transfer_rpc",
+            "status": "returned"
+          }
+        },
+        "expected_unit_number": null,
+        "finished_at_utc": "2026-10-05T18:27:20.511083+00:00",
+        "finished_tick": 11378500,
+        "id": "36ef98200fd94fbfb1e0d27679922f8c",
+        "latency_seconds": null,
+        "observation_error": null,
+        "origin": "new",
+        "outcome": "verified",
+        "plan_id": "factory:factory_craft:iron-gear-wheel",
+        "process_id": "9d6c6e5b3e6449e2a9cfe669428a1627",
+        "receipt": "52094d146e8c44e5870d348c9f213f33",
+        "started_at_utc": "2026-10-05T18:27:11.900223+00:00",
+        "started_tick": 11377993,
+        "step_index": 0,
+        "step_sha256": "51ee4baa634f75dcc864f46cf1cb309e274e4f07d30f8942383b5d59e1ef8789"
+      },
+      {
+        "action": "factory_craft_job",
+        "dispatch_phases": {
+          "dispatch": {
+            "at_utc": "2026-10-06T00:38:50.674543+00:00",
+            "error_code": null,
+            "seconds": 0.2163593509903876,
+            "stage": "dispatch",
+            "status": "returned"
+          },
+          "transfer_rpc": {
+            "at_utc": "2026-10-06T00:38:50.750975+00:00",
+            "error_code": null,
+            "seconds": 0.025335772006656043,
+            "stage": "transfer_rpc",
+            "status": "returned"
+          }
+        },
+        "expected_unit_number": null,
+        "finished_at_utc": "2026-10-06T00:38:53.240508+00:00",
+        "finished_tick": 12713900,
+        "id": "8cb85e4fefa24a1f8bd8bc8407bbbe92",
+        "latency_seconds": null,
+        "observation_error": null,
+        "origin": "new",
+        "outcome": "verified",
+        "plan_id": "factory:factory_craft:copper-cable",
+        "process_id": "22634c841f624a42ab45ae304b3e12a5",
+        "receipt": "cdfebb3f628e409786a47ca2ecc5f613",
+        "started_at_utc": "2026-10-06T00:38:50.609549+00:00",
+        "started_tick": 12713739,
+        "step_index": 0,
+        "step_sha256": "85350ac9533b3428af055bb0b72458fe4c8ca13432ed1f7071e14bb0bb605e5f"
+      },
+      {
+        "action": "factory_craft_job",
+        "dispatch_phases": {
+          "dispatch": {
+            "at_utc": "2026-10-06T00:38:55.394474+00:00",
+            "error_code": null,
+            "seconds": 0.30808242700004485,
+            "stage": "dispatch",
+            "status": "returned"
+          },
+          "transfer_rpc": {
+            "at_utc": "2026-10-06T00:38:55.567162+00:00",
+            "error_code": null,
+            "seconds": 0.04250865400535986,
+            "stage": "transfer_rpc",
+            "status": "returned"
+          }
+        },
+        "expected_unit_number": null,
+        "finished_at_utc": "2026-10-06T00:38:58.111829+00:00",
+        "finished_tick": 12714183,
+        "id": "e1febff6c39d499e8fb47833f1f86bad",
+        "latency_seconds": null,
+        "observation_error": null,
+        "origin": "new",
+        "outcome": "verified",
+        "plan_id": "factory:factory_craft:small-electric-pole",
+        "process_id": "22634c841f624a42ab45ae304b3e12a5",
+        "receipt": "a366335a74754fa5a625dcbf3cba9f45",
+        "started_at_utc": "2026-10-06T00:38:55.306837+00:00",
+        "started_tick": 12714014,
+        "step_index": 0,
+        "step_sha256": "44ba0026f6b1b118c1fdfee2275ff59727adfa8a5a3bbd5e85c02cb9b5d4ee82"
+      }
+    ]
   }
 }

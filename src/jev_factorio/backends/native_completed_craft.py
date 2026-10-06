@@ -63,8 +63,16 @@ def verify_background_craft(receipt, inventory, binding, result, tick):
 
 def checkpoint_completed_craft(data):
     if any(data.get(key) is not None for key in
-           ('pending', 'attempt', 'background_job', 'background_attempt', 'background_step')):
+           ('background_job', 'background_attempt', 'background_step')):
         return None
+    if data.get('pending') is not None or data.get('attempt') is not None:
+        from ..connector_checkpoint import shared_connector_handoff
+        retained = SimpleNamespace(**{key: data.get(key) for key in (
+            'status', 'reason', 'pending', 'attempt', 'active_plan', 'step_index',
+            'connector_ownership', 'session_id', 'native_pending', 'native_attempt',
+            'transfer_recovery')})
+        if not shared_connector_handoff(retained):
+            return None
     events = [row for row in data.get('history', [])
               if row.get('kind') == 'background_job_completed']
     crafts = [row for row in data.get('attempt_outcomes', [])
@@ -74,6 +82,8 @@ def checkpoint_completed_craft(data):
             raise ValueError('Completed craft has no unique checkpoint verification')
         return None
     latest = max(crafts, key=lambda row: row['started_tick'])
+    if data.get('pending') is not None and latest['finished_tick'] > data['pending']['started_tick']:
+        raise ValueError('Retained completed craft overlaps pending connector')
     if (latest.get('outcome') != 'verified'
             or sum(row.get('receipt') == latest.get('receipt') for row in crafts) != 1):
         raise ValueError('Latest craft has no unique verified attempt')
