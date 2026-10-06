@@ -32,6 +32,7 @@ from .research_log import (
 
 _CANONICAL_REPOSITORY = "jevplays-games/jev-factorio-agent"
 _OWNERSHIP_FIELDS = (
+    "two_stage_decision",
     "connector_ownership", "capital_investment", "transfer_recovery",
     "background_schema", "background_job", "background_attempt", "background_step",
     "output_buffers_schema", "output_commitments",
@@ -598,7 +599,8 @@ class Supervisor:
         if capture["state"] != "valid":
             obligations = self._saved_checkpoint_obligations(checkpoint)
             reject_source_change = (
-                checkpoint is not None and self.has_unresolved_work(checkpoint)
+                checkpoint is not None and self.has_unresolved_work(
+                    checkpoint, self.config.checkpoint)
                 and (before is None or after is None or before != after))
             if after is None:
                 source_state = "unavailable"
@@ -626,7 +628,7 @@ class Supervisor:
                     "or acknowledged background work requires compatible-source review"
                 )
             return
-        if (self.has_unresolved_work(checkpoint)
+        if (self.has_unresolved_work(checkpoint, self.config.checkpoint)
                 and (before is None or after is None or before != after)):
             raise ValueError(
                 "Code provenance changed while a pending action requires reconciliation "
@@ -683,17 +685,150 @@ class Supervisor:
         return checkpoint
 
     @staticmethod
-    def has_unresolved_work(checkpoint: dict) -> bool:
+    def _outer_attempt_rows(checkpoint: dict, checkpoint_path: Path | None) -> list[dict]:
+        """Return all validated active and archived outer selection attempts.
+
+        A legacy checkpoint can predate the strict two-stage record while its
+        persistent-selection ledger already contains an unresolved request.
+        Missing ``outcome`` is intentionally normalized to ``pending`` by the
+        ledger/archive readers. If an archive pointer exists, only the
+        checkpoint-bound composed loader may authenticate it.
+        """
+        state = checkpoint.get("blocked_recovery")
+        pointer = checkpoint.get("blocked_recovery_archive")
+        if pointer is not None:
+            if checkpoint_path is None:
+                raise ValueError("Archived outer attempts require their checkpoint path")
+            from .memory import checkpoint_memory_type, load_checkpoint_data
+
+            session_id = checkpoint.get("session_id")
+            target = checkpoint.get("target")
+            memory = load_checkpoint_data(
+                checkpoint, session_id, target, checkpoint_path=checkpoint_path,
+                memory_type=checkpoint_memory_type(checkpoint))
+            try:
+                index = getattr(memory, "_blocked_recovery_archive_index", None)
+                if index is None or memory.blocked_recovery_archive != pointer:
+                    raise ValueError("Outer attempt archive is not checkpoint-bound")
+                return list(index.compatibility_rows(memory=memory))
+            finally:
+                index = getattr(memory, "_blocked_recovery_archive_index", None)
+                if index is not None:
+                    index.close()
+
+        if state is None:
+            return []
+        from .blocked_persistence import _validate_state
+
+        validated = _validate_state(state, checkpoint.get("session_id"))
+        rows = []
+        for row in validated["attempts"]:
+            normalized = dict(row)
+            normalized.setdefault("outcome", "pending")
+            rows.append(normalized)
+        return rows
+
+    @staticmethod
+    def _two_stage_decision_is_unresolved(
+            checkpoint: dict, checkpoint_path: Path | None = None) -> bool:
+        """Fail closed until a strict decision and its exact outer attempt settle.
+
+        The record and persistent-selection row are one logical obligation. A
+        settled phase alone is insufficient: the controller saves it before
+        finalizing the outer attempt, so a crash can leave an otherwise-valid
+        response without its final disposition. Recompute the prepared request
+        binding instead of trusting a matching-looking digest or terminal row.
+        """
+        try:
+            attempts = Supervisor._outer_attempt_rows(checkpoint, checkpoint_path)
+            # A missing/older strict record cannot erase a pending outer
+            # persistent-selection disposition. This includes retained legacy
+            # attempts that have no explicit outcome field.
+            if any(row.get("outcome", "pending") == "pending" for row in attempts):
+                return True
+
+            record = checkpoint.get("two_stage_decision")
+            if record is None:
+                return False
+            if not isinstance(record, dict):
+                return True
+
+            from .two_stage_decision import validate as validate_two_stage
+            from .blocked_persistence import (
+                _validate_state as validate_blocked_state,
+                decision_input_sha256,
+                selection_batch_metadata,
+            )
+
+            session_id = checkpoint.get("session_id")
+            target = checkpoint.get("target")
+            validate_two_stage(record, session_id, target)
+            if record["phase"] != "settled":
+                return True
+
+            binding = record["binding"]
+            prepared = record["prepared"]
+            context = prepared["context"]
+            questions = prepared["questions"]
+            plans = prepared["plans"]
+            tick = context["facts"]["tick"]
+            validate_blocked_state(checkpoint.get("blocked_recovery"), session_id)
+            matching = [row for row in attempts
+                        if (row["source_revision"] == binding["source_revision"]
+                            and row["decision_input_sha256"] == binding["input_sha256"])]
+            if len(matching) != 1:
+                return True
+            attempt = matching[0]
+
+            batch = selection_batch_metadata(
+                context, questions, plans,
+                state_sha256=binding["state_sha256"],
+                frontier_sha256=binding["frontier_sha256"],
+                current_tick=tick,
+            )
+            input_sha256 = decision_input_sha256(
+                context, plans,
+                session_id=binding["session_id"],
+                source_revision=binding["source_revision"],
+                target=binding["target"], policy="jev",
+                confidence_floor=binding["confidence_floor"],
+                current_tick=tick, questions=questions, selection_batch=batch,
+            )
+            if (attempt.get("selection_batch") != batch
+                    or input_sha256 != binding["input_sha256"]):
+                return True
+
+            expected_outer_outcome = {
+                "selected": "selected",
+                "provider_blocked": "provider_blocked",
+                "all_candidates_rejected": "rejected",
+                "stale_evidence": "rejected",
+                "low_choice_confidence": "rejected",
+                "model_abstention": "rejected",
+                "invalid_answer": "failed",
+                "request_rejected": "failed",
+            }.get(record["outcome"])
+            return (expected_outer_outcome is None
+                    or attempt.get("outcome", "pending") != expected_outer_outcome)
+        except Exception:
+            # This is an authority gate, not a diagnostic parser. Any malformed
+            # or inconsistent decision/ledger evidence keeps the obligation.
+            return True
+
+    @staticmethod
+    def has_unresolved_work(checkpoint: dict, checkpoint_path: Path | None = None) -> bool:
         """Return whether the checkpoint still owns executable or paid work.
 
-        Completed attempt outcomes, histories, and other retained evidence are
-        deliberately excluded: they are receipts, not live obligations.
+        Completed attempt outcomes and histories are retained receipts, not live
+        obligations. Missing legacy outcomes remain pending; when an archive is
+        present its exact checkpoint path is required to authenticate the rows.
         """
         return (any(checkpoint.get(key) is not None for key in (
                     "pending", "attempt", "transfer_recovery",
                     "background_job", "background_attempt", "background_step"))
                 or checkpoint.get("active_plan") is not None
-                or bool(checkpoint.get("reservations")))
+                or bool(checkpoint.get("reservations"))
+                or Supervisor._two_stage_decision_is_unresolved(checkpoint, checkpoint_path))
 
     def _manual_checkpoint_capture(self) -> tuple[dict | None, dict]:
         """Return a fully composed, stable checkpoint capture for manual review.
@@ -782,7 +917,8 @@ class Supervisor:
             return {"state": "unknown", "known_unresolved": None, "saved_sources": []}
         return {
             "state": "unknown",
-            "known_unresolved": any(self.has_unresolved_work(checkpoint)
+            "known_unresolved": any(self.has_unresolved_work(
+                                     checkpoint, self.config.checkpoint)
                                      for _, checkpoint in snapshots),
             "saved_sources": [name for name, _ in snapshots],
         }
@@ -1327,11 +1463,12 @@ class Supervisor:
         checkpoint = self.checkpoint()
         revision = self.snapshot_revision()
         source_before = self.state.get("code_revision")
-        if (self.has_unresolved_work(checkpoint)
+        if (self.has_unresolved_work(checkpoint, self.config.checkpoint)
                 and (source_before is None or revision is None or revision != source_before)):
             self.begin_repair("checkpoint_reconciliation")
             return "checkpoint_reconciliation"
-        if checkpoint["status"] == "completed" and self.has_unresolved_work(checkpoint):
+        if (checkpoint["status"] == "completed"
+                and self.has_unresolved_work(checkpoint, self.config.checkpoint)):
             self.begin_repair("checkpoint_reconciliation")
             return "checkpoint_reconciliation"
         if checkpoint["status"] != "running":
@@ -1358,7 +1495,7 @@ class Supervisor:
                 return f"checkpoint_invalid: {error}"
             if checkpoint["status"] != "running":
                 if (checkpoint["status"] == "completed"
-                        and self.has_unresolved_work(checkpoint)):
+                        and self.has_unresolved_work(checkpoint, self.config.checkpoint)):
                     self.begin_repair("checkpoint_reconciliation")
                     return "checkpoint_reconciliation"
                 self.save(last_valid_checkpoint=checkpoint)
@@ -1848,8 +1985,14 @@ Only report repaired when every acceptance requirement is verified.
         # Recovery budgets and their append-only source lineage are also part
         # of the retained obligation. A single #265 migration is the only
         # exception: its reviewed scope must bind this exact old composed state.
+        old_blocked = old_state.get("blocked_recovery")
+        new_blocked = new_state.get("blocked_recovery")
+        if (old_blocked is None) != (new_blocked is None):
+            # A repair cannot introduce or erase the outer attempt ledger,
+            # even when an older checkpoint has no strict two-stage record.
+            return False
         for name in ("blocked_recovery", "blocked_recovery_archive", "blocked_reevaluations"):
-            if name in old_state and old_state[name] != new_state.get(name):
+            if old_state.get(name) != new_state.get(name):
                 if name != "blocked_recovery":
                     return False
         old_lineage = old_memory.compatible_source_recoveries
@@ -1868,7 +2011,7 @@ Only report repaired when every acceptance requirement is verified.
             expected_blocked = dict(old_blocked, source_revision=record.get("current_source"))
             if new_memory.blocked_recovery != expected_blocked:
                 return False
-        elif old_state.get("blocked_recovery") != new_state.get("blocked_recovery"):
+        elif old_blocked != new_blocked:
             return False
         return True
 
@@ -2015,7 +2158,8 @@ Only report repaired when every acceptance requirement is verified.
             checkpoint_digest = self._last_checkpoint_digest
             if current["status"] not in {"running", "completed"}:
                 return False
-            if current["status"] == "completed" and self.has_unresolved_work(current):
+            if (current["status"] == "completed"
+                    and self.has_unresolved_work(current, self.config.checkpoint)):
                 return False
             if previous.get("pending"):
                 if any(current.get(key) != previous.get(key) for key in (
