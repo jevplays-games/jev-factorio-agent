@@ -43,7 +43,7 @@ async def _run_async_controller_lifecycle(controller, close_state: dict, **run_o
 
 def make_backend(name: str, resume: bool = False, adopt_session: bool = False,
                  setup_timing=None, connector_witness_path=None, connector_binding=None,
-                 completed_craft=None, background_craft=None):
+                 completed_craft=None, background_craft=None, output_commitments=None):
     if name == "mock":
         return MockBackend()
     if name == "play_api":
@@ -59,6 +59,8 @@ def make_backend(name: str, resume: bool = False, adopt_session: bool = False,
             attachment['completed_craft'] = completed_craft
         if background_craft is not None:
             attachment['background_craft'] = background_craft
+        if output_commitments is not None:
+            attachment['output_commitments'] = output_commitments
         if setup_timing is None:
             b.start(resume=resume, adopt_session=adopt_session,
                     connector_witness_path=connector_witness_path, **attachment)
@@ -1135,6 +1137,9 @@ def cli() -> None:
                 binding = json.loads(selected_resume_checkpoint_capture).get('connector_ownership')
                 if isinstance(binding, dict) and binding.get('routes'):
                     attachment['connector_binding'] = binding
+                    output_owners = json.loads(selected_resume_checkpoint_capture).get('output_commitments')
+                    if output_owners:
+                        attachment['output_commitments'] = output_owners
                     from .backends.native_completed_craft import (
                         checkpoint_completed_craft, checkpoint_background_craft)
                     craft = checkpoint_completed_craft(json.loads(selected_resume_checkpoint_capture))

@@ -68,7 +68,7 @@ def is_supported_direct_installation(result):
 
 
 def current_connector_snapshot_command(result, *, completed_routes=False, completed_craft=None,
-                                       background_craft=None):
+                                       background_craft=None, output_commitments=None):
     """Qualify an exact bundled direct profile without changing ownership.
 
     Called only AFTER metadata/callback and every installed asset hash have
@@ -79,6 +79,8 @@ def current_connector_snapshot_command(result, *, completed_routes=False, comple
     factory observer runs during direct qualification.
     """
     profile = source_bound_direct_profile(result)
+    if output_commitments and not completed_routes:
+        raise ValueError('Paid output attachment requires checkpoint-bound completed connectors')
     if profile is None:
         raise RuntimeError('Native direct attachment requires an exact supported module profile')
     if completed_routes and profile != 'current_full':
@@ -201,17 +203,18 @@ def current_connector_snapshot_command(result, *, completed_routes=False, comple
         'and cb.connector_begin==c.connector_begin and cb.connector_finish==c.connector_finish '
         'and cb.connector_page==c.connector_page);'
     )
-    owner_guards = [
+    from .native_paid_output_attachment import binding_prefix
+    owner_guards = [binding_prefix(output_commitments),
         'local function empty(t) return type(t)=="table" and next(t)==nil end;'
         'assert(type(c.entities)=="table");'
         'for role in pairs(c.entities) do if type(role)=="string" then '
-        'assert(not (string.match(role,"^output%-chest:") '
-        'or string.match(role,"^output%-arm:") or string.match(role,"^input:") '
+        'assert(not ((string.match(role,"^output%-chest:") '
+        'or string.match(role,"^output%-arm:")) and not allowed_output_roles[role] or string.match(role,"^input:") '
         'or string.match(role,"^outpost:")));end end;'
     ]
     if completed_routes:
-        from .native_settled_factory import SETTLED_FACTORY_GUARDS
-        owner_guards.append(SETTLED_FACTORY_GUARDS)
+        from .native_settled_factory import settled_factory_guards
+        owner_guards.append(settled_factory_guards(output_commitments))
     installed = result['modules']
     if installed.get('output_buffers') and not completed_routes:
         owner_guards.append(
@@ -324,11 +327,14 @@ def current_connector_snapshot_command(result, *, completed_routes=False, comple
 
 
 def qualify_current_connector_snapshot(client, result, *, checkpoint_binding=None, completed_craft=None,
-                                       background_craft=None):
+                                       background_craft=None, output_commitments=None):
     if checkpoint_binding is not None and checkpoint_binding.get('routes'):
         from .native_completed_attachment import qualify_completed_connectors
         return qualify_completed_connectors(client, result, checkpoint_binding,
-                                            completed_craft=completed_craft, background_craft=background_craft)
+                                            completed_craft=completed_craft, background_craft=background_craft,
+                                            output_commitments=output_commitments)
+    if output_commitments:
+        raise ValueError('Paid output attachment requires completed connector ownership')
     row = decode_native(client.send_command(current_connector_snapshot_command(result)))
     if not isinstance(row, dict):
         raise RuntimeError('Current connector snapshot requires reconciliation')
