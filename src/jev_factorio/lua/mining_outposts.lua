@@ -151,6 +151,10 @@ local function preflight(cell,p)
     assert(cell and cell.layout==p.layout and not cell.fault,"Stale outpost offer")
     local player=geometry(cell)
     assert(not storage.input_routes.cells[sources[cell.resource]],"A direct route is already committed")
+    local offers=storage.input_routes.offers
+    assert(type(offers)=="table","Missing direct-route offer table")
+    assert(cell.parts.chest or rawget(offers,sources[cell.resource])==nil,
+        "A direct route is available before outpost payment")
     assert(player.crafting_queue_size==0 and remaining(cell)>=100,"Outpost build is busy or ore depleted")
     assert(not cell.parts[p.part] and (p.part=="chest" or cell.parts.chest),"Outpost part exists or predecessor missing")
     assert(not o.receipts[p.receipt],"Outpost receipt already used")
