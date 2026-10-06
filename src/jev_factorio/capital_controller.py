@@ -166,7 +166,8 @@ def frontier(loop, snapshot):
     state = loop.memory.capital_investment
     loop._capital_deadline_snapshot = snapshot
     if (loop._execution_barrier(snapshot)
-            or (loop.memory.status != 'running' and not loop._persistent_block_active())):
+            or not capital.frontier_active(loop.memory.status, loop._persistent_block_active(),
+                getattr(loop, '_source_reevaluation_planning', False))):
         return original, blocker
     if (state and snapshot.tick >= state['deadline_tick']
             and not _unresolved_work(loop.memory, snapshot)):

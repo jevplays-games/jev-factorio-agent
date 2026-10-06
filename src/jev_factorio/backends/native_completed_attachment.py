@@ -55,7 +55,10 @@ def qualify_completed_connectors(client, result, checkpoint_binding, *, complete
         for name, values in settled.items():
             if values == []:
                 settled[name] = {}
-            if not isinstance(settled[name], dict) or len(settled[name]) > 2:
+            # Output buffers support iron, copper and steel; the ore registries
+            # remain limited to their two original roles.
+            limit = 3 if name == 'output_offers' else 2
+            if not isinstance(settled[name], dict) or len(settled[name]) > limit:
                 raise RuntimeError('Settled factory qualification exceeds its bound')
         owned = row['connector_ownership']
         if (not isinstance(owned, dict)

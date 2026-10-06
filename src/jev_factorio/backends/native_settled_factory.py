@@ -19,8 +19,10 @@ local function point(p)
  return {x=p.x,y=p.y}
 end
 local function same(x,y) return x.x==y.x and x.y==y.y end
-local function source(role,row)
- assert(role=="recipe:iron-plate" or role=="recipe:copper-plate")
+local function source(role,row,output_offer)
+ -- Steel is supported by output_buffers, not the ore-site ownership survey.
+ assert(role=="recipe:iron-plate" or role=="recipe:copper-plate"
+  or (output_offer and role=="recipe:steel-plate"))
  local e=assert(c.entities[role])
  assert(e.valid and e==row.entity and e.name=="stone-furnace"
   and type(row.source_unit)=="number" and row.source_unit>0
@@ -45,7 +47,7 @@ for role,row in pairs(sites.owned) do
 end
 for role,row in pairs(b.offers) do
  keys(row,"source item source_unit source_position entity layout chest_position inserter_position direction chest_role inserter_role parts")
- local e=source(role,row);local pos=point(row.source_position)
+ local e=source(role,row,true);local pos=point(row.source_position)
  assert(row.source==role and row.item==string.sub(role,8) and same(e.position,pos)
   and empty(row.parts) and type(row.layout)=="string" and #row.layout<=128
   and string.sub(row.layout,1,7)=="output:"

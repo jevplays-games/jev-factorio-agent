@@ -1747,11 +1747,18 @@ class HierarchicalLoop(AgentLoop):
         ):
             return self._record(snapshot, "observe", self.memory.reason, verified=True)
         if self.memory.active_plan is None:
-            with phase("planning", self._diagnostic_trace):
-                plans, blocker = self._trace.call(
-                    "candidate_set_created", lambda: self._work_candidates(snapshot),
-                    result=lambda value: {"plans": [plan.to_dict() for plan in value[0]],
-                                          "blocker": value[1]})
+            # The checkpoint intentionally remains blocked until useful work
+            # verifies. Its admitted source reevaluation must nevertheless use
+            # the same capital intent, deadline and cost filters as normal work.
+            self._source_reevaluation_planning = blocked_reevaluation
+            try:
+                with phase("planning", self._diagnostic_trace):
+                    plans, blocker = self._trace.call(
+                        "candidate_set_created", lambda: self._work_candidates(snapshot),
+                        result=lambda value: {"plans": [plan.to_dict() for plan in value[0]],
+                                              "blocker": value[1]})
+            finally:
+                self._source_reevaluation_planning = False
             generated = list(plans)
             budget_counts = {p.id: self._plan_failure_count(p) for p in generated}
             rejected = [{"plan_id": p.id, "reason": "plan_failure_budget",

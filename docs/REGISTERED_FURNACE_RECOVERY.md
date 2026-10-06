@@ -24,6 +24,31 @@ The same identity rule supplies grouped fuel-transfer evidence. A partial
 transfer still lacks the stronger full-deficit proof, as before. Strict JEV
 choice, native action checks, reservations and failure budgets are unchanged.
 
+Native resume preflight exposed the same scope assumption in a second place:
+the output-buffer module retains unspent proposals for iron, copper **and
+steel**, while connector reattachment allowed only two ore-furnace roles.
+Reattachment now permits the existing steel proposal and three output offers,
+while ore-site ownership remains restricted to iron and copper. Every proposal
+must still reference its original registered entity, position and unit, contain
+no paid parts or unknown fields, and remain unchanged across both readbacks.
+No survey, ownership registry or proposal is cleared to make resume succeed.
+
+The first admitted recovery then exposed a capital-planning integration defect:
+the one-use source evaluation kept the checkpoint blocked until a useful receipt,
+but the capital frontier mistook that state for an inactive planner. It skipped
+commitment/deadline/cost filtering and offered a newly estimated investment that
+conflicted with the retained intent. JEV selected it; the final commitment guard
+rejected it before native dispatch. The selected response is retained as history.
+
+Source reevaluation now scopes the ordinary capital filters to the validated
+planning call, with the scope cleared even if planning raises. An expired intent
+uses the existing abandonment/failure accounting; its deadline is never extended.
+Uncertain/completed states and execution barriers remain ineligible. This policy
+is included in the existing capital-planner decision contract, so a changed
+candidate frontier requires a new explicit admission, not replay of the consumed
+one. Check the terminal console as well as checkpoint reason after an exception:
+the checkpoint may still carry the earlier blocked reason.
+
 For efficient diagnosis and recovery:
 
 1. Read the owner status, child liveness, terminal result and exact checkpoint.
