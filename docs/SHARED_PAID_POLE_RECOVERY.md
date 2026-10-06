@@ -55,3 +55,20 @@ unpaid anchors, incomplete routes, disconnected networks, and unrelated holds.
 The compatible-source test checks that migration retains the exact pending
 action and budget state. Synthetic negative controls and third-route examples
 are explicitly marked; production deployment is a separate verification step.
+
+## Production composition follow-up
+
+The first deployment qualified native attachment but still held on its first
+observation: output-buffer and background-work wrappers checked the shared
+execution barrier before reaching the base pending verifier. The exception
+therefore belongs in the common barrier, where every wrapper can see the same
+freshly proven connector completion. Each wrapper still adds its own fault and
+persistence checks. No status is cleared by the barrier itself.
+
+The regression runs the actual composed background/output/input/outpost
+controller through checkpoint restore and one ordinary run-loop iteration,
+using retained native observations and detail pages. It reproduced the stop
+before the follow-up and must verify the original attempt without a dispatch or
+model request afterward. Individual capital, buffer, input, outpost, and save
+faults remain blocking. Qualifying a base-class verifier alone is insufficient
+evidence for production recovery.
