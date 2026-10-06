@@ -1,0 +1,3788 @@
+{
+  "provenance": {
+    "snapshot": "Retained accepted V23 observation:1 at tick 11401189.",
+    "catalog": "Earlier native catalog retained in native-v22-capital-power.json; same Factorio version.",
+    "answers": "Original rejected V23 model:1 answer; never reevaluated for this fixture."
+  },
+  "snapshot": {
+    "alerts": [],
+    "craft_queue": [],
+    "drill_fuel": 0,
+    "drill_output_connected": true,
+    "drill_status": "no_fuel",
+    "factory": {
+      "acceptance_runtime": {
+        "actor_unit": 2543,
+        "force_index": 1,
+        "mods": {
+          "base": "2.0.77"
+        },
+        "player_index": 1,
+        "schema": 1,
+        "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+        "speed": 1,
+        "surface_index": 1,
+        "tick_paused": false
+      },
+      "connections": {},
+      "connector_ownership": {
+        "protocol": 1,
+        "routes": {
+          "3f1263ac57425311e7eb7d325504f1a6ac479db79cf7ebfcdbff80e7d86d610a": {
+            "actor_unit": 2543,
+            "cell_count": 12,
+            "completed_tick": 9188486,
+            "external": 0,
+            "fluid": "steam",
+            "force_index": 1,
+            "id": "3f1263ac57425311e7eb7d325504f1a6ac479db79cf7ebfcdbff80e7d86d610a",
+            "kind": "pipe",
+            "owned": true,
+            "paid": 12,
+            "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+            "source": "utility:boiler",
+            "source_unit": 2550,
+            "state": "complete",
+            "surface_index": 1,
+            "target": "utility:engine",
+            "target_unit": 2551,
+            "tick": 9187345
+          },
+          "a5dfabb0c5750f29c4d83c2e38346a9bb2a3bbfc27414cee0ee99ddd6e22b9e3": {
+            "actor_unit": 2543,
+            "cell_count": 11,
+            "completed_tick": 9181456,
+            "external": 0,
+            "fluid": "water",
+            "force_index": 1,
+            "id": "a5dfabb0c5750f29c4d83c2e38346a9bb2a3bbfc27414cee0ee99ddd6e22b9e3",
+            "kind": "pipe",
+            "owned": true,
+            "paid": 11,
+            "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+            "source": "utility:water",
+            "source_unit": 2549,
+            "state": "complete",
+            "surface_index": 1,
+            "target": "utility:boiler",
+            "target_unit": 2550,
+            "tick": 9180309
+          },
+          "c703982611d047fdbe5d36d0c965d332b46e6a37f57f563b957d9ef133a498fe": {
+            "actor_unit": 2543,
+            "cell_count": 5,
+            "completed_tick": 9208733,
+            "external": 0,
+            "fluid": "electricity",
+            "force_index": 1,
+            "id": "c703982611d047fdbe5d36d0c965d332b46e6a37f57f563b957d9ef133a498fe",
+            "kind": "small-electric-pole",
+            "owned": true,
+            "paid": 5,
+            "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+            "source": "utility:engine",
+            "source_unit": 2551,
+            "state": "complete",
+            "surface_index": 1,
+            "target": "utility:lab",
+            "target_unit": 2548,
+            "tick": 9207416
+          }
+        },
+        "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+        "tick": 11401189
+      },
+      "connectors": {
+        "pipe": [
+          {
+            "fluid": "water",
+            "position": {
+              "x": 25.5,
+              "y": 41.5
+            },
+            "unit_number": 2553
+          },
+          {
+            "fluid": "water",
+            "position": {
+              "x": 24.5,
+              "y": 41.5
+            },
+            "unit_number": 2552
+          },
+          {
+            "fluid": "water",
+            "position": {
+              "x": 27.5,
+              "y": 41.5
+            },
+            "unit_number": 2555
+          },
+          {
+            "fluid": "water",
+            "position": {
+              "x": 26.5,
+              "y": 41.5
+            },
+            "unit_number": 2554
+          },
+          {
+            "fluid": "water",
+            "position": {
+              "x": 29.5,
+              "y": 41.5
+            },
+            "unit_number": 2557
+          },
+          {
+            "fluid": "water",
+            "position": {
+              "x": 28.5,
+              "y": 41.5
+            },
+            "unit_number": 2556
+          },
+          {
+            "fluid": "water",
+            "position": {
+              "x": 31.5,
+              "y": 41.5
+            },
+            "unit_number": 2559
+          },
+          {
+            "fluid": "water",
+            "position": {
+              "x": 30.5,
+              "y": 41.5
+            },
+            "unit_number": 2558
+          },
+          {
+            "fluid": "water",
+            "position": {
+              "x": 32.5,
+              "y": 41.5
+            },
+            "unit_number": 2560
+          },
+          {
+            "fluid": "water",
+            "position": {
+              "x": 32.5,
+              "y": 43.5
+            },
+            "unit_number": 2562
+          },
+          {
+            "fluid": "water",
+            "position": {
+              "x": 32.5,
+              "y": 42.5
+            },
+            "unit_number": 2561
+          },
+          {
+            "fluid": "steam",
+            "position": {
+              "x": 35.5,
+              "y": 41.5
+            },
+            "unit_number": 2564
+          },
+          {
+            "fluid": "steam",
+            "position": {
+              "x": 34.5,
+              "y": 41.5
+            },
+            "unit_number": 2563
+          },
+          {
+            "fluid": "steam",
+            "position": {
+              "x": 37.5,
+              "y": 41.5
+            },
+            "unit_number": 2566
+          },
+          {
+            "fluid": "steam",
+            "position": {
+              "x": 36.5,
+              "y": 41.5
+            },
+            "unit_number": 2565
+          },
+          {
+            "fluid": "steam",
+            "position": {
+              "x": 39.5,
+              "y": 41.5
+            },
+            "unit_number": 2568
+          },
+          {
+            "fluid": "steam",
+            "position": {
+              "x": 38.5,
+              "y": 41.5
+            },
+            "unit_number": 2567
+          },
+          {
+            "fluid": "steam",
+            "position": {
+              "x": 41.5,
+              "y": 41.5
+            },
+            "unit_number": 2570
+          },
+          {
+            "fluid": "steam",
+            "position": {
+              "x": 40.5,
+              "y": 41.5
+            },
+            "unit_number": 2569
+          },
+          {
+            "fluid": "steam",
+            "position": {
+              "x": 43.5,
+              "y": 40.5
+            },
+            "unit_number": 2573
+          },
+          {
+            "fluid": "steam",
+            "position": {
+              "x": 42.5,
+              "y": 40.5
+            },
+            "unit_number": 2572
+          },
+          {
+            "fluid": "steam",
+            "position": {
+              "x": 42.5,
+              "y": 41.5
+            },
+            "unit_number": 2571
+          },
+          {
+            "fluid": "steam",
+            "position": {
+              "x": 44.5,
+              "y": 40.5
+            },
+            "unit_number": 2574
+          }
+        ],
+        "small-electric-pole": [
+          {
+            "position": {
+              "x": 26.5,
+              "y": 32.5
+            },
+            "unit_number": 2579
+          },
+          {
+            "position": {
+              "x": 31.5,
+              "y": 34.5
+            },
+            "unit_number": 2578
+          },
+          {
+            "position": {
+              "x": 36.5,
+              "y": 37.5
+            },
+            "unit_number": 2577
+          },
+          {
+            "position": {
+              "x": 41.5,
+              "y": 40.5
+            },
+            "unit_number": 2576
+          },
+          {
+            "position": {
+              "x": 46.5,
+              "y": 43.5
+            },
+            "unit_number": 2575
+          }
+        ]
+      },
+      "consumed": {
+        "automation-science-pack": 175,
+        "coal": 130,
+        "copper-cable": 197,
+        "copper-ore": 292,
+        "copper-plate": 275,
+        "electronic-circuit": 53,
+        "inserter": 40,
+        "iron-gear-wheel": 276,
+        "iron-ore": 823,
+        "iron-plate": 803,
+        "logistic-science-pack": 40,
+        "pipe": 12,
+        "stone": 20,
+        "stone-furnace": 2,
+        "transport-belt": 44,
+        "wood": 21
+      },
+      "craft_job": {
+        "accepted": 12,
+        "baseline": {
+          "iron-gear-wheel": 8
+        },
+        "completed_tick": 11378449,
+        "finished": 12,
+        "force_index": 1,
+        "id": "52094d146e8c44e5870d348c9f213f33",
+        "inputs": {
+          "iron-plate": 24
+        },
+        "last_progress_tick": 11378449,
+        "outputs": {
+          "iron-gear-wheel": 12
+        },
+        "paid": true,
+        "player_index": 1,
+        "queue_valid": true,
+        "recipe": "iron-gear-wheel",
+        "requested": 12,
+        "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+        "started_tick": 11378078,
+        "status": "completed",
+        "surface_index": 1,
+        "unit_number": 2543
+      },
+      "craft_job_actor": {
+        "force_index": 1,
+        "player_index": 1,
+        "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+        "surface_index": 1,
+        "unit_number": 2543
+      },
+      "craft_jobs_protocol": 1,
+      "crafting_queue": 0,
+      "entities": {
+        "recipe:copper-cable": {
+          "crafting": false,
+          "crafting_progress": 0,
+          "energy": 0,
+          "fluid_ports": {},
+          "fluids": {},
+          "fuel": {},
+          "health": 300,
+          "input": {},
+          "max_health": 300,
+          "name": "assembling-machine-1",
+          "output": {},
+          "position": {
+            "x": 0.5,
+            "y": 44.5
+          },
+          "products_finished": 0,
+          "recipe": "copper-cable",
+          "status": 54,
+          "unit_number": 2580
+        },
+        "recipe:copper-plate": {
+          "crafting": false,
+          "crafting_progress": 0,
+          "energy": 100,
+          "fluid_ports": {},
+          "fluids": {},
+          "fuel": {
+            "coal": 5
+          },
+          "health": 200,
+          "input": {},
+          "max_health": 200,
+          "name": "stone-furnace",
+          "output": {},
+          "position": {
+            "x": -42,
+            "y": -109
+          },
+          "products_finished": 292,
+          "recipe": "",
+          "status": 18,
+          "unit_number": 2546
+        },
+        "recipe:iron-plate": {
+          "crafting": false,
+          "crafting_progress": 0,
+          "energy": 100,
+          "fluid_ports": {},
+          "fluids": {},
+          "fuel": {
+            "coal": 3
+          },
+          "health": 200,
+          "input": {},
+          "max_health": 200,
+          "name": "stone-furnace",
+          "output": {},
+          "position": {
+            "x": 41,
+            "y": -111
+          },
+          "products_finished": 823,
+          "recipe": "",
+          "status": 18,
+          "unit_number": 2547
+        },
+        "utility:boiler": {
+          "energy": 32000,
+          "fluid_ports": [
+            {
+              "fluid": "water",
+              "id": 17
+            },
+            {
+              "fluid": "water",
+              "id": 17
+            },
+            {
+              "fluid": "steam",
+              "id": 18
+            }
+          ],
+          "fluids": {
+            "steam": 200,
+            "water": 200
+          },
+          "fuel": {
+            "coal": 4
+          },
+          "health": 200,
+          "input": {},
+          "max_health": 200,
+          "name": "boiler",
+          "output": {},
+          "position": {
+            "x": 34.5,
+            "y": 43
+          },
+          "status": 27,
+          "unit_number": 2550
+        },
+        "utility:engine": {
+          "electric_network_id": 17,
+          "energy": 15000,
+          "fluid_ports": [
+            {
+              "fluid": "steam",
+              "id": 18
+            },
+            {
+              "fluid": "steam",
+              "id": 18
+            }
+          ],
+          "fluids": {
+            "steam": 200
+          },
+          "fuel": {},
+          "health": 400,
+          "input": {},
+          "max_health": 400,
+          "name": "steam-engine",
+          "output": {},
+          "position": {
+            "x": 44.5,
+            "y": 43.5
+          },
+          "status": 1,
+          "unit_number": 2551
+        },
+        "utility:lab": {
+          "electric_network_id": 17,
+          "energy": 1066.6666666666667,
+          "fluid_ports": {},
+          "fluids": {},
+          "fuel": {},
+          "health": 150,
+          "input": {
+            "automation-science-pack": 1
+          },
+          "max_health": 150,
+          "name": "lab",
+          "output": {},
+          "position": {
+            "x": 24.5,
+            "y": 32.5
+          },
+          "status": 31,
+          "unit_number": 2548
+        },
+        "utility:water": {
+          "energy": 2976579765,
+          "fluid_ports": [
+            {
+              "fluid": "water",
+              "id": 17
+            }
+          ],
+          "fluids": {
+            "water": 100
+          },
+          "fuel": {},
+          "health": 150,
+          "input": {},
+          "max_health": 150,
+          "name": "offshore-pump",
+          "output": {},
+          "position": {
+            "x": 24.5,
+            "y": 42.5
+          },
+          "status": 1,
+          "unit_number": 2549
+        }
+      },
+      "exploration_radius": 8,
+      "fair_resource_targets": {
+        "coal": {
+          "name": "coal",
+          "position": {
+            "x": 62.5,
+            "y": -25.5
+          },
+          "surface_index": 1
+        },
+        "copper-ore": {
+          "name": "copper-ore",
+          "position": {
+            "x": -49.5,
+            "y": -84.5
+          },
+          "surface_index": 1
+        },
+        "iron-ore": {
+          "name": "iron-ore",
+          "position": {
+            "x": 47.5,
+            "y": -81.5
+          },
+          "surface_index": 1
+        },
+        "stone": {
+          "name": "stone",
+          "position": {
+            "x": 9.5,
+            "y": -83.5
+          },
+          "surface_index": 1
+        },
+        "wood": {
+          "name": "dead-grey-trunk",
+          "position": {
+            "x": 72.8125,
+            "y": 16.375
+          },
+          "surface_index": 1
+        }
+      },
+      "force_entity_counts": {
+        "assembling-machine-1": 1,
+        "boiler": 1,
+        "burner-mining-drill": 1,
+        "character": 1,
+        "lab": 1,
+        "offshore-pump": 1,
+        "pipe": 23,
+        "small-electric-pole": 5,
+        "steam-engine": 1,
+        "stone-furnace": 2,
+        "wooden-chest": 1
+      },
+      "input_routes": {
+        "diagnostics": {
+          "recipe:copper-plate": {
+            "belt_budget_exhausted": false,
+            "cached": false,
+            "depleted_resources": 0,
+            "fallback": "batched_manual_supply",
+            "length_limited_paths": 0,
+            "max_belts": 64,
+            "mixed_resources": 0,
+            "next_survey_tick": 11401489,
+            "observed_tick": 11401189,
+            "path_attempts": 0,
+            "path_expansions": 0,
+            "path_probes": 0,
+            "placement_checks": 0,
+            "reason": "output_not_commissioned",
+            "receiver_count": 0,
+            "resource_count": 0,
+            "resource_result_limit_reached": false,
+            "resource_sample_limits": 0,
+            "sampled_resources": 0,
+            "schema": 1,
+            "search_budget_exhausted": false,
+            "source_position": {
+              "x": -42,
+              "y": -109
+            },
+            "source_unit": 2546,
+            "survey_radius": 40,
+            "survey_tick": 11401189
+          },
+          "recipe:iron-plate": {
+            "belt_budget_exhausted": false,
+            "cached": false,
+            "depleted_resources": 0,
+            "fallback": "batched_manual_supply",
+            "length_limited_paths": 0,
+            "max_belts": 64,
+            "mixed_resources": 0,
+            "next_survey_tick": 11401489,
+            "observed_tick": 11401189,
+            "path_attempts": 0,
+            "path_expansions": 0,
+            "path_probes": 0,
+            "placement_checks": 0,
+            "reason": "output_not_commissioned",
+            "receiver_count": 0,
+            "resource_count": 0,
+            "resource_result_limit_reached": false,
+            "resource_sample_limits": 0,
+            "sampled_resources": 0,
+            "schema": 1,
+            "search_budget_exhausted": false,
+            "source_position": {
+              "x": 41,
+              "y": -111
+            },
+            "source_unit": 2547,
+            "survey_radius": 40,
+            "survey_tick": 11401189
+          }
+        },
+        "protocol": 1,
+        "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+        "sources": {},
+        "tick": 11401189
+      },
+      "inventory_insertable": {
+        "coal": 3350,
+        "copper-ore": 3387,
+        "iron-ore": 3380,
+        "stone": 3350,
+        "wood": 6799
+      },
+      "inventory_insertable_evidence": {
+        "actor_unit": 2543,
+        "basis": "native_insertable_count_estimate",
+        "force_index": 1,
+        "inventory": "character_main",
+        "items": {
+          "coal": 3350,
+          "copper-ore": 3387,
+          "iron-ore": 3380,
+          "stone": 3350,
+          "wood": 6799
+        },
+        "method": "get_insertable_count",
+        "quality": "normal",
+        "schema": 1,
+        "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+        "surface_index": 1,
+        "tick": 11401189
+      },
+      "launch_readiness": {
+        "actor_unit": 2543,
+        "attempts": {},
+        "fault": false,
+        "fish": {},
+        "force_index": 1,
+        "pad": {},
+        "pad_site": {},
+        "receipts": {},
+        "schema": 1,
+        "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+        "silo": {},
+        "supported": true,
+        "surface_index": 1,
+        "tick": 11401189,
+        "version": "2.0.77"
+      },
+      "mining_outposts": {
+        "diagnostics": {
+          "copper-ore": "available",
+          "iron-ore": "available"
+        },
+        "protocol": 1,
+        "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+        "sources": {
+          "copper-ore": {
+            "flow": {},
+            "force_index": 1,
+            "layout": "outpost:copper-ore:1",
+            "parts": {},
+            "remaining": 170000,
+            "resource": "copper-ore",
+            "state": "proposed",
+            "steps": [
+              {
+                "direction": 0,
+                "name": "wooden-chest",
+                "part": "chest",
+                "position": {
+                  "x": -44.5,
+                  "y": -104.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "burner-mining-drill",
+                "part": "drill",
+                "position": {
+                  "x": -44,
+                  "y": -103
+                }
+              }
+            ],
+            "surface_index": 1,
+            "topology": false
+          },
+          "iron-ore": {
+            "flow": {},
+            "force_index": 1,
+            "layout": "outpost:iron-ore:2",
+            "parts": {},
+            "remaining": 110000,
+            "resource": "iron-ore",
+            "state": "proposed",
+            "steps": [
+              {
+                "direction": 0,
+                "name": "wooden-chest",
+                "part": "chest",
+                "position": {
+                  "x": 45.5,
+                  "y": -109.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "burner-mining-drill",
+                "part": "drill",
+                "position": {
+                  "x": 46,
+                  "y": -108
+                }
+              }
+            ],
+            "surface_index": 1,
+            "topology": false
+          }
+        },
+        "tick": 11401189
+      },
+      "observation_anchor_diagnostics": {
+        "oil": {
+          "radius": 512,
+          "saturated": false
+        },
+        "selection": "bounded_witness_not_global_nearest",
+        "water": {
+          "radius": 256,
+          "saturated": true
+        }
+      },
+      "observation_query_bounds": {
+        "anchor_limit": 129,
+        "anchor_radius": 1024,
+        "bootstrap_limit": 129,
+        "bootstrap_output_limit": 2,
+        "bootstrap_output_radius": 0.75,
+        "bootstrap_radius": 1000,
+        "oil_query_radii": [
+          256,
+          512,
+          1024
+        ],
+        "water_radius": 256
+      },
+      "observation_snapshot_schema": 2,
+      "output_buffers": {
+        "protocol": 1,
+        "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+        "sources": {
+          "recipe:copper-plate": {
+            "chest_role": "output-chest:2546",
+            "flow": {},
+            "held": 0,
+            "item": "copper-plate",
+            "layout": "output:2546:joint",
+            "parts": {},
+            "source": "recipe:copper-plate",
+            "source_unit": 2546,
+            "state": "proposed",
+            "topology": false
+          },
+          "recipe:iron-plate": {
+            "chest_role": "output-chest:2547",
+            "flow": {},
+            "held": 0,
+            "item": "iron-plate",
+            "layout": "output:2547:joint",
+            "parts": {},
+            "source": "recipe:iron-plate",
+            "source_unit": 2547,
+            "state": "proposed",
+            "topology": false
+          }
+        },
+        "tick": 11401189
+      },
+      "player_bound": true,
+      "player_connected": true,
+      "produced": {
+        "assembling-machine-1": 1,
+        "automation-science-pack": 176,
+        "boiler": 1,
+        "burner-mining-drill": 1,
+        "coal": 142,
+        "copper-cable": 198,
+        "copper-ore": 355,
+        "copper-plate": 292,
+        "electronic-circuit": 53,
+        "inserter": 40,
+        "iron-gear-wheel": 296,
+        "iron-ore": 876,
+        "iron-plate": 823,
+        "lab": 1,
+        "logistic-science-pack": 40,
+        "offshore-pump": 1,
+        "pipe": 64,
+        "science": 175,
+        "small-electric-pole": 38,
+        "steam-engine": 1,
+        "stone": 20,
+        "stone-furnace": 4,
+        "transport-belt": 64,
+        "wooden-chest": 1
+      },
+      "production_sites": {
+        "protocol": 1,
+        "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+        "sources": {
+          "recipe:copper-plate": {
+            "anchor": "cell-site:copper-ore:-42:-109:0:2",
+            "belt_count": 5,
+            "bill": {
+              "burner-inserter": 2,
+              "burner-mining-drill": 1,
+              "stone-furnace": 1,
+              "transport-belt": 5,
+              "wooden-chest": 1
+            },
+            "checks": 11,
+            "components": [
+              {
+                "direction": 0,
+                "name": "stone-furnace",
+                "part": "furnace",
+                "position": {
+                  "x": -42,
+                  "y": -109
+                }
+              },
+              {
+                "direction": 0,
+                "name": "burner-mining-drill",
+                "part": "drill",
+                "position": {
+                  "x": -42,
+                  "y": -101
+                }
+              },
+              {
+                "direction": 8,
+                "name": "burner-inserter",
+                "part": "inserter",
+                "position": {
+                  "x": -42.5,
+                  "y": -107.5
+                }
+              },
+              {
+                "direction": 4,
+                "name": "burner-inserter",
+                "part": "output-arm",
+                "position": {
+                  "x": -43.5,
+                  "y": -109.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "wooden-chest",
+                "part": "output-chest",
+                "position": {
+                  "x": -44.5,
+                  "y": -109.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "transport-belt",
+                "part": "belt:5",
+                "position": {
+                  "x": -42.5,
+                  "y": -106.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "transport-belt",
+                "part": "belt:4",
+                "position": {
+                  "x": -42.5,
+                  "y": -105.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "transport-belt",
+                "part": "belt:3",
+                "position": {
+                  "x": -42.5,
+                  "y": -104.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "transport-belt",
+                "part": "belt:2",
+                "position": {
+                  "x": -42.5,
+                  "y": -103.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "transport-belt",
+                "part": "belt:1",
+                "position": {
+                  "x": -42.5,
+                  "y": -102.5
+                }
+              }
+            ],
+            "fallback": "batched_manual_supply",
+            "position": {
+              "x": -42,
+              "y": -109
+            },
+            "reason": "joint_layout_available",
+            "source_unit": 2546,
+            "state": "owned"
+          },
+          "recipe:iron-plate": {
+            "anchor": "cell-site:iron-ore:41:-111:0:1",
+            "belt_count": 5,
+            "bill": {
+              "burner-inserter": 2,
+              "burner-mining-drill": 1,
+              "stone-furnace": 1,
+              "transport-belt": 5,
+              "wooden-chest": 1
+            },
+            "checks": 11,
+            "components": [
+              {
+                "direction": 0,
+                "name": "stone-furnace",
+                "part": "furnace",
+                "position": {
+                  "x": 41,
+                  "y": -111
+                }
+              },
+              {
+                "direction": 0,
+                "name": "burner-mining-drill",
+                "part": "drill",
+                "position": {
+                  "x": 41,
+                  "y": -103
+                }
+              },
+              {
+                "direction": 8,
+                "name": "burner-inserter",
+                "part": "inserter",
+                "position": {
+                  "x": 40.5,
+                  "y": -109.5
+                }
+              },
+              {
+                "direction": 4,
+                "name": "burner-inserter",
+                "part": "output-arm",
+                "position": {
+                  "x": 39.5,
+                  "y": -111.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "wooden-chest",
+                "part": "output-chest",
+                "position": {
+                  "x": 38.5,
+                  "y": -111.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "transport-belt",
+                "part": "belt:5",
+                "position": {
+                  "x": 40.5,
+                  "y": -108.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "transport-belt",
+                "part": "belt:4",
+                "position": {
+                  "x": 40.5,
+                  "y": -107.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "transport-belt",
+                "part": "belt:3",
+                "position": {
+                  "x": 40.5,
+                  "y": -106.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "transport-belt",
+                "part": "belt:2",
+                "position": {
+                  "x": 40.5,
+                  "y": -105.5
+                }
+              },
+              {
+                "direction": 0,
+                "name": "transport-belt",
+                "part": "belt:1",
+                "position": {
+                  "x": 40.5,
+                  "y": -104.5
+                }
+              }
+            ],
+            "fallback": "batched_manual_supply",
+            "position": {
+              "x": 41,
+              "y": -111
+            },
+            "reason": "joint_layout_available",
+            "source_unit": 2547,
+            "state": "owned"
+          }
+        },
+        "tick": 11401189
+      },
+      "receipts": {
+        "11238928:factory_insert:recipe:iron-plate:iron-ore": {
+          "extracting": false,
+          "item": "iron-ore",
+          "quantity": 20,
+          "role": "recipe:iron-plate",
+          "tick": 11239092,
+          "unit_number": 2547
+        },
+        "11241177:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 10,
+          "role": "recipe:iron-plate",
+          "tick": 11241379,
+          "unit_number": 2547
+        },
+        "11241947:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 4,
+          "role": "recipe:iron-plate",
+          "tick": 11242122,
+          "unit_number": 2547
+        },
+        "11242216:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11242391,
+          "unit_number": 2547
+        },
+        "11242497:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11242668,
+          "unit_number": 2547
+        },
+        "11242777:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11242957,
+          "unit_number": 2547
+        },
+        "11243044:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11243226,
+          "unit_number": 2547
+        },
+        "11243330:factory_insert:recipe:copper-plate:copper-ore": {
+          "extracting": false,
+          "item": "copper-ore",
+          "quantity": 5,
+          "role": "recipe:copper-plate",
+          "tick": 11244060,
+          "unit_number": 2546
+        },
+        "11245167:factory_extract:recipe:copper-plate:copper-plate": {
+          "extracting": true,
+          "item": "copper-plate",
+          "quantity": 5,
+          "role": "recipe:copper-plate",
+          "tick": 11245368,
+          "unit_number": 2546
+        },
+        "11247603:factory_insert:recipe:copper-plate:copper-ore": {
+          "extracting": false,
+          "item": "copper-ore",
+          "quantity": 10,
+          "role": "recipe:copper-plate",
+          "tick": 11247903,
+          "unit_number": 2546
+        },
+        "11249940:factory_extract:recipe:copper-plate:copper-plate": {
+          "extracting": true,
+          "item": "copper-plate",
+          "quantity": 10,
+          "role": "recipe:copper-plate",
+          "tick": 11250106,
+          "unit_number": 2546
+        },
+        "11260258:factory_insert:recipe:iron-plate:iron-ore": {
+          "extracting": false,
+          "item": "iron-ore",
+          "quantity": 20,
+          "role": "recipe:iron-plate",
+          "tick": 11260607,
+          "unit_number": 2547
+        },
+        "11260942:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11261129,
+          "unit_number": 2547
+        },
+        "11261232:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11261424,
+          "unit_number": 2547
+        },
+        "11261521:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11261716,
+          "unit_number": 2547
+        },
+        "11261823:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11261991,
+          "unit_number": 2547
+        },
+        "11262086:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11262273,
+          "unit_number": 2547
+        },
+        "11262371:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11262554,
+          "unit_number": 2547
+        },
+        "11262649:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11262840,
+          "unit_number": 2547
+        },
+        "11262944:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11263123,
+          "unit_number": 2547
+        },
+        "11263209:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11263407,
+          "unit_number": 2547
+        },
+        "11263506:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11263679,
+          "unit_number": 2547
+        },
+        "11263776:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11263964,
+          "unit_number": 2547
+        },
+        "11264076:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11264240,
+          "unit_number": 2547
+        },
+        "11264333:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11264527,
+          "unit_number": 2547
+        },
+        "11264654:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11264825,
+          "unit_number": 2547
+        },
+        "11273476:factory_insert:utility:lab:logistic-science-pack": {
+          "extracting": false,
+          "item": "logistic-science-pack",
+          "quantity": 20,
+          "role": "utility:lab",
+          "tick": 11274581,
+          "unit_number": 2548
+        },
+        "11281938:factory_insert:recipe:copper-plate:copper-ore": {
+          "extracting": false,
+          "item": "copper-ore",
+          "quantity": 20,
+          "role": "recipe:copper-plate",
+          "tick": 11282277,
+          "unit_number": 2546
+        },
+        "11284268:factory_extract:recipe:copper-plate:copper-plate": {
+          "extracting": true,
+          "item": "copper-plate",
+          "quantity": 10,
+          "role": "recipe:copper-plate",
+          "tick": 11284495,
+          "unit_number": 2546
+        },
+        "11284599:factory_extract:recipe:copper-plate:copper-plate": {
+          "extracting": true,
+          "item": "copper-plate",
+          "quantity": 2,
+          "role": "recipe:copper-plate",
+          "tick": 11284786,
+          "unit_number": 2546
+        },
+        "11284890:factory_extract:recipe:copper-plate:copper-plate": {
+          "extracting": true,
+          "item": "copper-plate",
+          "quantity": 1,
+          "role": "recipe:copper-plate",
+          "tick": 11285075,
+          "unit_number": 2546
+        },
+        "11285195:factory_extract:recipe:copper-plate:copper-plate": {
+          "extracting": true,
+          "item": "copper-plate",
+          "quantity": 2,
+          "role": "recipe:copper-plate",
+          "tick": 11285394,
+          "unit_number": 2546
+        },
+        "11285489:factory_extract:recipe:copper-plate:copper-plate": {
+          "extracting": true,
+          "item": "copper-plate",
+          "quantity": 1,
+          "role": "recipe:copper-plate",
+          "tick": 11285692,
+          "unit_number": 2546
+        },
+        "11285794:factory_extract:recipe:copper-plate:copper-plate": {
+          "extracting": true,
+          "item": "copper-plate",
+          "quantity": 2,
+          "role": "recipe:copper-plate",
+          "tick": 11285974,
+          "unit_number": 2546
+        },
+        "11286071:factory_extract:recipe:copper-plate:copper-plate": {
+          "extracting": true,
+          "item": "copper-plate",
+          "quantity": 1,
+          "role": "recipe:copper-plate",
+          "tick": 11286263,
+          "unit_number": 2546
+        },
+        "11286366:factory_extract:recipe:copper-plate:copper-plate": {
+          "extracting": true,
+          "item": "copper-plate",
+          "quantity": 1,
+          "role": "recipe:copper-plate",
+          "tick": 11286534,
+          "unit_number": 2546
+        },
+        "11286655:factory_insert:recipe:iron-plate:iron-ore": {
+          "extracting": false,
+          "item": "iron-ore",
+          "quantity": 20,
+          "role": "recipe:iron-plate",
+          "tick": 11287446,
+          "unit_number": 2547
+        },
+        "11287813:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11288004,
+          "unit_number": 2547
+        },
+        "11288099:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11288285,
+          "unit_number": 2547
+        },
+        "11288384:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11288576,
+          "unit_number": 2547
+        },
+        "11288687:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11288882,
+          "unit_number": 2547
+        },
+        "11288978:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11289166,
+          "unit_number": 2547
+        },
+        "11289264:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11289457,
+          "unit_number": 2547
+        },
+        "11289566:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11289763,
+          "unit_number": 2547
+        },
+        "11289852:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11290033,
+          "unit_number": 2547
+        },
+        "11290146:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11290329,
+          "unit_number": 2547
+        },
+        "11290427:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11290612,
+          "unit_number": 2547
+        },
+        "11290709:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11290900,
+          "unit_number": 2547
+        },
+        "11290997:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11291180,
+          "unit_number": 2547
+        },
+        "11291288:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11291513,
+          "unit_number": 2547
+        },
+        "11291612:factory_insert:recipe:iron-plate:iron-ore": {
+          "extracting": false,
+          "item": "iron-ore",
+          "quantity": 20,
+          "role": "recipe:iron-plate",
+          "tick": 11291796,
+          "unit_number": 2547
+        },
+        "11292138:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11292318,
+          "unit_number": 2547
+        },
+        "11292417:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11292584,
+          "unit_number": 2547
+        },
+        "11292676:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11292894,
+          "unit_number": 2547
+        },
+        "11293000:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11293216,
+          "unit_number": 2547
+        },
+        "11293319:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11293523,
+          "unit_number": 2547
+        },
+        "11293619:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11293790,
+          "unit_number": 2547
+        },
+        "11293890:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11294090,
+          "unit_number": 2547
+        },
+        "11294200:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11294392,
+          "unit_number": 2547
+        },
+        "11294493:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11294680,
+          "unit_number": 2547
+        },
+        "11294775:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11294968,
+          "unit_number": 2547
+        },
+        "11295088:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11295285,
+          "unit_number": 2547
+        },
+        "11295375:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11295581,
+          "unit_number": 2547
+        },
+        "11295678:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11295868,
+          "unit_number": 2547
+        },
+        "11296215:factory_insert:recipe:iron-plate:coal": {
+          "extracting": false,
+          "item": "coal",
+          "quantity": 5,
+          "role": "recipe:iron-plate",
+          "tick": 11296404,
+          "unit_number": 2547
+        },
+        "11303015:factory_insert:utility:lab:automation-science-pack": {
+          "extracting": false,
+          "item": "automation-science-pack",
+          "quantity": 20,
+          "role": "utility:lab",
+          "tick": 11304129,
+          "unit_number": 2548
+        },
+        "11305548:factory_insert:utility:boiler:coal": {
+          "extracting": false,
+          "item": "coal",
+          "quantity": 1,
+          "role": "utility:boiler",
+          "tick": 11306304,
+          "unit_number": 2550
+        },
+        "11308997:factory_insert:utility:boiler:coal": {
+          "extracting": false,
+          "item": "coal",
+          "quantity": 1,
+          "role": "utility:boiler",
+          "tick": 11309741,
+          "unit_number": 2550
+        },
+        "11312986:factory_insert:utility:boiler:coal": {
+          "extracting": false,
+          "item": "coal",
+          "quantity": 1,
+          "role": "utility:boiler",
+          "tick": 11313731,
+          "unit_number": 2550
+        },
+        "11316956:factory_insert:utility:boiler:coal": {
+          "extracting": false,
+          "item": "coal",
+          "quantity": 1,
+          "role": "utility:boiler",
+          "tick": 11317699,
+          "unit_number": 2550
+        },
+        "11320938:factory_insert:utility:boiler:coal": {
+          "extracting": false,
+          "item": "coal",
+          "quantity": 1,
+          "role": "utility:boiler",
+          "tick": 11321699,
+          "unit_number": 2550
+        },
+        "11324907:factory_insert:utility:boiler:coal": {
+          "extracting": false,
+          "item": "coal",
+          "quantity": 1,
+          "role": "utility:boiler",
+          "tick": 11325647,
+          "unit_number": 2550
+        },
+        "11328906:factory_insert:utility:boiler:coal": {
+          "extracting": false,
+          "item": "coal",
+          "quantity": 1,
+          "role": "utility:boiler",
+          "tick": 11329668,
+          "unit_number": 2550
+        },
+        "11332914:factory_insert:utility:boiler:coal": {
+          "extracting": false,
+          "item": "coal",
+          "quantity": 1,
+          "role": "utility:boiler",
+          "tick": 11333092,
+          "unit_number": 2550
+        },
+        "11335367:factory_insert:recipe:iron-plate:iron-ore": {
+          "extracting": false,
+          "item": "iron-ore",
+          "quantity": 9,
+          "role": "recipe:iron-plate",
+          "tick": 11335735,
+          "unit_number": 2547
+        },
+        "11336112:factory_insert:recipe:copper-plate:coal": {
+          "extracting": false,
+          "item": "coal",
+          "quantity": 3,
+          "role": "recipe:copper-plate",
+          "tick": 11337076,
+          "unit_number": 2546
+        },
+        "11336112:factory_insert:recipe:copper-plate:copper-ore": {
+          "extracting": false,
+          "item": "copper-ore",
+          "quantity": 17,
+          "role": "recipe:copper-plate",
+          "tick": 11336867,
+          "unit_number": 2546
+        },
+        "11338500:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 9,
+          "role": "recipe:iron-plate",
+          "tick": 11339325,
+          "unit_number": 2547
+        },
+        "11340335:factory_extract:recipe:copper-plate:copper-plate": {
+          "extracting": true,
+          "item": "copper-plate",
+          "quantity": 17,
+          "role": "recipe:copper-plate",
+          "tick": 11341070,
+          "unit_number": 2546
+        },
+        "11342169:factory_insert:recipe:iron-plate:iron-ore": {
+          "extracting": false,
+          "item": "iron-ore",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11342519,
+          "unit_number": 2547
+        },
+        "11349141:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11349491,
+          "unit_number": 2547
+        },
+        "11349589:factory_insert:recipe:iron-plate:iron-ore": {
+          "extracting": false,
+          "item": "iron-ore",
+          "quantity": 10,
+          "role": "recipe:iron-plate",
+          "tick": 11349793,
+          "unit_number": 2547
+        },
+        "11350186:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11350374,
+          "unit_number": 2547
+        },
+        "11350480:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11350674,
+          "unit_number": 2547
+        },
+        "11350777:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11351007,
+          "unit_number": 2547
+        },
+        "11351100:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11351284,
+          "unit_number": 2547
+        },
+        "11351382:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11351573,
+          "unit_number": 2547
+        },
+        "11351695:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11351898,
+          "unit_number": 2547
+        },
+        "11351999:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11352206,
+          "unit_number": 2547
+        },
+        "11352898:factory_insert:recipe:iron-plate:iron-ore": {
+          "extracting": false,
+          "item": "iron-ore",
+          "quantity": 10,
+          "role": "recipe:iron-plate",
+          "tick": 11353118,
+          "unit_number": 2547
+        },
+        "11353499:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11353700,
+          "unit_number": 2547
+        },
+        "11353804:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11353997,
+          "unit_number": 2547
+        },
+        "11354098:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11354314,
+          "unit_number": 2547
+        },
+        "11354413:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11354589,
+          "unit_number": 2547
+        },
+        "11354695:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11354908,
+          "unit_number": 2547
+        },
+        "11355027:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11355200,
+          "unit_number": 2547
+        },
+        "11355304:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11355486,
+          "unit_number": 2547
+        },
+        "11356221:factory_insert:recipe:iron-plate:iron-ore": {
+          "extracting": false,
+          "item": "iron-ore",
+          "quantity": 20,
+          "role": "recipe:iron-plate",
+          "tick": 11356416,
+          "unit_number": 2547
+        },
+        "11356792:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11356962,
+          "unit_number": 2547
+        },
+        "11357052:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11357225,
+          "unit_number": 2547
+        },
+        "11357327:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11357527,
+          "unit_number": 2547
+        },
+        "11357629:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11357819,
+          "unit_number": 2547
+        },
+        "11357924:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11358084,
+          "unit_number": 2547
+        },
+        "11358172:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11358391,
+          "unit_number": 2547
+        },
+        "11358505:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11358701,
+          "unit_number": 2547
+        },
+        "11358798:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11359006,
+          "unit_number": 2547
+        },
+        "11359113:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11359317,
+          "unit_number": 2547
+        },
+        "11359421:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11359619,
+          "unit_number": 2547
+        },
+        "11359722:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11359932,
+          "unit_number": 2547
+        },
+        "11360028:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11360225,
+          "unit_number": 2547
+        },
+        "11360329:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11360551,
+          "unit_number": 2547
+        },
+        "11368788:factory_insert:recipe:iron-plate:iron-ore": {
+          "extracting": false,
+          "item": "iron-ore",
+          "quantity": 20,
+          "role": "recipe:iron-plate",
+          "tick": 11369180,
+          "unit_number": 2547
+        },
+        "11376637:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 16,
+          "role": "recipe:iron-plate",
+          "tick": 11377450,
+          "unit_number": 2547
+        },
+        "11377549:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 4,
+          "role": "recipe:iron-plate",
+          "tick": 11377753,
+          "unit_number": 2547
+        },
+        "11378197:factory_insert:recipe:iron-plate:coal": {
+          "extracting": false,
+          "item": "coal",
+          "quantity": 5,
+          "role": "recipe:iron-plate",
+          "tick": 11378461,
+          "unit_number": 2547
+        },
+        "11378580:factory_insert:recipe:iron-plate:iron-ore": {
+          "extracting": false,
+          "item": "iron-ore",
+          "quantity": 20,
+          "role": "recipe:iron-plate",
+          "tick": 11378778,
+          "unit_number": 2547
+        },
+        "11379408:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 3,
+          "role": "recipe:iron-plate",
+          "tick": 11379612,
+          "unit_number": 2547
+        },
+        "11379719:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11379942,
+          "unit_number": 2547
+        },
+        "11380044:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11380257,
+          "unit_number": 2547
+        },
+        "11380364:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11380573,
+          "unit_number": 2547
+        },
+        "11380706:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11380896,
+          "unit_number": 2547
+        },
+        "11380993:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11381190,
+          "unit_number": 2547
+        },
+        "11381301:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11381515,
+          "unit_number": 2547
+        },
+        "11381629:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11381834,
+          "unit_number": 2547
+        },
+        "11381933:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11382127,
+          "unit_number": 2547
+        },
+        "11382262:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 2,
+          "role": "recipe:iron-plate",
+          "tick": 11382475,
+          "unit_number": 2547
+        },
+        "11382581:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11382754,
+          "unit_number": 2547
+        },
+        "11382856:factory_extract:recipe:iron-plate:iron-plate": {
+          "extracting": true,
+          "item": "iron-plate",
+          "quantity": 1,
+          "role": "recipe:iron-plate",
+          "tick": 11383082,
+          "unit_number": 2547
+        }
+      },
+      "research": "advanced-material-processing",
+      "research_progress": 0.5333333333330731,
+      "researched": [
+        "automation",
+        "automation-science-pack",
+        "electronics",
+        "logistic-science-pack",
+        "steam-power",
+        "steel-processing"
+      ],
+      "rocket_baseline": 0,
+      "rockets_launched": 0,
+      "tick": 11401189
+    },
+    "game_version": "2.0.77",
+    "inventory": {
+      "burner-mining-drill": 1,
+      "copper-cable": 1,
+      "copper-ore": 63,
+      "copper-plate": 17,
+      "iron-gear-wheel": 20,
+      "iron-ore": 20,
+      "iron-plate": 20,
+      "pipe": 29,
+      "small-electric-pole": 33,
+      "transport-belt": 20,
+      "wood": 1,
+      "wooden-chest": 1
+    },
+    "iron_ore_collected": 33,
+    "nearby_resources": {
+      "coal": 88.11499312920677,
+      "copper-ore": 86.11875239551578,
+      "crude-oil": 492.41124087408906,
+      "iron-ore": 30.64543423024311,
+      "stone": 34.50252004071813,
+      "water": 151.81426918000875,
+      "wood": 131.10281577152588
+    },
+    "placed_entities": [
+      "burner-mining-drill",
+      "wooden-chest"
+    ],
+    "player_position": [
+      33.1796875,
+      -108.59375
+    ],
+    "power_satisfaction": 1.0,
+    "production_rates": null,
+    "researched": [
+      "automation",
+      "automation-science-pack",
+      "electronics",
+      "logistic-science-pack",
+      "steam-power",
+      "steel-processing"
+    ],
+    "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+    "tick": 11401189,
+    "victory": false,
+    "victory_source": null,
+    "world_kind": "fle"
+  },
+  "recorded_state": {
+    "active_goal": {
+      "description": "Verify a native base-game rocket-launch completion event",
+      "id": "rocket_launch",
+      "prerequisites": [
+        "bootstrap_mining"
+      ]
+    },
+    "candidate_evidence": {
+      "factory:factory_craft:transport-belt": {
+        "actor_ticks_estimate": 300,
+        "buffer_build_start_evidence": null,
+        "buffer_component_prerequisite_start_evidence": null,
+        "buffer_fuel_start_evidence": null,
+        "compiler_order": 3,
+        "craft_dependency": null,
+        "craft_handling_forecasts": [
+          {
+            "batches": 8,
+            "expected_products_after_native_verification": {
+              "transport-belt": 16
+            },
+            "forecast_not_completed_output": true,
+            "native_recipe": "transport-belt"
+          }
+        ],
+        "craft_start_evidence": {
+          "craft_job_protocol_ready": true,
+          "crafting_queue_empty": true,
+          "expected_products_after_native_verification": {
+            "transport-belt": 16
+          },
+          "input_costs_match_native_recipe": true,
+          "inputs_in_inventory_now": true,
+          "native_receipt_required_for_completion": true,
+          "native_recipe": "transport-belt",
+          "observed_tick": 11401189,
+          "player_connected_and_bound": true,
+          "recipe_unlocked_and_handcraftable": true
+        },
+        "delivers_or_crafts": [],
+        "direct_alternative_parent_demand_start_evidence": null,
+        "estimate_basis": "native_observation_and_catalog_with_declared_policy_heuristics",
+        "fuel_prerequisite": null,
+        "fuel_transfer_start_evidence": null,
+        "gather_start_evidence": null,
+        "input_route_kit_parent_purpose": null,
+        "local_target": {
+          "inventory_target": 20,
+          "item": "logistic-science-pack",
+          "ultimate_goal": "rocket_launch"
+        },
+        "local_target_completion_evidence": null,
+        "material_costs": {
+          "iron-gear-wheel": 8,
+          "iron-plate": 8
+        },
+        "native_research_trigger_start_evidence": null,
+        "outpost_kit_prerequisite_start_evidence": null,
+        "output_pickup_start_evidence": null,
+        "paid_service_input_start_evidence": null,
+        "passive": false,
+        "placement_dependency": null,
+        "placement_start_evidence": null,
+        "processed_units": 16.0,
+        "processed_units_basis": "handling_volume_not_useful_production",
+        "raw_prerequisite": null,
+        "reasons": [],
+        "recipe_input_transfer_start_evidence": null,
+        "requires_investment": false,
+        "research_deadline_tick": null,
+        "research_science_transfer_start_evidence": null,
+        "shared_bill_craft": null,
+        "supplied_research_start_evidence": null,
+        "travel_tiles_lower_bound": 0.0,
+        "unknowns": [],
+        "urgency": 0,
+        "utility_lab_research_dependency": null,
+        "utility_power_prerequisite_start_evidence": null,
+        "work_scope": "lookahead"
+      },
+      "factory:factory_gather:wood:target:2:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":72.8125,\"y\":16.375},\"surface_index\":1}": {
+        "actor_ticks_estimate": 3043,
+        "buffer_build_start_evidence": null,
+        "buffer_component_prerequisite_start_evidence": null,
+        "buffer_fuel_start_evidence": null,
+        "compiler_order": 0,
+        "craft_dependency": null,
+        "craft_start_evidence": null,
+        "delivers_or_crafts": [],
+        "direct_alternative_parent_demand_start_evidence": null,
+        "estimate_basis": "native_observation_and_catalog_with_declared_policy_heuristics",
+        "fuel_prerequisite": null,
+        "fuel_transfer_start_evidence": null,
+        "gather_start_evidence": {
+          "fair_target_identity_observed": true,
+          "observed_tick": 11401189,
+          "resource_in_current_observation": true,
+          "resource_inventory_now": 1,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "target_inventory_after_this_step": 2,
+          "travel_is_lower_bound_not_arrival_proof": true
+        },
+        "input_route_kit_parent_purpose": null,
+        "local_target": {
+          "inventory_target": 20,
+          "item": "logistic-science-pack",
+          "ultimate_goal": "rocket_launch"
+        },
+        "local_target_completion_evidence": null,
+        "material_costs": {},
+        "native_research_trigger_start_evidence": null,
+        "outpost_kit_prerequisite_start_evidence": null,
+        "output_pickup_start_evidence": null,
+        "paid_service_input_start_evidence": null,
+        "passive": false,
+        "placement_dependency": null,
+        "placement_start_evidence": null,
+        "processed_units": 1.0,
+        "processed_units_basis": "handling_volume_not_useful_production",
+        "raw_prerequisite": {
+          "basis": "current_planner_dependency_and_native_catalog_recipe",
+          "direct_product": "small-electric-pole",
+          "direct_recipe": "small-electric-pole",
+          "later_steps_require_fresh_native_preconditions": true,
+          "observed_tick": 11401189,
+          "planner_item_path": [
+            "small-electric-pole",
+            "wood"
+          ]
+        },
+        "reasons": [
+          "current_power_consumer_prerequisite"
+        ],
+        "recipe_input_transfer_start_evidence": null,
+        "requires_investment": false,
+        "research_deadline_tick": null,
+        "research_science_transfer_start_evidence": null,
+        "shared_bill_craft": null,
+        "supplied_research_start_evidence": null,
+        "travel_tiles_lower_bound": 131.103,
+        "unknowns": [],
+        "urgency": 0,
+        "utility_lab_research_dependency": null,
+        "utility_power_prerequisite_start_evidence": {
+          "actor_coal_now": null,
+          "basis": "exact_current_power_planner_step_and_coherent_native_chain",
+          "boiler_catalog_burner_current": true,
+          "boiler_coal_deficit_to_five": null,
+          "boiler_coal_now": null,
+          "child_start_evidence": {
+            "action": "factory_gather",
+            "completion_requires_fresh_native_receipt_or_inventory": true,
+            "item": "wood",
+            "kind": "utility_chain_raw_gather_start",
+            "observed_tick": 11401189,
+            "planner_item_path": [
+              "small-electric-pole",
+              "wood"
+            ],
+            "quantity": 1,
+            "role": "wood",
+            "step_costs": {},
+            "witness_fields": [
+              "gather_start_evidence",
+              "raw_prerequisite"
+            ],
+            "witnesses": {
+              "gather_start_evidence": {
+                "fair_target_identity_observed": true,
+                "observed_tick": 11401189,
+                "resource_in_current_observation": true,
+                "resource_inventory_now": 1,
+                "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+                "target_inventory_after_this_step": 2,
+                "travel_is_lower_bound_not_arrival_proof": true
+              },
+              "raw_prerequisite": {
+                "basis": "current_planner_dependency_and_native_catalog_recipe",
+                "direct_product": "small-electric-pole",
+                "direct_recipe": "small-electric-pole",
+                "later_steps_require_fresh_native_preconditions": true,
+                "observed_tick": 11401189,
+                "planner_item_path": [
+                  "small-electric-pole",
+                  "wood"
+                ]
+              }
+            }
+          },
+          "connections_current": {
+            "boiler_to_engine_steam": true,
+            "engine_to_consumer_electricity": false,
+            "water_to_boiler": true
+          },
+          "consumer_demand": {
+            "kind": "current_native_recipe_demand",
+            "machine_recipe_matches_now": true,
+            "recipe": "copper-cable",
+            "recipe_enabled_now": true
+          },
+          "consumer_role": "recipe:copper-cable",
+          "consumer_unit": 2580,
+          "does_not_establish_electricity_or_research_completion": true,
+          "gather_start_evidence": null,
+          "local_recipe_dependency": null,
+          "native_transfer_rechecks_reach_capacity_receipt_and_postcondition": false,
+          "next_action": "factory_gather",
+          "next_action_kind": "utility_chain_raw_gather_start",
+          "observed_tick": 11401189,
+          "paid_inventory_sufficient_now": null,
+          "placement_or_connection_rechecks_native_preconditions": true,
+          "planned_native_receipt": null,
+          "planned_receipt_absent_now": null,
+          "planner_path": [
+            "technology:rocket-silo",
+            "technology:concrete",
+            "technology:advanced-material-processing",
+            "item:logistic-science-pack",
+            "item:inserter",
+            "item:electronic-circuit",
+            "item:copper-cable"
+          ],
+          "research": "advanced-material-processing",
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "transfer_receipt_observed_now": null,
+          "utility_units_current": {
+            "boiler": 2550,
+            "steam_engine": 2551,
+            "water_pump": 2549
+          }
+        },
+        "work_scope": "immediate"
+      },
+      "factory:factory_insert:recipe:iron-plate": {
+        "actor_ticks_estimate": 464,
+        "buffer_build_start_evidence": null,
+        "buffer_component_prerequisite_start_evidence": null,
+        "buffer_fuel_start_evidence": null,
+        "compiler_order": 2,
+        "craft_dependency": null,
+        "craft_start_evidence": null,
+        "delivers_or_crafts": [
+          "iron-ore"
+        ],
+        "direct_alternative_parent_demand_start_evidence": null,
+        "estimate_basis": "native_observation_and_catalog_with_declared_policy_heuristics",
+        "fuel_prerequisite": null,
+        "fuel_transfer_start_evidence": null,
+        "gather_start_evidence": null,
+        "input_route_kit_parent_purpose": null,
+        "local_target": {
+          "inventory_target": 20,
+          "item": "logistic-science-pack",
+          "ultimate_goal": "rocket_launch"
+        },
+        "local_target_completion_evidence": null,
+        "material_costs": {
+          "iron-ore": 20
+        },
+        "native_research_trigger_start_evidence": null,
+        "outpost_kit_prerequisite_start_evidence": null,
+        "output_pickup_start_evidence": null,
+        "paid_service_input_start_evidence": null,
+        "passive": false,
+        "placement_dependency": null,
+        "placement_start_evidence": null,
+        "processed_units": 20.0,
+        "processed_units_basis": "handling_volume_not_useful_production",
+        "raw_prerequisite": null,
+        "reasons": [],
+        "recipe_input_transfer_start_evidence": null,
+        "requires_investment": false,
+        "research_deadline_tick": null,
+        "research_science_transfer_start_evidence": null,
+        "shared_bill_craft": null,
+        "supplied_research_start_evidence": null,
+        "travel_tiles_lower_bound": 8.182,
+        "unknowns": [],
+        "urgency": 0,
+        "utility_lab_research_dependency": null,
+        "utility_power_prerequisite_start_evidence": null,
+        "work_scope": "lookahead"
+      }
+    },
+    "candidate_plans": {
+      "factory:factory_craft:transport-belt": {
+        "description": "Next production batch: 20 logistic-science-pack. Native hand-craft 8 batches of transport-belt; native receipt-tracked output",
+        "goal": "rocket_launch",
+        "id": "factory:factory_craft:transport-belt",
+        "materials": {
+          "batches": {
+            "copper-cable": 30,
+            "copper-plate": 13,
+            "electronic-circuit": 20,
+            "inserter": 20,
+            "iron-plate": 20,
+            "logistic-science-pack": 20
+          },
+          "craft_dependency": {
+            "observed_tick": 11401189,
+            "planner_item_path": [
+              "transport-belt"
+            ],
+            "product": "transport-belt",
+            "recipe": "transport-belt"
+          },
+          "local_objective": {
+            "inventory_target": 20,
+            "item": "logistic-science-pack",
+            "ultimate_goal": "rocket_launch"
+          },
+          "mining_outposts": {
+            "copper-ore": {
+              "flow": {},
+              "layout": "outpost:copper-ore:1",
+              "remaining": 170000,
+              "state": "proposed",
+              "topology": false
+            },
+            "iron-ore": {
+              "flow": {},
+              "layout": "outpost:iron-ore:2",
+              "remaining": 110000,
+              "state": "proposed",
+              "topology": false
+            }
+          },
+          "ore_transport": "bounded_manual_hauling",
+          "shared_bill_craft": {
+            "basis": "current_catalog_shared_material_bill",
+            "bill_inventory_target": 36,
+            "craft_item": "transport-belt",
+            "inventory_now": 20,
+            "local_target_amount": 20,
+            "local_target_item": "logistic-science-pack",
+            "observed_tick": 11401189,
+            "planned_product_units": 16
+          },
+          "shortages": {},
+          "work_intent": {
+            "observed_tick": 11401189,
+            "scope": "lookahead"
+          }
+        },
+        "shared_materials_keys": [
+          "automation_sites",
+          "remaining",
+          "route_diagnostics"
+        ],
+        "steps": [
+          {
+            "action": "factory_craft_job",
+            "costs": {
+              "iron-gear-wheel": 8,
+              "iron-plate": 8
+            },
+            "effect": "craft_job_complete",
+            "item": "transport-belt",
+            "parameters": {
+              "batches": 8,
+              "receipt": "94dc51116ec94e4e9c9716d91c6deb7b",
+              "recipe": "transport-belt"
+            },
+            "threshold": 36,
+            "timeout_ticks": 1800,
+            "verification": null
+          }
+        ]
+      },
+      "factory:factory_gather:wood:target:2:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":72.8125,\"y\":16.375},\"surface_index\":1}": {
+        "description": "Next production batch: 20 logistic-science-pack. Gather 1 observed wood; inventory target 2",
+        "goal": "rocket_launch",
+        "id": "factory:factory_gather:wood:target:2:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":72.8125,\"y\":16.375},\"surface_index\":1}",
+        "materials": {
+          "batches": {
+            "copper-cable": 30,
+            "copper-plate": 13,
+            "electronic-circuit": 20,
+            "inserter": 20,
+            "iron-plate": 20,
+            "logistic-science-pack": 20
+          },
+          "local_objective": {
+            "inventory_target": 20,
+            "item": "logistic-science-pack",
+            "ultimate_goal": "rocket_launch"
+          },
+          "mining_outposts": {
+            "copper-ore": {
+              "flow": {},
+              "layout": "outpost:copper-ore:1",
+              "remaining": 170000,
+              "state": "proposed",
+              "topology": false
+            },
+            "iron-ore": {
+              "flow": {},
+              "layout": "outpost:iron-ore:2",
+              "remaining": 110000,
+              "state": "proposed",
+              "topology": false
+            }
+          },
+          "ore_transport": "bounded_manual_hauling",
+          "raw_prerequisite": {
+            "direct_product": "small-electric-pole",
+            "ingredient": "wood",
+            "observed_tick": 11401189,
+            "planner_item_path": [
+              "small-electric-pole",
+              "wood"
+            ],
+            "recipe": "small-electric-pole"
+          },
+          "shortages": {},
+          "utility_power_prerequisite": {
+            "consumer_role": "recipe:copper-cable",
+            "consumer_unit": 2580,
+            "observed_tick": 11401189,
+            "planner_path": [
+              "technology:rocket-silo",
+              "technology:concrete",
+              "technology:advanced-material-processing",
+              "item:logistic-science-pack",
+              "item:inserter",
+              "item:electronic-circuit",
+              "item:copper-cable"
+            ],
+            "research": "advanced-material-processing"
+          },
+          "work_intent": {
+            "observed_tick": 11401189,
+            "scope": "immediate"
+          }
+        },
+        "shared_materials_keys": [
+          "automation_sites",
+          "remaining",
+          "route_diagnostics"
+        ],
+        "steps": [
+          {
+            "action": "factory_gather",
+            "costs": null,
+            "effect": "inventory",
+            "item": "wood",
+            "parameters": {
+              "quantity": 1,
+              "resource": "wood"
+            },
+            "threshold": 2,
+            "timeout_ticks": 18000,
+            "verification": null
+          }
+        ]
+      },
+      "factory:factory_insert:recipe:iron-plate": {
+        "description": "Next production batch: 20 logistic-science-pack. Deliver 20 iron-ore to recipe:iron-plate",
+        "goal": "rocket_launch",
+        "id": "factory:factory_insert:recipe:iron-plate",
+        "materials": {
+          "batches": {
+            "copper-cable": 30,
+            "copper-plate": 13,
+            "electronic-circuit": 20,
+            "inserter": 20,
+            "iron-plate": 20,
+            "logistic-science-pack": 20
+          },
+          "local_objective": {
+            "inventory_target": 20,
+            "item": "logistic-science-pack",
+            "ultimate_goal": "rocket_launch"
+          },
+          "mining_outposts": {
+            "copper-ore": {
+              "flow": {},
+              "layout": "outpost:copper-ore:1",
+              "remaining": 170000,
+              "state": "proposed",
+              "topology": false
+            },
+            "iron-ore": {
+              "flow": {},
+              "layout": "outpost:iron-ore:2",
+              "remaining": 110000,
+              "state": "proposed",
+              "topology": false
+            }
+          },
+          "ore_transport": "bounded_manual_hauling",
+          "recipe_input_transfer": {
+            "ingredient": "iron-ore",
+            "observed_crafting": false,
+            "observed_input": 0,
+            "observed_tick": 11401189,
+            "planned_batches": 20,
+            "planner_item_path": [
+              "iron-gear-wheel",
+              "iron-plate",
+              "iron-ore"
+            ],
+            "recipe": "iron-plate",
+            "source_role": "recipe:iron-plate",
+            "source_unit": 2547
+          },
+          "service_visit": {
+            "collections_are_spendable": false,
+            "estimate_basis": "Manhattan_distance_and_declared_policy_not_native_timing",
+            "extra_ticks_estimate": 0,
+            "first_role": "recipe:iron-plate",
+            "first_ticks_estimate": 505,
+            "max_extra_ticks": 900,
+            "max_leg_tiles": 8,
+            "observed_tick": 11401189,
+            "rejections": {},
+            "research_deadline_tick": 11401189,
+            "schema": 1,
+            "scope": "same_cell_paid_service",
+            "steps": 1,
+            "unit_numbers": [
+              2547
+            ]
+          },
+          "shortages": {},
+          "work_intent": {
+            "observed_tick": 11401189,
+            "scope": "lookahead"
+          }
+        },
+        "shared_materials_keys": [
+          "automation_sites",
+          "remaining",
+          "route_diagnostics"
+        ],
+        "steps": [
+          {
+            "action": "factory_insert",
+            "costs": {
+              "iron-ore": 20
+            },
+            "effect": "transfer",
+            "item": "",
+            "parameters": {
+              "item": "iron-ore",
+              "quantity": 20,
+              "receipt": "11401189:factory_insert:recipe:iron-plate:iron-ore",
+              "role": "recipe:iron-plate"
+            },
+            "threshold": 0,
+            "timeout_ticks": 1800,
+            "verification": null
+          }
+        ]
+      }
+    },
+    "deterministic_ranking": [
+      "factory:factory_gather:wood:target:2:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":72.8125,\"y\":16.375},\"surface_index\":1}",
+      "factory:factory_craft:transport-belt",
+      "factory:factory_insert:recipe:iron-plate"
+    ],
+    "execution_contract": "These are bounded tool plans, not keyboard commands or full-game strategies. Code filters plans for current resource, inventory, and placement preconditions and checks them again before dispatch. walk_to_coal and walk_to_iron move to an observed patch; mine_coal harvests five coal into inventory; place_burner_drill consumes one drill and one chest on iron; fuel_drill inserts five carried coal. factory_* steps execute the explicit parameters using native recipes, paid inventory transfers, machines, physical connections, and research. Native crafting waits for its real queue; native machines and labs must actually produce or research. Judge the supplied local_objective when present; otherwise judge active_goal. Estimates are not facts or execution permission. Each action needs a fresh observed postcondition before it counts as success. Each candidate's shared_materials_keys names material records in shared_plan_materials that also apply to that candidate. Read those records together with its own materials; no material proof is omitted.",
+    "facts": {
+      "alerts": [],
+      "craft_queue": [],
+      "drill_fuel": 0,
+      "drill_output_connected": true,
+      "drill_status": "no_fuel",
+      "factory": {
+        "connections": {},
+        "connector_ownership": {
+          "protocol": 1,
+          "routes": {
+            "3f1263ac57425311e7eb7d325504f1a6ac479db79cf7ebfcdbff80e7d86d610a": {
+              "actor_unit": 2543,
+              "cell_count": 12,
+              "completed_tick": 9188486,
+              "external": 0,
+              "fluid": "steam",
+              "force_index": 1,
+              "id": "3f1263ac57425311e7eb7d325504f1a6ac479db79cf7ebfcdbff80e7d86d610a",
+              "kind": "pipe",
+              "owned": true,
+              "paid": 12,
+              "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+              "source": "utility:boiler",
+              "source_unit": 2550,
+              "state": "complete",
+              "surface_index": 1,
+              "target": "utility:engine",
+              "target_unit": 2551,
+              "tick": 9187345
+            },
+            "a5dfabb0c5750f29c4d83c2e38346a9bb2a3bbfc27414cee0ee99ddd6e22b9e3": {
+              "actor_unit": 2543,
+              "cell_count": 11,
+              "completed_tick": 9181456,
+              "external": 0,
+              "fluid": "water",
+              "force_index": 1,
+              "id": "a5dfabb0c5750f29c4d83c2e38346a9bb2a3bbfc27414cee0ee99ddd6e22b9e3",
+              "kind": "pipe",
+              "owned": true,
+              "paid": 11,
+              "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+              "source": "utility:water",
+              "source_unit": 2549,
+              "state": "complete",
+              "surface_index": 1,
+              "target": "utility:boiler",
+              "target_unit": 2550,
+              "tick": 9180309
+            },
+            "c703982611d047fdbe5d36d0c965d332b46e6a37f57f563b957d9ef133a498fe": {
+              "actor_unit": 2543,
+              "cell_count": 5,
+              "completed_tick": 9208733,
+              "external": 0,
+              "fluid": "electricity",
+              "force_index": 1,
+              "id": "c703982611d047fdbe5d36d0c965d332b46e6a37f57f563b957d9ef133a498fe",
+              "kind": "small-electric-pole",
+              "owned": true,
+              "paid": 5,
+              "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+              "source": "utility:engine",
+              "source_unit": 2551,
+              "state": "complete",
+              "surface_index": 1,
+              "target": "utility:lab",
+              "target_unit": 2548,
+              "tick": 9207416
+            }
+          },
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "tick": 11401189
+        },
+        "craft_job": {
+          "accepted": 12,
+          "baseline": {
+            "iron-gear-wheel": 8
+          },
+          "completed_tick": 11378449,
+          "finished": 12,
+          "force_index": 1,
+          "id": "52094d146e8c44e5870d348c9f213f33",
+          "inputs": {
+            "iron-plate": 24
+          },
+          "last_progress_tick": 11378449,
+          "outputs": {
+            "iron-gear-wheel": 12
+          },
+          "paid": true,
+          "player_index": 1,
+          "queue_valid": true,
+          "recipe": "iron-gear-wheel",
+          "requested": 12,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "started_tick": 11378078,
+          "status": "completed",
+          "surface_index": 1,
+          "unit_number": 2543
+        },
+        "craft_job_actor": {
+          "force_index": 1,
+          "player_index": 1,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "surface_index": 1,
+          "unit_number": 2543
+        },
+        "craft_jobs_protocol": 1,
+        "crafting_queue": 0,
+        "entities": {
+          "recipe:copper-cable": {
+            "crafting": false,
+            "crafting_progress": 0,
+            "energy": 0,
+            "fluid_ports": {},
+            "fluids": {},
+            "fuel": {},
+            "health": 300,
+            "input": {},
+            "max_health": 300,
+            "name": "assembling-machine-1",
+            "output": {},
+            "position": {
+              "x": 0.5,
+              "y": 44.5
+            },
+            "products_finished": 0,
+            "recipe": "copper-cable",
+            "status": 54,
+            "unit_number": 2580
+          },
+          "recipe:copper-plate": {
+            "crafting": false,
+            "crafting_progress": 0,
+            "energy": 100,
+            "fluid_ports": {},
+            "fluids": {},
+            "fuel": {
+              "coal": 5
+            },
+            "health": 200,
+            "input": {},
+            "max_health": 200,
+            "name": "stone-furnace",
+            "output": {},
+            "position": {
+              "x": -42,
+              "y": -109
+            },
+            "products_finished": 292,
+            "recipe": "",
+            "status": 18,
+            "unit_number": 2546
+          },
+          "recipe:iron-plate": {
+            "crafting": false,
+            "crafting_progress": 0,
+            "energy": 100,
+            "fluid_ports": {},
+            "fluids": {},
+            "fuel": {
+              "coal": 3
+            },
+            "health": 200,
+            "input": {},
+            "max_health": 200,
+            "name": "stone-furnace",
+            "output": {},
+            "position": {
+              "x": 41,
+              "y": -111
+            },
+            "products_finished": 823,
+            "recipe": "",
+            "status": 18,
+            "unit_number": 2547
+          },
+          "utility:boiler": {
+            "energy": 32000,
+            "fluid_ports": [
+              {
+                "fluid": "water",
+                "id": 17
+              },
+              {
+                "fluid": "water",
+                "id": 17
+              },
+              {
+                "fluid": "steam",
+                "id": 18
+              }
+            ],
+            "fluids": {
+              "steam": 200,
+              "water": 200
+            },
+            "fuel": {
+              "coal": 4
+            },
+            "health": 200,
+            "input": {},
+            "max_health": 200,
+            "name": "boiler",
+            "output": {},
+            "position": {
+              "x": 34.5,
+              "y": 43
+            },
+            "status": 27,
+            "unit_number": 2550
+          },
+          "utility:engine": {
+            "electric_network_id": 17,
+            "energy": 15000,
+            "fluid_ports": [
+              {
+                "fluid": "steam",
+                "id": 18
+              },
+              {
+                "fluid": "steam",
+                "id": 18
+              }
+            ],
+            "fluids": {
+              "steam": 200
+            },
+            "fuel": {},
+            "health": 400,
+            "input": {},
+            "max_health": 400,
+            "name": "steam-engine",
+            "output": {},
+            "position": {
+              "x": 44.5,
+              "y": 43.5
+            },
+            "status": 1,
+            "unit_number": 2551
+          },
+          "utility:lab": {
+            "electric_network_id": 17,
+            "energy": 1066.6666666666667,
+            "fluid_ports": {},
+            "fluids": {},
+            "fuel": {},
+            "health": 150,
+            "input": {
+              "automation-science-pack": 1
+            },
+            "max_health": 150,
+            "name": "lab",
+            "output": {},
+            "position": {
+              "x": 24.5,
+              "y": 32.5
+            },
+            "status": 31,
+            "unit_number": 2548
+          },
+          "utility:water": {
+            "energy": 2976579765,
+            "fluid_ports": [
+              {
+                "fluid": "water",
+                "id": 17
+              }
+            ],
+            "fluids": {
+              "water": 100
+            },
+            "fuel": {},
+            "health": 150,
+            "input": {},
+            "max_health": 150,
+            "name": "offshore-pump",
+            "output": {},
+            "position": {
+              "x": 24.5,
+              "y": 42.5
+            },
+            "status": 1,
+            "unit_number": 2549
+          }
+        },
+        "exploration_radius": 8,
+        "fair_resource_targets": {
+          "coal": {
+            "name": "coal",
+            "position": {
+              "x": 62.5,
+              "y": -25.5
+            },
+            "surface_index": 1
+          },
+          "copper-ore": {
+            "name": "copper-ore",
+            "position": {
+              "x": -49.5,
+              "y": -84.5
+            },
+            "surface_index": 1
+          },
+          "iron-ore": {
+            "name": "iron-ore",
+            "position": {
+              "x": 47.5,
+              "y": -81.5
+            },
+            "surface_index": 1
+          },
+          "stone": {
+            "name": "stone",
+            "position": {
+              "x": 9.5,
+              "y": -83.5
+            },
+            "surface_index": 1
+          },
+          "wood": {
+            "name": "dead-grey-trunk",
+            "position": {
+              "x": 72.8125,
+              "y": 16.375
+            },
+            "surface_index": 1
+          }
+        },
+        "force_entity_counts": {
+          "assembling-machine-1": 1,
+          "boiler": 1,
+          "burner-mining-drill": 1,
+          "character": 1,
+          "lab": 1,
+          "offshore-pump": 1,
+          "pipe": 23,
+          "small-electric-pole": 5,
+          "steam-engine": 1,
+          "stone-furnace": 2,
+          "wooden-chest": 1
+        },
+        "input_routes": {
+          "diagnostics": {
+            "recipe:copper-plate": {
+              "belt_budget_exhausted": false,
+              "cached": false,
+              "depleted_resources": 0,
+              "fallback": "batched_manual_supply",
+              "length_limited_paths": 0,
+              "max_belts": 64,
+              "mixed_resources": 0,
+              "next_survey_tick": 11401489,
+              "observed_tick": 11401189,
+              "path_attempts": 0,
+              "path_expansions": 0,
+              "path_probes": 0,
+              "placement_checks": 0,
+              "reason": "output_not_commissioned",
+              "receiver_count": 0,
+              "resource_count": 0,
+              "resource_result_limit_reached": false,
+              "resource_sample_limits": 0,
+              "sampled_resources": 0,
+              "schema": 1,
+              "search_budget_exhausted": false,
+              "source_position": {
+                "x": -42,
+                "y": -109
+              },
+              "source_unit": 2546,
+              "survey_radius": 40,
+              "survey_tick": 11401189
+            },
+            "recipe:iron-plate": {
+              "belt_budget_exhausted": false,
+              "cached": false,
+              "depleted_resources": 0,
+              "fallback": "batched_manual_supply",
+              "length_limited_paths": 0,
+              "max_belts": 64,
+              "mixed_resources": 0,
+              "next_survey_tick": 11401489,
+              "observed_tick": 11401189,
+              "path_attempts": 0,
+              "path_expansions": 0,
+              "path_probes": 0,
+              "placement_checks": 0,
+              "reason": "output_not_commissioned",
+              "receiver_count": 0,
+              "resource_count": 0,
+              "resource_result_limit_reached": false,
+              "resource_sample_limits": 0,
+              "sampled_resources": 0,
+              "schema": 1,
+              "search_budget_exhausted": false,
+              "source_position": {
+                "x": 41,
+                "y": -111
+              },
+              "source_unit": 2547,
+              "survey_radius": 40,
+              "survey_tick": 11401189
+            }
+          },
+          "protocol": 1,
+          "sources": {}
+        },
+        "inventory_insertable": {
+          "coal": 3350,
+          "copper-ore": 3387,
+          "iron-ore": 3380,
+          "stone": 3350,
+          "wood": 6799
+        },
+        "launch_readiness": {
+          "actor_unit": 2543,
+          "attempts": {},
+          "fault": false,
+          "fish": {},
+          "force_index": 1,
+          "pad": {},
+          "pad_site": {},
+          "receipts": {},
+          "schema": 1,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "silo": {},
+          "supported": true,
+          "surface_index": 1,
+          "tick": 11401189,
+          "version": "2.0.77"
+        },
+        "mining_outposts": {
+          "diagnostics": {
+            "copper-ore": "available",
+            "iron-ore": "available"
+          },
+          "protocol": 1,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "sources": {
+            "copper-ore": {
+              "flow": {},
+              "force_index": 1,
+              "layout": "outpost:copper-ore:1",
+              "parts": {},
+              "remaining": 170000,
+              "resource": "copper-ore",
+              "state": "proposed",
+              "steps": [
+                {
+                  "direction": 0,
+                  "name": "wooden-chest",
+                  "part": "chest",
+                  "position": {
+                    "x": -44.5,
+                    "y": -104.5
+                  }
+                },
+                {
+                  "direction": 0,
+                  "name": "burner-mining-drill",
+                  "part": "drill",
+                  "position": {
+                    "x": -44,
+                    "y": -103
+                  }
+                }
+              ],
+              "surface_index": 1,
+              "topology": false
+            },
+            "iron-ore": {
+              "flow": {},
+              "force_index": 1,
+              "layout": "outpost:iron-ore:2",
+              "parts": {},
+              "remaining": 110000,
+              "resource": "iron-ore",
+              "state": "proposed",
+              "steps": [
+                {
+                  "direction": 0,
+                  "name": "wooden-chest",
+                  "part": "chest",
+                  "position": {
+                    "x": 45.5,
+                    "y": -109.5
+                  }
+                },
+                {
+                  "direction": 0,
+                  "name": "burner-mining-drill",
+                  "part": "drill",
+                  "position": {
+                    "x": 46,
+                    "y": -108
+                  }
+                }
+              ],
+              "surface_index": 1,
+              "topology": false
+            }
+          },
+          "tick": 11401189
+        },
+        "native_transfer_receipt_count": 128,
+        "observation_anchor_diagnostics": {
+          "oil": {
+            "radius": 512,
+            "saturated": false
+          },
+          "selection": "bounded_witness_not_global_nearest",
+          "water": {
+            "radius": 256,
+            "saturated": true
+          }
+        },
+        "output_buffers": {
+          "protocol": 1,
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "sources": {
+            "recipe:copper-plate": {
+              "chest_role": "output-chest:2546",
+              "flow": {},
+              "held": 0,
+              "item": "copper-plate",
+              "layout": "output:2546:joint",
+              "parts": {},
+              "source": "recipe:copper-plate",
+              "source_unit": 2546,
+              "state": "proposed",
+              "topology": false
+            },
+            "recipe:iron-plate": {
+              "chest_role": "output-chest:2547",
+              "flow": {},
+              "held": 0,
+              "item": "iron-plate",
+              "layout": "output:2547:joint",
+              "parts": {},
+              "source": "recipe:iron-plate",
+              "source_unit": 2547,
+              "state": "proposed",
+              "topology": false
+            }
+          },
+          "tick": 11401189
+        },
+        "player_bound": true,
+        "player_connected": true,
+        "produced": {
+          "assembling-machine-1": 1,
+          "automation-science-pack": 176,
+          "boiler": 1,
+          "burner-mining-drill": 1,
+          "coal": 142,
+          "copper-cable": 198,
+          "copper-ore": 355,
+          "copper-plate": 292,
+          "electronic-circuit": 53,
+          "inserter": 40,
+          "iron-gear-wheel": 296,
+          "iron-ore": 876,
+          "iron-plate": 823,
+          "lab": 1,
+          "logistic-science-pack": 40,
+          "offshore-pump": 1,
+          "pipe": 64,
+          "science": 175,
+          "small-electric-pole": 38,
+          "steam-engine": 1,
+          "stone": 20,
+          "stone-furnace": 4,
+          "transport-belt": 64,
+          "wooden-chest": 1
+        },
+        "production_sites": {
+          "protocol": 1,
+          "sources": {
+            "recipe:copper-plate": {
+              "anchor": "cell-site:copper-ore:-42:-109:0:2",
+              "belt_count": 5,
+              "bill": {
+                "burner-inserter": 2,
+                "burner-mining-drill": 1,
+                "stone-furnace": 1,
+                "transport-belt": 5,
+                "wooden-chest": 1
+              },
+              "fallback": "batched_manual_supply",
+              "position": {
+                "x": -42,
+                "y": -109
+              },
+              "reason": "joint_layout_available",
+              "source_unit": 2546,
+              "state": "owned"
+            },
+            "recipe:iron-plate": {
+              "anchor": "cell-site:iron-ore:41:-111:0:1",
+              "belt_count": 5,
+              "bill": {
+                "burner-inserter": 2,
+                "burner-mining-drill": 1,
+                "stone-furnace": 1,
+                "transport-belt": 5,
+                "wooden-chest": 1
+              },
+              "fallback": "batched_manual_supply",
+              "position": {
+                "x": 41,
+                "y": -111
+              },
+              "reason": "joint_layout_available",
+              "source_unit": 2547,
+              "state": "owned"
+            }
+          }
+        },
+        "research": "advanced-material-processing",
+        "research_progress": 0.5333333333330731,
+        "researched": [
+          "automation",
+          "automation-science-pack",
+          "electronics",
+          "logistic-science-pack",
+          "steam-power",
+          "steel-processing"
+        ],
+        "rocket_baseline": 0,
+        "rockets_launched": 0,
+        "tick": 11401189
+      },
+      "game_version": "2.0.77",
+      "inventory": {
+        "burner-mining-drill": 1,
+        "copper-cable": 1,
+        "copper-ore": 63,
+        "copper-plate": 17,
+        "iron-gear-wheel": 20,
+        "iron-ore": 20,
+        "iron-plate": 20,
+        "pipe": 29,
+        "small-electric-pole": 33,
+        "transport-belt": 20,
+        "wood": 1,
+        "wooden-chest": 1
+      },
+      "iron_ore_collected": 33,
+      "nearby_resources": {
+        "coal": 88.11499312920677,
+        "copper-ore": 86.11875239551578,
+        "crude-oil": 492.41124087408906,
+        "iron-ore": 30.64543423024311,
+        "stone": 34.50252004071813,
+        "water": 151.81426918000875,
+        "wood": 131.10281577152588
+      },
+      "placed_entities": [
+        "burner-mining-drill",
+        "wooden-chest"
+      ],
+      "player_position": [
+        33.2,
+        -108.6
+      ],
+      "power_satisfaction": 1.0,
+      "production_rates": null,
+      "researched": [
+        "automation",
+        "automation-science-pack",
+        "electronics",
+        "logistic-science-pack",
+        "steam-power",
+        "steel-processing"
+      ],
+      "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+      "tick": 11401189,
+      "victory": false,
+      "victory_source": null,
+      "world_kind": "fle"
+    },
+    "history": [
+      {
+        "kind": "plan_committed",
+        "plan": "factory:factory_extract:recipe:iron-plate",
+        "source": "jev",
+        "tick": 11381933
+      },
+      {
+        "action": "factory_extract",
+        "kind": "step_verified",
+        "plan": "factory:factory_extract:recipe:iron-plate",
+        "tick": 11382182
+      },
+      {
+        "kind": "plan_committed",
+        "plan": "factory:factory_extract:recipe:iron-plate",
+        "source": "jev",
+        "tick": 11382262
+      },
+      {
+        "action": "factory_extract",
+        "kind": "step_verified",
+        "plan": "factory:factory_extract:recipe:iron-plate",
+        "tick": 11382511
+      },
+      {
+        "kind": "plan_committed",
+        "plan": "factory:factory_extract:recipe:iron-plate",
+        "source": "jev",
+        "tick": 11382581
+      },
+      {
+        "action": "factory_extract",
+        "kind": "step_verified",
+        "plan": "factory:factory_extract:recipe:iron-plate",
+        "tick": 11382785
+      },
+      {
+        "kind": "plan_committed",
+        "plan": "factory:factory_extract:recipe:iron-plate",
+        "source": "jev",
+        "tick": 11382856
+      },
+      {
+        "action": "factory_extract",
+        "kind": "step_verified",
+        "plan": "factory:factory_extract:recipe:iron-plate",
+        "tick": 11383110
+      }
+    ],
+    "judgment_contract": {
+      "benefit": "ordinal_ranking_with_negative_evidence_check",
+      "eligibility": "explicit_useful_progress_choice",
+      "schema": 2
+    },
+    "local_objective": {
+      "instruction": "Prevent observed starvation, remove the next production blocker, or do useful independent work while production runs. A single useful action need not complete the ultimate goal. Immediate prerequisites precede discretionary lookahead at equal urgency; moving more items is not evidence of more useful production.",
+      "kind": "ready_production",
+      "primary_target": {
+        "inventory_target": 20,
+        "item": "logistic-science-pack",
+        "ultimate_goal": "rocket_launch"
+      },
+      "success_authority": "unchanged native step and goal predicates, never model scores",
+      "ultimate_goal": "rocket_launch"
+    },
+    "production_scheduling": {
+      "guidance": "Prefer useful work while machines run; batch pickups to evidenced current demand and ready stock. A small current prerequisite does not justify waiting for speculative output.",
+      "objective": "Advance the next production batch identified in plan descriptions",
+      "ultimate_goal": "rocket_launch"
+    },
+    "selection_contract": {
+      "heuristics_are_not_native_timing_measurements": true,
+      "observed_tick": 11401189,
+      "schema": 1
+    },
+    "shared_plan_materials": {
+      "automation_sites": {
+        "recipe:copper-plate": {
+          "anchor": "cell-site:copper-ore:-42:-109:0:2",
+          "belt_count": 5,
+          "bill": {
+            "burner-inserter": 2,
+            "burner-mining-drill": 1,
+            "stone-furnace": 1,
+            "transport-belt": 5,
+            "wooden-chest": 1
+          },
+          "fallback": "batched_manual_supply",
+          "position": {
+            "x": -42,
+            "y": -109
+          },
+          "reason": "joint_layout_available",
+          "source_unit": 2546,
+          "state": "owned"
+        },
+        "recipe:iron-plate": {
+          "anchor": "cell-site:iron-ore:41:-111:0:1",
+          "belt_count": 5,
+          "bill": {
+            "burner-inserter": 2,
+            "burner-mining-drill": 1,
+            "stone-furnace": 1,
+            "transport-belt": 5,
+            "wooden-chest": 1
+          },
+          "fallback": "batched_manual_supply",
+          "position": {
+            "x": 41,
+            "y": -111
+          },
+          "reason": "joint_layout_available",
+          "source_unit": 2547,
+          "state": "owned"
+        }
+      },
+      "remaining": {
+        "burner-mining-drill": 1.0,
+        "copper-cable": 1.0,
+        "copper-ore": 50.0,
+        "copper-plate": 0.0,
+        "electronic-circuit": 0,
+        "inserter": 0,
+        "iron-gear-wheel": 0.0,
+        "iron-ore": 0.0,
+        "iron-plate": 0.0,
+        "logistic-science-pack": 0.0,
+        "pipe": 29.0,
+        "small-electric-pole": 33.0,
+        "transport-belt": 0.0,
+        "wood": 1.0,
+        "wooden-chest": 1.0
+      },
+      "route_diagnostics": {
+        "recipe:copper-plate": {
+          "belt_budget_exhausted": false,
+          "cached": false,
+          "depleted_resources": 0,
+          "fallback": "batched_manual_supply",
+          "length_limited_paths": 0,
+          "max_belts": 64,
+          "mixed_resources": 0,
+          "next_survey_tick": 11401489,
+          "observed_tick": 11401189,
+          "path_attempts": 0,
+          "path_expansions": 0,
+          "path_probes": 0,
+          "placement_checks": 0,
+          "reason": "output_not_commissioned",
+          "receiver_count": 0,
+          "resource_count": 0,
+          "resource_result_limit_reached": false,
+          "resource_sample_limits": 0,
+          "sampled_resources": 0,
+          "schema": 1,
+          "search_budget_exhausted": false,
+          "source_position": {
+            "x": -42,
+            "y": -109
+          },
+          "source_unit": 2546,
+          "survey_radius": 40,
+          "survey_tick": 11401189
+        },
+        "recipe:iron-plate": {
+          "belt_budget_exhausted": false,
+          "cached": false,
+          "depleted_resources": 0,
+          "fallback": "batched_manual_supply",
+          "length_limited_paths": 0,
+          "max_belts": 64,
+          "mixed_resources": 0,
+          "next_survey_tick": 11401489,
+          "observed_tick": 11401189,
+          "path_attempts": 0,
+          "path_expansions": 0,
+          "path_probes": 0,
+          "placement_checks": 0,
+          "reason": "output_not_commissioned",
+          "receiver_count": 0,
+          "resource_count": 0,
+          "resource_result_limit_reached": false,
+          "resource_sample_limits": 0,
+          "sampled_resources": 0,
+          "schema": 1,
+          "search_budget_exhausted": false,
+          "source_position": {
+            "x": 41,
+            "y": -111
+          },
+          "source_unit": 2547,
+          "survey_radius": 40,
+          "survey_tick": 11401189
+        }
+      }
+    }
+  },
+  "recorded_answers": {
+    "candidate": {
+      "choice": "factory:factory_gather:wood:target:2:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":72.8125,\"y\":16.375},\"surface_index\":1}",
+      "confidence": 0.42,
+      "probabilities": {
+        "factory:factory_craft:transport-belt": 0.22,
+        "factory:factory_gather:wood:target:2:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":72.8125,\"y\":16.375},\"surface_index\":1}": 0.56,
+        "factory:factory_insert:recipe:iron-plate": 0.19,
+        "observe": 0.03
+      },
+      "type": "choice"
+    },
+    "factory:factory_craft:transport-belt/benefit": {
+      "confidence": 0.59,
+      "legend": {
+        "0": "No demonstrated contribution to the bounded production objective",
+        "1": "Makes useful partial progress through useful inputs, a current planner-linked intermediate craft, an immediate planner-linked research prerequisite backed by same-tick evidence, or evidenced bounded capacity, but does not establish receipt-conditional closure of an observed local-target shortfall for a craft or fresh-inventory-conditional closure of one for a direct gather, and does not remove a separately evidenced current blocker or due starvation",
+        "2": "Same-tick qualified evidence shows the action would close the current local-target shortfall only after its native receipt verifies for a craft or fresh native postcondition verifies for a direct gather, or separate same-tick evidence shows it directly removes a specific observed blocker or due starvation"
+      },
+      "probabilities": {
+        "0": 0.17,
+        "1": 0.73,
+        "2": 0.1
+      },
+      "score": 0.93,
+      "type": "score"
+    },
+    "factory:factory_craft:transport-belt/disruption": {
+      "confidence": 0.99,
+      "legend": {
+        "0": "Only moves, gathers resources, waits, fuels an existing machine, or handcrafts from carried inputs without changing existing entities",
+        "1": "Places new machinery or connectors, such as pipes, poles or belts, without removing any existing entity",
+        "2": "Stops, removes, or rebuilds existing factory infrastructure"
+      },
+      "probabilities": {
+        "0": 0.99,
+        "1": 0.01,
+        "2": 0.0
+      },
+      "score": 0.01,
+      "type": "score"
+    },
+    "factory:factory_craft:transport-belt/needs_observation": {
+      "noul": 0.35,
+      "type": "noul"
+    },
+    "factory:factory_craft:transport-belt/useful_progress": {
+      "choice": "useful",
+      "confidence": 0.21,
+      "probabilities": {
+        "unsupported": 0.39,
+        "useful": 0.61
+      },
+      "type": "choice"
+    },
+    "factory:factory_gather:wood:target:2:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":72.8125,\"y\":16.375},\"surface_index\":1}/benefit": {
+      "confidence": 0.74,
+      "legend": {
+        "0": "No demonstrated contribution to the bounded production objective",
+        "1": "Makes useful partial progress through useful inputs, a current planner-linked intermediate craft, an immediate planner-linked research prerequisite backed by same-tick evidence, or evidenced bounded capacity, but does not establish receipt-conditional closure of an observed local-target shortfall for a craft or fresh-inventory-conditional closure of one for a direct gather, and does not remove a separately evidenced current blocker or due starvation",
+        "2": "Same-tick qualified evidence shows the action would close the current local-target shortfall only after its native receipt verifies for a craft or fresh native postcondition verifies for a direct gather, or separate same-tick evidence shows it directly removes a specific observed blocker or due starvation"
+      },
+      "probabilities": {
+        "0": 0.01,
+        "1": 0.82,
+        "2": 0.17
+      },
+      "score": 1.15,
+      "type": "score"
+    },
+    "factory:factory_gather:wood:target:2:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":72.8125,\"y\":16.375},\"surface_index\":1}/disruption": {
+      "confidence": 0.99,
+      "legend": {
+        "0": "Only moves, gathers resources, waits, fuels an existing machine, or handcrafts from carried inputs without changing existing entities",
+        "1": "Places new machinery or connectors, such as pipes, poles or belts, without removing any existing entity",
+        "2": "Stops, removes, or rebuilds existing factory infrastructure"
+      },
+      "probabilities": {
+        "0": 1.0,
+        "1": 0.0,
+        "2": 0.0
+      },
+      "score": 0.0,
+      "type": "score"
+    },
+    "factory:factory_gather:wood:target:2:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":72.8125,\"y\":16.375},\"surface_index\":1}/needs_observation": {
+      "noul": 0.23,
+      "type": "noul"
+    },
+    "factory:factory_gather:wood:target:2:site:{\"name\":\"dead-grey-trunk\",\"position\":{\"x\":72.8125,\"y\":16.375},\"surface_index\":1}/useful_progress": {
+      "choice": "useful",
+      "confidence": 0.43,
+      "probabilities": {
+        "unsupported": 0.29,
+        "useful": 0.71
+      },
+      "type": "choice"
+    },
+    "factory:factory_insert:recipe:iron-plate/benefit": {
+      "confidence": 0.57,
+      "legend": {
+        "0": "No demonstrated contribution to the bounded production objective",
+        "1": "Makes useful partial progress through useful inputs, a current planner-linked intermediate craft, an immediate planner-linked research prerequisite backed by same-tick evidence, or evidenced bounded capacity, but does not establish receipt-conditional closure of an observed local-target shortfall for a craft or fresh-inventory-conditional closure of one for a direct gather, and does not remove a separately evidenced current blocker or due starvation",
+        "2": "Same-tick qualified evidence shows the action would close the current local-target shortfall only after its native receipt verifies for a craft or fresh native postcondition verifies for a direct gather, or separate same-tick evidence shows it directly removes a specific observed blocker or due starvation"
+      },
+      "probabilities": {
+        "0": 0.19,
+        "1": 0.72,
+        "2": 0.09
+      },
+      "score": 0.9,
+      "type": "score"
+    },
+    "factory:factory_insert:recipe:iron-plate/disruption": {
+      "confidence": 0.95,
+      "legend": {
+        "0": "Only moves, gathers resources, waits, fuels an existing machine, or handcrafts from carried inputs without changing existing entities",
+        "1": "Places new machinery or connectors, such as pipes, poles or belts, without removing any existing entity",
+        "2": "Stops, removes, or rebuilds existing factory infrastructure"
+      },
+      "probabilities": {
+        "0": 0.97,
+        "1": 0.02,
+        "2": 0.01
+      },
+      "score": 0.03,
+      "type": "score"
+    },
+    "factory:factory_insert:recipe:iron-plate/needs_observation": {
+      "noul": 0.63,
+      "type": "noul"
+    },
+    "factory:factory_insert:recipe:iron-plate/useful_progress": {
+      "choice": "unsupported",
+      "confidence": 0.1,
+      "probabilities": {
+        "unsupported": 0.55,
+        "useful": 0.45
+      },
+      "type": "choice"
+    }
+  },
+  "validation": {
+    "accepted": true,
+    "observation_id": "observation:1",
+    "factorio_tick": 11401189
+  }
+}
