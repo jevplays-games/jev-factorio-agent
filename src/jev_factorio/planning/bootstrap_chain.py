@@ -116,7 +116,8 @@ def catalog_projection(snapshot, catalog, plans):
     """Independent current Catalog subset; never copied from candidate witnesses."""
     recipes = {}; hand = {}; stacks = {}; machines = {}; route_state = None
     for plan in plans:
-        component = (plan.materials or {}).get('buffer_component_demand')
+        component = ((plan.materials or {}).get('buffer_component_demand')
+                     or (plan.materials or {}).get('buffer_commissioning_demand'))
         if isinstance(component, dict):
             for product in component.get('parent_item_path', [])[:-1]:
                 recipe = catalog.recipe_for(product)

@@ -73,6 +73,19 @@ as zero. Registered identity is labeled separately from surveyed ownership;
 neither establishes historical payment or completed output. Captured-frontier
 tests retain all action costs and prove stale/conflicting identities still fail.
 
+The next accepted capture found the same missing purpose at the transition from
+acquiring the buffer component to placing it. Native start evidence proved the
+carried inserter, paid chest and planned placement receipt, but did not explain
+the current science demand. `buffer_commissioning_demand` now retains the separate
+parent recipe path for placement and direct arm fueling. Its projected witness
+recomputes enabled recipes, carried intermediate stock, the leaf shortfall and
+current paid identities. It is attached to the exact action, parameters and costs.
+The question uses it only alongside the independently qualified native start
+proof. Paid history is not measured payback, and placement, fuel transfer, flow
+and later production still need their own verification. Already-saved requests
+without this marker keep their original questions. Fuel acquisition and waiting
+do not inherit permission from this witness.
+
 ## Efficient diagnosis and recovery
 
 1. Read the owner status, current checkpoint and last settled decision. Distinguish
@@ -84,6 +97,8 @@ tests retain all action costs and prove stale/conflicting identities still fail.
    each rejection and the recipe or ownership proof it lacks. Compare the final
    choice request's objective with every retained candidate's own target; inspect
    both stages rather than assuming their contexts stayed aligned.
+   Check the transitions from component acquisition to placement and commissioning;
+   a valid construction receipt alone does not establish current parent demand.
 4. Verify the corrected request under the actual 48,000-byte bound. Test negative
    ownership, receipt, catalog, stock and demand cases as well as hypothetical
    receipt-qualified continuations. A mock answer is not native acceptance.

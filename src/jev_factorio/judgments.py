@@ -2284,6 +2284,22 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 "and fresh postcondition, and transport flow remains unverified. Contrary current "
                 "facts can make progress unsupported."
                 if qualified_buffer_build else "")
+            from .planning.buffer_demand import qualified_commissioning
+            if ((qualified_buffer_build or qualified_buffer_fuel)
+                    and qualified_commissioning(plan, facts, row)):
+                commissioning_hint = (
+                    " `buffer_commissioning_parent_purpose` independently binds this exact "
+                    "build or fuel action and current paid owner to an unsatisfied parent "
+                    "recipe path and carried source-item shortfall. This supports evaluating "
+                    "bounded transport preparation for that current demand; a buffer component "
+                    "is not itself a recipe ingredient. Paid history alone does not establish "
+                    "usefulness or measured payback. Native placement or fuel receipts, later "
+                    "transport flow and parent production remain unverified, and contrary "
+                    "facts can make this action unsupported.")
+                if qualified_buffer_build:
+                    buffer_build_hint += commissioning_hint
+                else:
+                    buffer_fuel_hint += commissioning_hint
             placement_dependency = row.get('placement_dependency')
             placement_step = plan.steps[0] if len(plan.steps) == 1 else None
             placement_path = (placement_dependency.get('planner_item_path')
