@@ -226,8 +226,76 @@ def reconcile(memory, snapshot, native, *, resume):
 def pending_owned(memory, step):
     if memory.connector_ownership is None:
         return False
+    validate_binding(memory.connector_ownership, memory.connector_ownership['session_id'])
     params = step.parameters or {}
-    row = memory.connector_ownership['routes'].get(connection_key(params))
-    return bool(row and row['state'] == 'complete' and row['owned'] is True
-                and all(cell['paid'] and not cell['external'] and cell['unit_number']
-                        for cell in row['cells']))
+    return route_paid_coverage(memory.connector_ownership['routes'], connection_key(params))
+
+
+def route_paid_coverage(routes, receipt):
+    """Check a validated ledger without rewriting route-local payment flags.
+
+    Electricity routes may reuse an exact paid pole from another completed
+    route with the same source and owner. Each external reference needs its own
+    direct paid-cell anchor; external references cannot attest one another.
+    Callers must validate the binding and freshly compare native detail pages.
+    """
+    row = routes.get(receipt)
+    if not row or row['state'] != 'complete' or row['pending'] is not None:
+        return False
+    if len({c['unit_number'] for c in row['cells']}) != len(row['cells']):
+        return False
+    if row['owned']:
+        return True
+    if row['kind'] != 'small-electric-pole' or row['fluid'] != 'electricity':
+        return False
+    identity = ('source', 'source_unit', 'kind', 'fluid', 'actor_unit',
+                'surface_index', 'force_index', 'session_id')
+    donors = [other for key, other in routes.items()
+              if key != receipt and other['state'] == 'complete'
+              and other['pending'] is None
+              and all(other[k] == row[k] for k in identity)]
+    for cell in row['cells']:
+        if cell['paid'] and not cell['external'] and cell['unit_number']:
+            continue
+        if not cell['external'] or cell['paid'] or not cell['unit_number']:
+            return False
+        anchors = [paid for donor in donors for paid in donor['cells']
+                   if paid['paid'] and not paid['external']
+                   and paid['unit_number'] == cell['unit_number']
+                   and paid['position'] == cell['position']]
+        if len(anchors) != 1:
+            return False
+    return True
+
+
+def shared_connector_handoff(memory):
+    """Recognize one returned, paid shared-pole action; never authorize replay."""
+    from .skills import Plan
+    from .telemetry import fingerprint
+    pending = memory.pending or {}
+    if (memory.status != 'uncertain'
+            or memory.reason != 'Connector route needs exact reconciliation'
+            or pending.get('action') != 'factory_connect'
+            or pending.get('dispatch') != 'returned'
+            or not memory.active_plan or type(memory.step_index) is not int or memory.step_index != 0
+            or any(getattr(memory, k, None) is not None for k in (
+                'native_pending', 'native_attempt', 'background_job',
+                'background_attempt', 'background_step', 'transfer_recovery'))):
+        return False
+    plan = Plan.from_dict(memory.active_plan)
+    if len(plan.steps) != 1 or plan.steps[0].action != 'factory_connect':
+        return False
+    step = plan.steps[0]
+    attempt = memory.attempt or {}
+    if (not attempt.get('id') or attempt.get('action') != step.action
+            or attempt.get('plan_id') != plan.id or attempt.get('step_index') != 0
+            or attempt.get('started_tick') != pending.get('started_tick')
+            or attempt.get('step_sha256') != fingerprint(memory.active_plan['steps'][0])
+            or not memory.connector_ownership
+            or memory.connector_ownership['session_id'] != memory.session_id):
+        return False
+    if not pending_owned(memory, step):
+        return False
+    routes = memory.connector_ownership['routes']
+    row = routes[connection_key(step.parameters or {})]
+    return bool(row['external'] > 0 and all(route_paid_coverage(routes, key) for key in routes))

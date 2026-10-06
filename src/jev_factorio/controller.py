@@ -1438,7 +1438,14 @@ class HierarchicalLoop(AgentLoop):
 
     def _verify_pending(self, snapshot: GameSnapshot) -> dict:
         if self._execution_barrier(snapshot):
-            return self._record(snapshot, "observe", self.memory.reason)
+            from .connector_checkpoint import shared_connector_handoff
+            # _observe already compared every native cell to its checkpoint.
+            # Only the ordinary verifier may finish this retained attempt.
+            if (self._capital_fault or snapshot.world_kind != 'fle'
+                    or not shared_connector_handoff(self.memory)
+                    or snapshot.factory.get('connector_ownership', {}).get('active') is not None
+                    or not Plan.from_dict(self.memory.active_plan).steps[0].satisfied(snapshot)):
+                return self._record(snapshot, "observe", self.memory.reason)
         plan = Plan.from_dict(self.memory.active_plan)
         step = plan.steps[self.memory.step_index]
         pending = self.memory.pending
