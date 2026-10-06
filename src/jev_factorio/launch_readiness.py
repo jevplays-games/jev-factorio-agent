@@ -81,6 +81,44 @@ def payload(silo: dict) -> str | None:
     return next((item for item in PAYLOADS if type(cargo.get(item)) is int and cargo[item] == 1), None)
 
 
+def _reservation_evidence(snapshot) -> dict:
+    """Validate current, composed identities before inferring payload ownership.
+
+    The launch action gates intentionally continue to use ``evidence`` alone;
+    this stricter cross-observer binding is specific to creating a new carried
+    payload reservation. Missing optional fields remain compatible with older
+    snapshots that did not install the craft-jobs observer.
+    """
+    row = evidence(snapshot)
+    version = getattr(snapshot, 'game_version', None)
+    if version is not None and (not text(version) or version != row['version']):
+        raise ValueError('Launch reservation version conflicts with current snapshot')
+
+    factory = snapshot.factory
+    protocol_present = 'craft_jobs_protocol' in factory
+    actor_present = 'craft_job_actor' in factory
+    if not protocol_present and not actor_present:
+        return row
+    if (type(factory.get('craft_jobs_protocol')) is not int
+            or factory['craft_jobs_protocol'] != 1
+            or not actor_present):
+        raise ValueError('Invalid composed craft-jobs identity evidence')
+
+    actor = factory.get('craft_job_actor')
+    fields = {'session_id', 'player_index', 'unit_number', 'surface_index', 'force_index'}
+    if not isinstance(actor, dict) or set(actor) != fields:
+        raise ValueError('Invalid composed craft actor identity')
+    if (not text(actor.get('session_id'))
+            or any(not integer(actor.get(key), 1)
+                   for key in ('player_index', 'unit_number', 'surface_index', 'force_index'))
+            or actor['session_id'] != row['session_id']
+            or actor['unit_number'] != row['actor_unit']
+            or actor['surface_index'] != row['surface_index']
+            or actor['force_index'] != row['force_index']):
+        raise ValueError('Composed craft actor conflicts with launch actor')
+    return row
+
+
 def ready(snapshot) -> bool:
     try:
         row = evidence(snapshot)
@@ -152,10 +190,13 @@ def satisfied(effect: str, action: str, parameters: dict, snapshot) -> bool:
 
 
 def reserved(snapshot) -> dict:
-    """One carried payload is protected; never reserve predicted fish/craft yield."""
-    if 'launch_readiness' not in snapshot.factory or snapshot.victory is True: return {}
-    row = snapshot.factory.get('launch_readiness', {})
-    if payload(row.get('silo', {})): return {}
+    """Protect one payload only when its launch evidence is currently valid."""
+    if snapshot.victory is True: return {}
+    try:
+        row = _reservation_evidence(snapshot)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return {}
+    if payload(row['silo']): return {}
     item = next((item for item in PAYLOADS if snapshot.inventory.get(item, 0) >= 1), None)
     return {item: 1} if item else {}
 
