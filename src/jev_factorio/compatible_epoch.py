@@ -6,6 +6,7 @@ receipt chain. Reload verifies that attestation, not a new external proof walk.
 import base64
 import hashlib
 import json
+import math
 import os
 import subprocess
 import zlib
@@ -53,8 +54,19 @@ def _strict_json(raw):
             _require(key not in result)
             result[key] = value
         return result
+
+    def finite_float(value):
+        try:
+            number = float(value)
+        except (OverflowError, ValueError) as error:
+            raise ValueError(value) from error
+        if not math.isfinite(number):
+            raise ValueError(value)
+        return number
+
     try:
         return json.loads(raw, object_pairs_hook=pairs,
+                          parse_float=finite_float,
                           parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
     except (ValueError, UnicodeError, RecursionError) as error:
         raise ValueError('Invalid retained epoch evidence JSON') from error

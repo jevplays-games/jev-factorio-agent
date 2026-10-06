@@ -149,3 +149,52 @@ def test_rehashed_launcher_receipts_still_require_exact_crosslinks(tmp_path, mon
     proof, ph, rh = evidence(journal, prepared, result)
     edge.update(history_evidence=proof, prepared_sha256=ph, result_sha256=rh)
     with pytest.raises(ValueError): validate(memory, old, record)
+
+
+@pytest.mark.parametrize(
+    'raw',
+    [
+        b'{"value":1e999}',
+        b'{"nested":[-1e999]}',
+        b'{"nested":{"deeper":[{"value":1e999}]}}',
+        b'{"value":NaN}',
+        b'{"value":Infinity}',
+    ],
+    ids=['top-level-positive-overflow', 'nested-negative-overflow',
+         'deep-positive-overflow', 'literal-nan', 'literal-infinity'],
+)
+def test_strict_json_rejects_nonfinite_values_at_any_depth(raw):
+    with pytest.raises(ValueError, match='Invalid retained epoch evidence JSON'):
+        epoch._strict_json(raw)
+
+
+def test_strict_json_preserves_finite_numbers():
+    assert epoch._strict_json(b'{"value":1.25,"nested":[-2.5]}') == {
+        'value': 1.25, 'nested': [-2.5],
+    }
+
+
+def test_native_v20_retained_helper_rejects_nested_exponent_overflow_with_recomputed_digest():
+    fixture_path = Path(__file__).parent / 'fixtures' / 'native-v20-epoch-history-evidence.json'
+    fixture_bytes = fixture_path.read_bytes()
+    fixture = json.loads(fixture_bytes)
+    before = deepcopy(fixture)
+    proof = fixture['evidence']
+    original = zlib.decompress(base64.b64decode(proof['record_zlib_base64']))
+    ending = b'\r\n' if original.endswith(b'\r\n') else b'\n' if original.endswith(b'\n') else b''
+    original_json = original[:-len(ending)] if ending else original
+    assert original_json.endswith(b'}')
+    assert b'unrelated_epoch_overflow' not in original
+    overflow_record = original_json[:-1] + b',"unrelated_epoch_overflow":{"deep":[-1e999]}}' + ending
+    proof['record_sha256'] = digest(overflow_record)
+    proof['record_zlib_base64'] = encode(zlib.compress(overflow_record))
+
+    with pytest.raises(ValueError, match='Invalid retained epoch evidence JSON'):
+        epoch._retained_history_evidence(
+            fixture['evidence'], fixture['edge'], fixture['body'], fixture['owner'],
+        )
+
+    assert fixture['edge'] == before['edge']
+    assert fixture['body'] == before['body']
+    assert fixture['owner'] == before['owner']
+    assert fixture_path.read_bytes() == fixture_bytes
