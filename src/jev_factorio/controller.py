@@ -3985,6 +3985,7 @@ class HierarchicalLoop(AgentLoop):
                 facts = self._model_facts(snapshot)
                 if self.catalog is not None and any(
                         isinstance((plan.materials or {}).get('bootstrap_output_pickup'), dict)
+                        or isinstance((plan.materials or {}).get('buffer_component_demand'), dict)
                         or isinstance((self._selection_support.get('candidate_evidence') or {})
                             .get(plan.id, {}).get('craft_recipe_demand'), dict)
                         or any(isinstance(((self._selection_support.get('candidate_evidence') or {})
@@ -4009,8 +4010,10 @@ class HierarchicalLoop(AgentLoop):
                         "ultimate_goal": self.memory.active_goal,
                     }
                 if self.two_stage_decisions:
-                    from .two_stage_decision import PROTOCOL
+                    from .two_stage_decision import PROTOCOL, NATIVE_PROJECTION, selection_facts
                     state["decision_protocol"] = PROTOCOL
+                    state['native_freshness_projection'] = NATIVE_PROJECTION
+                    state['facts'] = selection_facts(state['facts'], NATIVE_PROJECTION)
                 # Every resumable Jev selection is write-ahead persisted. Do
                 # not wait for the legacy stalled-decision threshold: a lost
                 # response on the first running request is already ambiguous.

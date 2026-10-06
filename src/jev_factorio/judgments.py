@@ -1627,11 +1627,19 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
             and contract.get('heuristics_are_not_native_timing_measurements') is True)
         qualified_shared_parent = _qualified_shared_parent_comparison(
             facts, selected, evidence)
+        # Version the projection in saved requests. Unmarked durable decisions
+        # must still reconstruct their original questions exactly on restart.
+        bind_retained_targets = (
+            current_contract
+            and type(contract.get('candidate_objective_binding')) is int
+            and contract['candidate_objective_binding'] in (2, 3))
         candidate_targets = {}
         if current_contract and isinstance(source_goal, str):
             for plan in selected:
                 target_document = candidate_target_objective(
-                    plan, evidence.get(plan.id), tick, source_goal)
+                    plan, evidence.get(plan.id), tick, source_goal,
+                    allow_power_promotion=(bind_retained_targets
+                                           and contract['candidate_objective_binding'] == 3))
                 if target_document is not None:
                     candidate_targets[plan.id] = target_document
         target_identities = {
@@ -1639,7 +1647,7 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
             for target in candidate_targets.values()
         }
         candidate_target_mode = (
-            qualified_shared_parent is None and had_candidate_targets
+            qualified_shared_parent is None and (had_candidate_targets or bind_retained_targets)
             and (not candidate_targets or len(candidate_targets) != len(selected)
                  or len(target_identities) != 1))
         if isinstance(local, dict):
@@ -1655,14 +1663,17 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     '`primary_target` applies to all candidates; a missing or mismatched entry '
                     'does not establish a target. Native preconditions, receipts and fresh '
                     'postconditions remain authoritative.')
-            elif (qualified_shared_parent is None and had_candidate_targets
+            elif (qualified_shared_parent is None
+                  and (had_candidate_targets or bind_retained_targets)
                   and len(candidate_targets) == len(selected)
                   and len(target_identities) == 1):
-                local['primary_target'] = deepcopy(next(iter(candidate_targets.values())))
-                local['instruction'] = (
-                    'The retained candidates share this current local target. Judge each plan '
-                    'against `primary_target` together with its own matching candidate evidence; '
-                    'native preconditions, receipts and fresh postconditions remain authoritative.')
+                retained_target = next(iter(candidate_targets.values()))
+                if had_candidate_targets or local.get('primary_target') != retained_target:
+                    local['primary_target'] = deepcopy(retained_target)
+                    local['instruction'] = (
+                        'The retained candidates share this current local target. Judge each plan '
+                        'against `primary_target` together with its own matching candidate evidence; '
+                        'native preconditions, receipts and fresh postconditions remain authoritative.')
             elif had_candidate_targets and not candidate_targets and local.get('primary_target') is None:
                 local['instruction'] = (
                     'No current candidate-local target is qualified for the offered plans. '
@@ -2273,6 +2284,22 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 "and fresh postcondition, and transport flow remains unverified. Contrary current "
                 "facts can make progress unsupported."
                 if qualified_buffer_build else "")
+            from .planning.buffer_demand import qualified_commissioning
+            if ((qualified_buffer_build or qualified_buffer_fuel)
+                    and qualified_commissioning(plan, facts, row)):
+                commissioning_hint = (
+                    " `buffer_commissioning_parent_purpose` independently binds this exact "
+                    "build or fuel action and current paid owner to an unsatisfied parent "
+                    "recipe path and carried source-item shortfall. This supports evaluating "
+                    "bounded transport preparation for that current demand; a buffer component "
+                    "is not itself a recipe ingredient. Paid history alone does not establish "
+                    "usefulness or measured payback. Native placement or fuel receipts, later "
+                    "transport flow and parent production remain unverified, and contrary "
+                    "facts can make this action unsupported.")
+                if qualified_buffer_build:
+                    buffer_build_hint += commissioning_hint
+                else:
+                    buffer_fuel_hint += commissioning_hint
             placement_dependency = row.get('placement_dependency')
             placement_step = plan.steps[0] if len(plan.steps) == 1 else None
             placement_path = (placement_dependency.get('planner_item_path')
@@ -2991,6 +3018,17 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     'intermediate; the pickup and inventory delta still need verification. '
                     'Contrary current facts can make usefulness unsupported.'
                 )
+            from .planning.buffer_demand import qualified as qualified_buffer_demand
+            buffer_demand_hint = ''
+            if qualified_buffer_demand(plan, facts, row):
+                buffer_demand_hint = (
+                    ' The candidate local target is the next missing component of a currently paid '
+                    'partial output buffer. `buffer_component_parent_purpose` independently binds '
+                    'its current owners and separate parent recipe demand. The component is not a '
+                    'recipe ingredient of that parent. Judge this bounded component input or '
+                    'intermediate on its own current start evidence; placement, transport flow '
+                    'and parent output remain unverified. Contrary facts can still make it unsupported.'
+                )
             questions[plan.id + "/useful_progress"] = {
                 "type": "choice",
                 "criteria": {
@@ -3117,6 +3155,8 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     'absence alone is not contrary start evidence. Judge independently; '
                     'travel cost can affect scheduling but does not change recipe '
                     'quantities. Execution and completion still require native checks.')
+            questions[plan.id + '/useful_progress']['instructions'] += buffer_demand_hint
+            contribution_hint += buffer_demand_hint
             questions[plan.id + "/benefit"] = {
                 "type": "score",
                 "instructions": (

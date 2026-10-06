@@ -57,6 +57,7 @@ _CONTRACT_PATHS = (
 # Absent in historical revisions. Omitting absent optional paths preserves the
 # exact historical digest; present modules are fully blob-bound for recovery.
 _OPTIONAL_CONTRACT_PATHS = (
+    "src/jev_factorio/planning/buffer_demand.py",
     "src/jev_factorio/two_stage_decision.py",
     "src/jev_factorio/two_stage_controller.py",
 )

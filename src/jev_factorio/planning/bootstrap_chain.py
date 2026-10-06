@@ -116,6 +116,16 @@ def catalog_projection(snapshot, catalog, plans):
     """Independent current Catalog subset; never copied from candidate witnesses."""
     recipes = {}; hand = {}; stacks = {}; machines = {}; route_state = None
     for plan in plans:
+        component = ((plan.materials or {}).get('buffer_component_demand')
+                     or (plan.materials or {}).get('buffer_commissioning_demand'))
+        if isinstance(component, dict):
+            for product in component.get('parent_item_path', [])[:-1]:
+                recipe = catalog.recipe_for(product)
+                recipes[recipe['name']] = deepcopy(recipe)
+                hand[recipe['category']] = bool(catalog.hand_categories.get(recipe['category']))
+                if not hand[recipe['category']]:
+                    for entry in recipe['ingredients']:
+                        stacks[entry['name']] = catalog.stack_sizes.get(entry['name'], 200)
         if (isinstance((plan.materials or {}).get('input_route_kit_prerequisite'), dict)
                 and isinstance((plan.materials or {}).get('recipe_input_transfer'), dict)
                 and len(plans) == 2

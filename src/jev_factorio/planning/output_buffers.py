@@ -274,9 +274,10 @@ class OutputBufferPlanner(ReadyWorkPlanner):
                                         step, parameters={**step.parameters, 'quantity': quantity}),),
                                         description=f"Collect {quantity} {item} for current {name} output-buffer component",
                                         materials=prerequisite.materials)
-                    return prerequisite
+                    from .buffer_demand import scope_prerequisite
+                    return scope_prerequisite(self.snapshot, self.catalog, prerequisite, row, part, path)
                 receipt = f"buffer:{self.snapshot.tick}:{row['source_unit']}:{part}"
-                return self._plan(
+                plan = self._plan(
                     COMMAND, "buffer_component", parameters={
                         "source": row["source"], "layout": row["layout"],
                         "part": part, "receipt": receipt,
@@ -284,13 +285,17 @@ class OutputBufferPlanner(ReadyWorkPlanner):
                     description=f"Build paid {name} for {row['source']} output buffer",
                     timeout=18000,
                 )
+                from .buffer_demand import scope_commissioning
+                return scope_commissioning(self.snapshot, self.catalog, plan, row, path)
         inserter_role = parts["inserter"]["role"]
         inserter = self.entities[inserter_role]
         fuel = inserter.get("fuel", {}).get("coal", 0)
         if fuel < 2:
             self._buffer_service = True
             from .fuel_service import service_plan
-            return service_plan(self, inserter_role, row["source"], path, self._prerequisite)
+            plan = service_plan(self, inserter_role, row["source"], path, self._prerequisite)
+            from .buffer_demand import scope_commissioning
+            return scope_commissioning(self.snapshot, self.catalog, plan, row, path)
         if not flow_complete(row["source"], row["layout"], self.snapshot):
             self._buffer_service = True
             # A short, explicit commissioning interval. Never call placement
