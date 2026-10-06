@@ -24,7 +24,9 @@ TABLE_SCHEMAS: dict[str, dict[str, str]] = {
         "world_seed": "VARCHAR", "target": "VARCHAR", "policy": "VARCHAR",
         "evidence_class": "VARCHAR", "complete": "BOOLEAN", "benchmark_eligible": "BOOLEAN",
         "mixed_treatments": "BOOLEAN", "terminal_status": "VARCHAR", "target_achieved": "BOOLEAN",
-        "native_victory_event_observed": "BOOLEAN", "verified_actions": "BIGINT",
+        "native_victory_event_observed": "BOOLEAN", "prepared_actions": "BIGINT",
+        "returned_actions": "BIGINT", "verified_actions": "BIGINT",
+        "unverified_actions": "BIGINT", "preflight_rejected_actions": "BIGINT",
         "model_calls": "BIGINT", "provider_errors": "BIGINT", "input_tokens": "BIGINT",
         "output_tokens": "BIGINT", "input_tokens_recorded": "BIGINT", "output_tokens_recorded": "BIGINT",
         "token_usage_complete": "BOOLEAN", "wall_elapsed_seconds": "DOUBLE",
@@ -49,7 +51,9 @@ TABLE_SCHEMAS: dict[str, dict[str, str]] = {
     "actions": {
         "run_id": "VARCHAR", "action_id": "VARCHAR", "decision_id": "VARCHAR", "segment_id": "VARCHAR",
         "action": "VARCHAR", "prepared_sequence": "BIGINT", "returned_sequence": "BIGINT",
-        "acknowledged": "BOOLEAN", "verified": "BOOLEAN", "verification_count": "BIGINT",
+        "acknowledged": "BOOLEAN", "verified": "BOOLEAN",
+        "preflight_rejected": "BOOLEAN", "preflight_rejection_code": "VARCHAR",
+        "verification_count": "BIGINT",
         "verified_sequence": "BIGINT", "duration_ms": "DOUBLE",
     },
     "milestones": {
@@ -255,7 +259,7 @@ def write_report(evaluations: list[RunEvaluation], output_dir: Path, *, parquet:
         (temporary / "tables").mkdir()
         _write_json(temporary / "summary.json", report)
         _write_json(temporary / "integrity.json", {"runs": [e.integrity for e in sorted(evaluations, key=lambda item: item.summary["run_id"])]})
-        _write_json(temporary / "table_schema.json", {"schema": "jev-factorio.tables.v1", "tables": TABLE_SCHEMAS})
+        _write_json(temporary / "table_schema.json", {"schema": "jev-factorio.tables.v2", "tables": TABLE_SCHEMAS})
         statements = ["-- Run from the report directory. All projections are derived; JSONL inputs remain evidence."]
         for name, columns in TABLE_SCHEMAS.items():
             rows = [{key: row.get(key) for key in columns} for row in tables[name]]
