@@ -58,7 +58,7 @@ directories instead of starting another controller on the idle dedicated VM.
 6. Continue the [persistent progress monitor](PERSISTENT_PROGRESS_MONITOR.md)
    and active investigation across later production stages. Distinguish a
    monitor alert, policy hold and process exit. Monitor expiry ends the watch,
-not an until-complete game. Never restart a shared host or WSL to repair an
+   not an until-complete game. Never restart a shared host or WSL to repair an
    individual service.
 
 ## Verified deployment and limits
