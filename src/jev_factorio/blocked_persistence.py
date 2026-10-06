@@ -594,7 +594,8 @@ def _source_recovery_reason(reason, allow_source_change):
     return is_recoverable_reason(reason) or (
         allow_source_change
         and reason in {'Current native boiler identity and coal stock are required',
-                       'Furnace fuel service requires current owned source identity'})
+                       'Furnace fuel service requires current owned source identity',
+                       'Native buffer component dependency cycle'})
 
 
 def validate_memory_state(memory, current_source: dict, *, allow_source_change: bool = False) -> None:

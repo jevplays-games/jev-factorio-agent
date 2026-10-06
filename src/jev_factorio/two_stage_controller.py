@@ -44,6 +44,12 @@ def prepare(controller, snapshot, state, plans, context, questions, offered,
         snapshot, input_sha256, source_authorized=source_authorized,
         authorization_reason=authorization_reason, selection_batch=metadata, save=False)
     controller.memory.two_stage_decision = record
+    from .planner_fault_recovery import REASON as PLANNER_FAULT
+    if source_authorized and controller.memory.reason == PLANNER_FAULT:
+        # The retained proof and consumed admission preserve the original
+        # fault. This same commit begins a resumable decision workflow; it is
+        # not evidence of useful gameplay and grants no extra provider call.
+        controller.memory.status, controller.memory.reason = "running", ""
     controller._save()
 
 

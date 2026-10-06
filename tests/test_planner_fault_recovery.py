@@ -83,6 +83,59 @@ def test_proposal_preserves_history_and_every_field_except_stopped_status_and_pr
     validate_blocked_memory(restored, 4)
 
 
+def test_reconciled_fault_consumes_normal_source_admission_and_reloads(incident):
+    from types import SimpleNamespace
+    from dataclasses import replace
+    from jev_factorio.controller import HierarchicalLoop
+    from jev_factorio.memory import load_checkpoint
+    from jev_factorio.backends.mock import MockBackend
+    from jev_factorio import two_stage_controller
+    from jev_factorio.judgments import question_batch
+    from jev_factorio.skills import Plan, Step
+
+    paths, options, _ = incident
+    proposal = recovery.prepare(*paths, **options)
+    loop = object.__new__(HierarchicalLoop)
+    loop.memory = proposal
+    loop.policy = 'jev'
+    loop.jev = SimpleNamespace(is_mock=False)
+    loop.max_stalled_decisions = 4
+    loop._blocked_recovery_archive_index = None
+    loop._archive_full_recovery_tail = lambda: None
+    loop.provenance = {'code_revision': {'commit':'e'*40, 'source_sha256':'f'*64}}
+    loop._blocked_reevaluation_source = {
+        'blocked_source_revision':SOURCE['commit'], 'source_head':'e'*40,
+        'decision_contract_sha256':'9'*64, 'previous_contract_sha256':'8'*64}
+    loop._blocked_reevaluation_checkpoint_sha256 = options['pins']['checkpoint_sha256']
+    destination = paths[0].with_name('admitted.json')
+    loop._save = lambda: proposal.save(destination)
+    loop.target, loop.confidence_floor, loop.max_request_bytes = 'rocket_launch', .45, 48000
+    snapshot = replace(MockBackend().observe(), session_id='campaign', tick=10, world_kind='fle')
+    plans = [Plan('coal', 'stockpile_fuel', 'Gather five coal',
+                  (Step('mine_coal', 'inventory', 'coal', 5),))]
+    state, questions, offered = question_batch({'facts':snapshot.for_jev()}, plans, max_bytes=48000)
+    metadata = ledger.selection_batch_metadata(state, questions, offered,
+        state_sha256='3'*64, frontier_sha256='4'*64, current_tick=10)
+    input_sha = ledger.decision_input_sha256(state, [p.to_dict() for p in offered],
+        session_id='campaign', source_revision=loop.provenance['code_revision'],
+        target='rocket_launch', policy='jev', confidence_floor=.45, current_tick=10,
+        questions=questions, selection_batch=metadata)
+    two_stage_controller.prepare(loop, snapshot, state, plans, state, questions, offered,
+        metadata, input_sha, source_authorized=True, authorization_reason=recovery.REASON)
+    restored = load_checkpoint(destination, 'campaign', 'rocket_launch')
+    assert restored.status == 'running' and restored.reason == ''
+    assert restored.two_stage_decision['phase'] == 'assessment_ready'
+    ledger.validate_checkpoint_metadata(json.loads(destination.read_bytes()),
+                                       loop.provenance['code_revision'])
+    loop.memory = restored
+    assert two_stage_controller.pending(loop)
+    assert restored.blocked_reevaluations[-1]['reason'] == recovery.REASON
+    assert restored.blocked_recovery['source_revision'] == loop.provenance['code_revision']
+    assert restored.planner_fault_recovery == proposal.planner_fault_recovery
+    assert restored.failures == {'old-capital':2}
+    assert loop._reevaluate_blocked_once is False
+
+
 @pytest.mark.parametrize('change', ['checkpoint', 'terminal', 'console', 'trace', 'owner', 'source', 'execution', 'live_child'])
 def test_mismatched_evidence_or_live_child_never_produces_a_reconciliation(incident, change):
     paths, options, _ = incident
