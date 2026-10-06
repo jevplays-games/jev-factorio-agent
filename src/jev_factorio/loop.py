@@ -13,7 +13,9 @@ Design notes
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 import time
 from pathlib import Path
 from typing import Callable
@@ -27,6 +29,20 @@ from .jev_client import make_client
 from .questions import build_questions
 from .state import GameSnapshot
 from .provenance import gameplay_context
+
+
+def _duration_deadline(duration_seconds: float | None) -> float | None:
+    if duration_seconds is None:
+        return None
+    if type(duration_seconds) not in (int, float):
+        raise ValueError("duration_seconds must be finite")
+    try:
+        finite = math.isfinite(duration_seconds)
+    except OverflowError:
+        finite = False
+    if not finite:
+        raise ValueError("duration_seconds must be finite")
+    return time.monotonic() + duration_seconds
 
 
 class _DefaultSteps:
@@ -146,7 +162,7 @@ class AgentLoop:
             raise ValueError("Persistent blocked recovery requires until_complete mode")
         if steps is None and duration_seconds is None and not until_complete:
             raise ValueError("A step or duration limit is required")
-        deadline = time.monotonic() + duration_seconds if duration_seconds is not None else None
+        deadline = _duration_deadline(duration_seconds)
         completed = 0
         while until_complete or steps is None or completed < steps:
             if getattr(self, "terminal", False):
@@ -183,3 +199,94 @@ class AgentLoop:
             if deadline is not None:
                 delay = min(delay, max(0, deadline - time.monotonic()))
             loop_sleep(self, delay, lambda: _interruptible_sleep(delay))
+
+    async def run_async(self, steps: int | None | _DefaultSteps = _DEFAULT_STEPS,
+                        duration_seconds: float | None = None, *,
+                        until_complete: bool = False,
+                        after_step: Callable[[AgentLoop, int, dict], bool] | None = None) -> None:
+        """Run an explicitly async controller on one caller-owned event loop.
+
+        The controller's ``step_async`` owns and drains its worker before it
+        returns or propagates cancellation. This method preserves the normal
+        step/deadline/retry/terminal/owner-gate decisions while using
+        ``asyncio.sleep`` between steps. Existing synchronous ``run`` remains
+        unchanged.
+        """
+        if getattr(self, "async_decisions", False) is not True:
+            raise ValueError("run_async requires explicitly enabled async decisions")
+        step_async = getattr(self, "step_async", None)
+        if not callable(step_async):
+            raise ValueError("run_async requires a controller with step_async")
+        if type(until_complete) is not bool:
+            raise ValueError("until_complete must be a boolean")
+        if steps is _DEFAULT_STEPS:
+            steps = None if until_complete else 10
+        if until_complete:
+            if steps is not None or duration_seconds is not None:
+                raise ValueError("until_complete cannot be combined with a step or duration limit")
+            if type(getattr(self, "terminal", None)) is not bool:
+                raise ValueError("until_complete requires a controller with terminal status")
+            if after_step is not None:
+                raise ValueError("until_complete cannot use an owner step gate")
+        if getattr(self, "persist_recoverable_blocks", False) and not until_complete:
+            raise ValueError("Persistent blocked recovery requires until_complete mode")
+        if steps is None and duration_seconds is None and not until_complete:
+            raise ValueError("A step or duration limit is required")
+
+        deadline = _duration_deadline(duration_seconds)
+        completed = 0
+        while until_complete or steps is None or completed < steps:
+            if getattr(self, "terminal", False):
+                break
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            from .planning.scheduling import poll_delay
+
+            delay = self.tick_seconds
+            step_succeeded = False
+            try:
+                record = await step_async()
+                completed += 1
+                step_succeeded = True
+                delay = poll_delay(self)
+                recovery_wait = getattr(self, "persistent_recovery_wait_seconds", None)
+                if callable(recovery_wait):
+                    delay = max(delay, recovery_wait())
+            except requests.RequestException as error:
+                status = error.response.status_code if error.response is not None else None
+                if deadline is None or (
+                    status is not None and status != 429 and status < 500
+                ):
+                    raise
+                print(f"Transient API failure ({status or type(error).__name__}); retrying.",
+                      flush=True)
+                delay = max(30, delay)
+            finally:
+                # Controller steps execute in the controller's bounded worker
+                # thread. The event-loop sleep cannot be partitioned with the
+                # synchronous timing ledger's thread clock, so leave this gap
+                # explicitly unknown instead of mislabeling it as other work.
+                pending = getattr(self, "_timing_pending", None)
+                if isinstance(pending, dict):
+                    pending["sleep_valid"] = False
+
+            if until_complete and step_succeeded and getattr(self, "terminal", False):
+                break
+            if (step_succeeded and after_step is not None
+                    and (steps is None or completed < steps)
+                    and not getattr(self, "terminal", False)):
+                if after_step(self, completed, record) is not True:
+                    break
+            if deadline is not None:
+                delay = min(delay, max(0, deadline - time.monotonic()))
+            await _async_interruptible_sleep(delay)
+
+
+async def _async_interruptible_sleep(delay: float) -> None:
+    """Wait in bounded, cancellable slices without blocking the owner loop."""
+    deadline = time.monotonic() + delay
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        await asyncio.sleep(min(60.0, remaining))
