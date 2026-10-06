@@ -1632,12 +1632,14 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
         bind_retained_targets = (
             current_contract
             and type(contract.get('candidate_objective_binding')) is int
-            and contract['candidate_objective_binding'] == 2)
+            and contract['candidate_objective_binding'] in (2, 3))
         candidate_targets = {}
         if current_contract and isinstance(source_goal, str):
             for plan in selected:
                 target_document = candidate_target_objective(
-                    plan, evidence.get(plan.id), tick, source_goal)
+                    plan, evidence.get(plan.id), tick, source_goal,
+                    allow_power_promotion=(bind_retained_targets
+                                           and contract['candidate_objective_binding'] == 3))
                 if target_document is not None:
                     candidate_targets[plan.id] = target_document
         target_identities = {

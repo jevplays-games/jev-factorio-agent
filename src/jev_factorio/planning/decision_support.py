@@ -385,7 +385,7 @@ def _local_fuel_recipe_dependency(snapshot, catalog, plan, fuel_transfer_start):
     if not isinstance(local, dict):
         return None
     local_item, local_target = local.get('item'), local.get('inventory_target')
-    current_local = inventory.get(local_item) if isinstance(local_item, str) else None
+    current_local = inventory.get(local_item, 0) if isinstance(local_item, str) else None
     if (not isinstance(local_item, str) or not local_item
             or type(local_target) is not int or local_target < 1
             or local.get('ultimate_goal') != plan.goal
@@ -426,9 +426,9 @@ def _local_fuel_recipe_dependency(snapshot, catalog, plan, fuel_transfer_start):
         return None
     if (not isinstance(sites, dict) or sites.get('protocol') != 1
             or sites.get('session_id') != session or sites.get('tick') != tick
-            or not isinstance(owned, dict) or owned.get('state') != 'owned'
-            or owned.get('source_unit') != unit):
+            or not _recipe_source_matches(snapshot, catalog, role, entity)):
         return None
+    surveyed_source = isinstance(owned, dict) and owned.get('state') == 'owned'
 
     researched = snapshot.researched
     if not isinstance(researched, list):
@@ -475,7 +475,9 @@ def _local_fuel_recipe_dependency(snapshot, catalog, plan, fuel_transfer_start):
     return {
         'observed_tick': tick,
         'session_id': session,
-        'basis': 'same_tick_enabled_local_recipe_ingredient_and_owned_furnace',
+        'basis': ('same_tick_enabled_local_recipe_ingredient_and_owned_furnace'
+                  if surveyed_source else
+                  'same_tick_enabled_local_recipe_ingredient_and_registered_furnace'),
         'planner_item_path': path,
         'local_target_item': local_item,
         'local_target_inventory_now': current_local,
@@ -491,7 +493,8 @@ def _local_fuel_recipe_dependency(snapshot, catalog, plan, fuel_transfer_start):
         'producer_recipe_enabled_now': True,
         'producer_machine': entity['name'],
         'producer_machine_recipe_now': entity.get('recipe'),
-        'producer_owned_source_identity_current': True,
+        **({'producer_owned_source_identity_current': True} if surveyed_source else
+           {'producer_registered_source_identity_current': True}),
         'does_not_establish_furnace_output_or_goal_completion': True,
     }
 
@@ -4295,7 +4298,7 @@ def add_current_raw_bill_evidence(snapshot, catalog, plans, rows):
         }
 
 
-def candidate_target_objective(plan, row, tick, goal):
+def candidate_target_objective(plan, row, tick, goal, *, allow_power_promotion=False):
     """Return a candidate's exact, current local target when its producer binds it."""
     materials = plan.materials if isinstance(plan.materials, dict) else {}
     target = materials.get('local_objective')
@@ -4310,6 +4313,13 @@ def candidate_target_objective(plan, row, tick, goal):
             or row.get('local_target') != target):
         return None
     if set(target) == {'item', 'inventory_target', 'ultimate_goal'}:
+        promoted_power = False
+        if (allow_power_promotion and intent['scope'] == 'lookahead'
+                and row.get('work_scope') == 'immediate'
+                and isinstance(row.get('reasons'), list)
+                and 'current_power_consumer_prerequisite' in row.get('reasons', [])):
+            from ..judgments import _qualified_utility_power_dependency
+            promoted_power = _qualified_utility_power_dependency(plan, row, tick)
         if (not isinstance(target.get('item'), str)
                 or not target['item'] or len(target['item']) > 200
                 or type(target.get('inventory_target')) is not int
@@ -4317,7 +4327,8 @@ def candidate_target_objective(plan, row, tick, goal):
                 or (intent['scope'] == 'immediate'
                     and row.get('work_scope') != 'immediate')
                 or (intent['scope'] == 'lookahead'
-                    and row.get('work_scope') not in {'lookahead', 'shared_prerequisite'})):
+                    and row.get('work_scope') not in {'lookahead', 'shared_prerequisite'}
+                    and not promoted_power)):
             return None
         return deepcopy(target)
     if set(target) != {
@@ -4419,7 +4430,7 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
     candidate_targets = {}
     for plan in plans:
         target = candidate_target_objective(
-            plan, evidence.get(plan.id), snapshot.tick, goal)
+            plan, evidence.get(plan.id), snapshot.tick, goal, allow_power_promotion=True)
         if target is not None:
             candidate_targets[plan.id] = target
     target_identities = {
@@ -4449,6 +4460,6 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
         'candidate_evidence': evidence,
         'deterministic_ranking': sorted(evidence, key=lambda key: ranking_key(evidence[key])),
         'selection_contract': {'schema': 1, 'observed_tick': snapshot.tick,
-                               **({'candidate_objective_binding': 2} if scoped_frontier else {}),
+                               **({'candidate_objective_binding': 3} if scoped_frontier else {}),
                                'heuristics_are_not_native_timing_measurements': True},
     }

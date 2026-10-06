@@ -61,6 +61,18 @@ empty still invalidate freshness. Malformed telemetry is rejected. Unversioned
 saved decisions keep the old exact comparison. This also prevents boiler churn
 from authorizing another attempt after a strict rejection; it is not a retry rule.
 
+The resumed fuel frontier exposed two more evidence mismatches. The planner had
+correctly promoted a proven boiler-power prerequisite to immediate work, but the
+target binder still required its original lookahead scope. Binding version 3
+recognizes that promotion only through the existing action-bound power witness;
+version 2 records reconstruct unchanged. Separately, furnace-fuel purpose assumed
+zero inventory items were present in the native map and every furnace appeared
+in an ore-site survey. The existing registered-furnace identity check now supports
+the direct steel-to-assembler recipe edge, while omitted zero inventory counts
+as zero. Registered identity is labeled separately from surveyed ownership;
+neither establishes historical payment or completed output. Captured-frontier
+tests retain all action costs and prove stale/conflicting identities still fail.
+
 ## Efficient diagnosis and recovery
 
 1. Read the owner status, current checkpoint and last settled decision. Distinguish
