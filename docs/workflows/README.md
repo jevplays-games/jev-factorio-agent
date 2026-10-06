@@ -141,8 +141,19 @@ python docs/workflows/render.py \
 
 On Windows, use the `.bin/mmdc.cmd` path and an installed Edge/Chromium executable.
 The renderer invokes Node directly, so paths with spaces are supported. Use
-`--only 05-jev-candidate-judgment` for an individual render; regenerate all images
-after changing shared styles or the complete map.
+`--only 05-jev-candidate-judgment` for an individual render. Partial renders
+regenerate only the selected section source; overview-only renders leave all
+section sources and images unchanged. `--split-only --only <stem>` likewise
+limits source generation to that section. Regenerate all images after changing
+shared styles or when publishing changes across the complete map.
+Successful partial renders remove manifest records whose source or shared theme
+digest is outdated; regenerate those images to restore their manifest entries.
+Generated section sources and images are staged until all selected rendering
+finishes. A renderer failure leaves published sources, images and manifest unchanged;
+`--split-only` stages and writes section sources without rendering images. It
+invalidates manifest records whose source or shared theme digest is now stale,
+while preserving image files and still-current records. Invalid split inputs
+leave the published sources and manifest unchanged.
 
 PNG images default to 2x scale. The renderer caps oversized outputs at 30,000
 pixels per axis and approximately 160 megapixels, captures browser tiles, and
