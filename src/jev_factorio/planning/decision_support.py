@@ -385,7 +385,7 @@ def _local_fuel_recipe_dependency(snapshot, catalog, plan, fuel_transfer_start):
     if not isinstance(local, dict):
         return None
     local_item, local_target = local.get('item'), local.get('inventory_target')
-    current_local = inventory.get(local_item) if isinstance(local_item, str) else None
+    current_local = inventory.get(local_item, 0) if isinstance(local_item, str) else None
     if (not isinstance(local_item, str) or not local_item
             or type(local_target) is not int or local_target < 1
             or local.get('ultimate_goal') != plan.goal
@@ -426,9 +426,9 @@ def _local_fuel_recipe_dependency(snapshot, catalog, plan, fuel_transfer_start):
         return None
     if (not isinstance(sites, dict) or sites.get('protocol') != 1
             or sites.get('session_id') != session or sites.get('tick') != tick
-            or not isinstance(owned, dict) or owned.get('state') != 'owned'
-            or owned.get('source_unit') != unit):
+            or not _recipe_source_matches(snapshot, catalog, role, entity)):
         return None
+    surveyed_source = isinstance(owned, dict) and owned.get('state') == 'owned'
 
     researched = snapshot.researched
     if not isinstance(researched, list):
@@ -475,7 +475,9 @@ def _local_fuel_recipe_dependency(snapshot, catalog, plan, fuel_transfer_start):
     return {
         'observed_tick': tick,
         'session_id': session,
-        'basis': 'same_tick_enabled_local_recipe_ingredient_and_owned_furnace',
+        'basis': ('same_tick_enabled_local_recipe_ingredient_and_owned_furnace'
+                  if surveyed_source else
+                  'same_tick_enabled_local_recipe_ingredient_and_registered_furnace'),
         'planner_item_path': path,
         'local_target_item': local_item,
         'local_target_inventory_now': current_local,
@@ -491,7 +493,8 @@ def _local_fuel_recipe_dependency(snapshot, catalog, plan, fuel_transfer_start):
         'producer_recipe_enabled_now': True,
         'producer_machine': entity['name'],
         'producer_machine_recipe_now': entity.get('recipe'),
-        'producer_owned_source_identity_current': True,
+        **({'producer_owned_source_identity_current': True} if surveyed_source else
+           {'producer_registered_source_identity_current': True}),
         'does_not_establish_furnace_output_or_goal_completion': True,
     }
 
@@ -3927,6 +3930,14 @@ def candidate_evidence(snapshot, catalog, plans) -> dict:
         current_craft_demand = craft_demand(snapshot, catalog, plan)
         if current_craft_demand is not None:
             result[plan.id]['craft_recipe_demand'] = current_craft_demand
+        from .buffer_demand import purpose as buffer_component_purpose
+        component_purpose = buffer_component_purpose(snapshot, catalog, plan)
+        if component_purpose is not None:
+            result[plan.id]['buffer_component_parent_purpose'] = component_purpose
+        from .buffer_demand import commissioning_purpose
+        commissioning = commissioning_purpose(snapshot, catalog, plan)
+        if commissioning is not None:
+            result[plan.id]['buffer_commissioning_parent_purpose'] = commissioning
         if bootstrap_pickup_start is not None:
             result[plan.id]['bootstrap_output_pickup_start_evidence'] = bootstrap_pickup_start
         construction = machine_construction_prerequisite(
@@ -4291,6 +4302,80 @@ def add_current_raw_bill_evidence(snapshot, catalog, plans, rows):
         }
 
 
+def candidate_target_objective(plan, row, tick, goal, *, allow_power_promotion=False):
+    """Return a candidate's exact, current local target when its producer binds it."""
+    materials = plan.materials if isinstance(plan.materials, dict) else {}
+    target = materials.get('local_objective')
+    intent = materials.get('work_intent')
+    if (not isinstance(target, dict) or not isinstance(target.get('ultimate_goal'), str)
+            or target['ultimate_goal'] != goal or plan.goal != goal
+            or not isinstance(intent, dict)
+            or type(intent.get('observed_tick')) is not int
+            or intent.get('observed_tick') != tick
+            or intent.get('scope') not in {'immediate', 'lookahead'}
+            or not isinstance(row, dict)
+            or row.get('local_target') != target):
+        return None
+    if set(target) == {'item', 'inventory_target', 'ultimate_goal'}:
+        promoted_power = False
+        if (allow_power_promotion and intent['scope'] == 'lookahead'
+                and row.get('work_scope') == 'immediate'
+                and isinstance(row.get('reasons'), list)
+                and 'current_power_consumer_prerequisite' in row.get('reasons', [])):
+            from ..judgments import _qualified_utility_power_dependency
+            promoted_power = _qualified_utility_power_dependency(plan, row, tick)
+        if (not isinstance(target.get('item'), str)
+                or not target['item'] or len(target['item']) > 200
+                or type(target.get('inventory_target')) is not int
+                or target['inventory_target'] <= 0
+                or (intent['scope'] == 'immediate'
+                    and row.get('work_scope') != 'immediate')
+                or (intent['scope'] == 'lookahead'
+                    and row.get('work_scope') not in {'lookahead', 'shared_prerequisite'}
+                    and not promoted_power)):
+            return None
+        return deepcopy(target)
+    if set(target) != {
+            'kind', 'ultimate_goal', 'primary_target', 'immediate_prerequisite',
+            'observed_tick', 'basis', 'later_power_and_research_need_native_verification'}:
+        return None
+    technology_target = target.get('primary_target')
+    dependency = row.get('utility_lab_research_dependency')
+    technology = (technology_target.get('technology')
+                  if isinstance(technology_target, dict) else None)
+    if (target.get('kind') != 'research_prerequisite'
+            or type(target.get('observed_tick')) is not int
+            or target.get('observed_tick') != tick
+            or target.get('immediate_prerequisite') != 'utility:lab'
+            or target.get('basis') != 'current_capability_research_plan'
+            or target.get('later_power_and_research_need_native_verification') is not True
+            or not isinstance(technology_target, dict)
+            or set(technology_target) != {'kind', 'technology'}
+            or technology_target.get('kind') != 'native_technology'
+            or not isinstance(technology, str) or not technology or len(technology) > 200
+            or intent['scope'] != 'immediate' or row.get('work_scope') != 'immediate'
+            or not isinstance(dependency, dict)
+            or dependency.get('observed_tick') != tick
+            or dependency.get('technology') != technology
+            or dependency.get('basis') !=
+                'same_tick_capability_research_plan_and_paid_lab_prerequisite'
+            or any(dependency.get(key) is not True for key in (
+                'technology_not_researched_now', 'technology_unlocks_basic_assembler',
+                'current_research_idle', 'current_technology_prerequisites_satisfied',
+                'lab_required_by_native_research_walk', 'utility_lab_absent_now',
+                'player_connected_and_bound_now', 'crafting_queue_empty_now',
+                'placement_site_clearance_unknown_until_dispatch',
+                'travel_and_arrival_unverified',
+                'existing_native_action_performs_bounded_search_and_fresh_build_checks',
+                'native_build_result_and_fresh_role_postcondition_required',
+                'lab_power_and_research_require_later_native_verification'))
+            or dependency.get('native_placement_site_preflight_performed') is not False
+            or type(dependency.get('paid_lab_in_inventory_now')) is not int
+            or dependency['paid_lab_in_inventory_now'] < 1):
+        return None
+    return deepcopy(target)
+
+
 def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
     evidence = candidate_evidence(snapshot, catalog, plans)
     add_craft_overlap_evidence(snapshot, plans, evidence)
@@ -4306,6 +4391,12 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
                    'Immediate prerequisites precede discretionary lookahead at equal urgency; '
                    'moving more items is not evidence of more useful production.')
     first_evidence = evidence.get(plans[0].id, {}) if plans else {}
+    if isinstance(first_evidence.get('buffer_component_parent_purpose'), dict):
+        instruction = (
+            'Acquire the next missing component for the currently paid partial output buffer. '
+            'Its separate parent recipe demand remains recorded in buffer_component_parent_purpose. '
+            'A bounded input or intermediate can advance this component goal; component placement, '
+            'buffer flow and the parent production output still require native verification.')
     if plans and 'input_route_kit_prerequisite' in (plans[0].materials or {}):
         primary = first_evidence.get('local_target')
         kit_purpose = first_evidence.get('input_route_kit_parent_purpose')
@@ -4340,6 +4431,27 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
             f"starting {lab_dependency['technology']} research. Placement-site clearance, "
             "travel, lab power, and research completion remain unverified and require "
             "the existing native action and later observations.")
+    candidate_targets = {}
+    for plan in plans:
+        target = candidate_target_objective(
+            plan, evidence.get(plan.id), snapshot.tick, goal, allow_power_promotion=True)
+        if target is not None:
+            candidate_targets[plan.id] = target
+    target_identities = {
+        json.dumps(target, sort_keys=True, ensure_ascii=False, allow_nan=False)
+        for target in candidate_targets.values()
+    }
+    scoped_frontier = any('local_objective' in (plan.materials or {}) for plan in plans)
+    candidate_target_mode = (scoped_frontier and (
+        len(candidate_targets) != len(plans) or len(target_identities) != 1))
+    if candidate_target_mode:
+        primary = None
+        instruction = (
+            'The candidates may have different current local targets. Judge each plan only '
+            'against its matching `candidate_targets` entry when that entry exactly matches '
+            'the current plan and candidate evidence. No single `primary_target` applies to '
+            'all candidates; a missing or mismatched entry does not establish a target. '
+            'Native preconditions, receipts and fresh postconditions remain authoritative.')
     return {
         'local_objective': {
             'kind': 'stockpile_fuel' if goal == 'stockpile_fuel' else 'ready_production',
@@ -4347,9 +4459,11 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
             'primary_target': deepcopy(primary),
             'instruction': instruction,
             'success_authority': 'unchanged native step and goal predicates, never model scores',
+            **({'candidate_targets': candidate_targets} if candidate_target_mode else {}),
         },
         'candidate_evidence': evidence,
         'deterministic_ranking': sorted(evidence, key=lambda key: ranking_key(evidence[key])),
         'selection_contract': {'schema': 1, 'observed_tick': snapshot.tick,
+                               **({'candidate_objective_binding': 3} if scoped_frontier else {}),
                                'heuristics_are_not_native_timing_measurements': True},
     }

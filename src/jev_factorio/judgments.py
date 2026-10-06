@@ -1612,6 +1612,74 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
         evidence = context.get('candidate_evidence') or {}
         facts = state.get('facts')
         tick = facts.get('tick') if isinstance(facts, dict) else None
+        from copy import deepcopy
+        from .planning.decision_support import candidate_target_objective
+        local = context.get('local_objective')
+        source_local = local if isinstance(local, dict) else {}
+        had_candidate_targets = isinstance(source_local.get('candidate_targets'), dict)
+        source_goal = source_local.get('ultimate_goal')
+        contract = state.get('selection_contract')
+        current_contract = (
+            type(tick) is int and isinstance(contract, dict)
+            and type(contract.get('schema')) is int and contract['schema'] == 1
+            and type(contract.get('observed_tick')) is int
+            and contract['observed_tick'] == tick
+            and contract.get('heuristics_are_not_native_timing_measurements') is True)
+        qualified_shared_parent = _qualified_shared_parent_comparison(
+            facts, selected, evidence)
+        # Version the projection in saved requests. Unmarked durable decisions
+        # must still reconstruct their original questions exactly on restart.
+        bind_retained_targets = (
+            current_contract
+            and type(contract.get('candidate_objective_binding')) is int
+            and contract['candidate_objective_binding'] in (2, 3))
+        candidate_targets = {}
+        if current_contract and isinstance(source_goal, str):
+            for plan in selected:
+                target_document = candidate_target_objective(
+                    plan, evidence.get(plan.id), tick, source_goal,
+                    allow_power_promotion=(bind_retained_targets
+                                           and contract['candidate_objective_binding'] == 3))
+                if target_document is not None:
+                    candidate_targets[plan.id] = target_document
+        target_identities = {
+            json.dumps(target, sort_keys=True, ensure_ascii=False, allow_nan=False)
+            for target in candidate_targets.values()
+        }
+        candidate_target_mode = (
+            qualified_shared_parent is None and (had_candidate_targets or bind_retained_targets)
+            and (not candidate_targets or len(candidate_targets) != len(selected)
+                 or len(target_identities) != 1))
+        if isinstance(local, dict):
+            local = deepcopy(local)
+            local.pop('candidate_targets', None)
+            if candidate_target_mode:
+                local['primary_target'] = None
+                local['candidate_targets'] = candidate_targets
+                local['instruction'] = (
+                    'The offered candidates have different or incomplete current local targets. '
+                    'Judge each plan only against its matching `candidate_targets` entry when it '
+                    'exactly matches that plan and current candidate evidence. No single '
+                    '`primary_target` applies to all candidates; a missing or mismatched entry '
+                    'does not establish a target. Native preconditions, receipts and fresh '
+                    'postconditions remain authoritative.')
+            elif (qualified_shared_parent is None
+                  and (had_candidate_targets or bind_retained_targets)
+                  and len(candidate_targets) == len(selected)
+                  and len(target_identities) == 1):
+                retained_target = next(iter(candidate_targets.values()))
+                if had_candidate_targets or local.get('primary_target') != retained_target:
+                    local['primary_target'] = deepcopy(retained_target)
+                    local['instruction'] = (
+                        'The retained candidates share this current local target. Judge each plan '
+                        'against `primary_target` together with its own matching candidate evidence; '
+                        'native preconditions, receipts and fresh postconditions remain authoritative.')
+            elif had_candidate_targets and not candidate_targets and local.get('primary_target') is None:
+                local['instruction'] = (
+                    'No current candidate-local target is qualified for the offered plans. '
+                    'Do not borrow another candidate target or infer progress toward a missing '
+                    'objective; current evidence and unchanged native checks remain authoritative.')
+            context['local_objective'] = local
         if any(_native_additive_connection_contract(plan, facts) for plan in selected):
             context['execution_contract'] += (
                 " For a `factory_connect` candidate bound to the current paid native "
@@ -1622,9 +1690,9 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 "can reject native preparation; the planner's material allowance is "
                 "not a surveyed placement count. Approach, placement receipts and "
                 "fresh topology verification remain required, and flow is not established.")
-        local = state.get('local_objective')
         primary = local.get('primary_target') if isinstance(local, dict) else None
         target = primary.get('item') if isinstance(primary, dict) else None
+        shared_primary, shared_target = primary, target
         def observed_gather(row):
             start = row.get('gather_start_evidence')
             if not isinstance(start, dict):
@@ -1717,8 +1785,12 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
         utility_lab_choice_hint = ""
         for candidate_plan in selected:
             candidate_row = evidence.get(candidate_plan.id)
+            candidate_local_context = local
+            if candidate_target_mode and isinstance(local, dict):
+                candidate_local_context = deepcopy(local)
+                candidate_local_context['primary_target'] = candidate_targets.get(candidate_plan.id)
             if not _qualified_utility_lab_dependency(
-                    candidate_plan, candidate_row, local, tick):
+                    candidate_plan, candidate_row, candidate_local_context, tick):
                 continue
             utility_lab_choice_hint += (
                 " This paid lab is the current planner's immediate prerequisite for "
@@ -1801,10 +1873,31 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                              "observe": "Gather another observation without mutating the factory"},
             }
         }
+        if candidate_target_mode:
+            questions['candidate']['instructions'] += (
+                ' This request contains different or incomplete candidate-local targets. '
+                'Use `local_objective.candidate_targets` only by the exact candidate ID and '
+                'matching evidence row; do not apply a shared `primary_target` to every plan. '
+                'A candidate without a qualified keyed target has no established target-directed '
+                'benefit and must not borrow another candidate\'s target.')
+            context['execution_contract'] = context['execution_contract'].replace(
+                'Judge the supplied local_objective when present; otherwise judge active_goal.',
+                'For this heterogeneous frontier, judge each candidate only against the '
+                'matching local_objective.candidate_targets entry and current candidate evidence. '
+                'Do not apply one shared primary target to every candidate; a missing or '
+                'mismatched entry does not establish target-directed benefit.')
         for plan in selected:
             pointer = f"`candidate_plans[{json.dumps(plan.id)}]`"
             row = evidence.get(plan.id)
             row = row if isinstance(row, dict) else {}
+            plan_target = candidate_targets.get(plan.id) if candidate_target_mode else None
+            primary = deepcopy(plan_target) if candidate_target_mode else shared_primary
+            target = (plan_target.get('item') if isinstance(plan_target, dict)
+                      else None) if candidate_target_mode else shared_target
+            plan_local = local
+            if candidate_target_mode and isinstance(local, dict):
+                plan_local = deepcopy(local)
+                plan_local['primary_target'] = deepcopy(plan_target)
             direct_parent_hint = (
                 " `direct_alternative_parent_demand_start_evidence` binds this bounded "
                 "gather to the current immediate parent target through a same-tick "
@@ -1930,7 +2023,17 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
             candidate_objective = "this candidate's local_target" if candidate_local else objective
             candidate_context_hint = (
                 " Recompiled parent demand supports recipe input; science output and route flow remain unverified."
-                if candidate_local else "")
+                if candidate_local else (
+                    " No qualified target exists for this candidate; do not borrow another row's target or "
+                    "the former shared primary target. Target-directed usefulness is unsupported without "
+                    "independent current evidence."
+                    if candidate_target_mode and plan_target is None else ""))
+            if candidate_target_mode and not candidate_local:
+                if isinstance(plan_target, dict):
+                    candidate_objective = (
+                        f"local_objective.candidate_targets[{json.dumps(plan.id)}]")
+                else:
+                    candidate_objective = "a qualified candidate-local target (unavailable for this candidate)"
             raw_gather_hint = (
                 " This sole current raw gather has observed resource and fair-target "
                 "start facts and a same-tick native-recipe path to the local target. "
@@ -2181,6 +2284,22 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 "and fresh postcondition, and transport flow remains unverified. Contrary current "
                 "facts can make progress unsupported."
                 if qualified_buffer_build else "")
+            from .planning.buffer_demand import qualified_commissioning
+            if ((qualified_buffer_build or qualified_buffer_fuel)
+                    and qualified_commissioning(plan, facts, row)):
+                commissioning_hint = (
+                    " `buffer_commissioning_parent_purpose` independently binds this exact "
+                    "build or fuel action and current paid owner to an unsatisfied parent "
+                    "recipe path and carried source-item shortfall. This supports evaluating "
+                    "bounded transport preparation for that current demand; a buffer component "
+                    "is not itself a recipe ingredient. Paid history alone does not establish "
+                    "usefulness or measured payback. Native placement or fuel receipts, later "
+                    "transport flow and parent production remain unverified, and contrary "
+                    "facts can make this action unsupported.")
+                if qualified_buffer_build:
+                    buffer_build_hint += commissioning_hint
+                else:
+                    buffer_fuel_hint += commissioning_hint
             placement_dependency = row.get('placement_dependency')
             placement_step = plan.steps[0] if len(plan.steps) == 1 else None
             placement_path = (placement_dependency.get('planner_item_path')
@@ -2377,7 +2496,7 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     'verification remains separate.'
                 )
             qualified_utility_lab = _qualified_utility_lab_dependency(
-                plan, row, local, tick)
+                plan, row, plan_local, tick)
             utility_lab_hint = (
                 " `utility_lab_research_dependency` ties this paid placement to the "
                 "current planner's immediate prerequisite for a specific enabled "
@@ -2899,10 +3018,23 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     'intermediate; the pickup and inventory delta still need verification. '
                     'Contrary current facts can make usefulness unsupported.'
                 )
+            from .planning.buffer_demand import qualified as qualified_buffer_demand
+            buffer_demand_hint = ''
+            if qualified_buffer_demand(plan, facts, row):
+                buffer_demand_hint = (
+                    ' The candidate local target is the next missing component of a currently paid '
+                    'partial output buffer. `buffer_component_parent_purpose` independently binds '
+                    'its current owners and separate parent recipe demand. The component is not a '
+                    'recipe ingredient of that parent. Judge this bounded component input or '
+                    'intermediate on its own current start evidence; placement, transport flow '
+                    'and parent output remain unverified. Contrary facts can still make it unsupported.'
+                )
             questions[plan.id + "/useful_progress"] = {
                 "type": "choice",
                 "criteria": {
-                    "useful": "Current evidence supports useful progress toward the supplied objective",
+                    "useful": ("Current evidence supports useful progress toward this candidate's qualified local target"
+                               if candidate_target_mode else
+                               "Current evidence supports useful progress toward the supplied objective"),
                     "unsupported": "Useful progress is unsupported or contradicted by current evidence",
                 },
                 "instructions": (
@@ -3023,6 +3155,8 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     'absence alone is not contrary start evidence. Judge independently; '
                     'travel cost can affect scheduling but does not change recipe '
                     'quantities. Execution and completion still require native checks.')
+            questions[plan.id + '/useful_progress']['instructions'] += buffer_demand_hint
+            contribution_hint += buffer_demand_hint
             questions[plan.id + "/benefit"] = {
                 "type": "score",
                 "instructions": (
@@ -3174,7 +3308,7 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     'Use facts, execution_contract and bootstrap_output_pickup_start_evidence with recipe_dependency_chain/current_raw_demand. '
                     'Owned stock can supply this bounded recipe-input branch; pickup, output, '
                     'science/route flow remain unverified; no full-game plan required.')
-        comparison = _qualified_shared_parent_comparison(facts, selected, state.get('candidate_evidence') or {})
+        comparison = qualified_shared_parent
         if comparison is not None:
             context['shared_parent_comparison'] = comparison
             context['local_objective'] = {
