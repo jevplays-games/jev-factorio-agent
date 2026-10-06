@@ -14,7 +14,9 @@ science, so JEV correctly refused it. Boiler-fuel changes eventually broke the
 wait, but that was incidental recovery rather than a durable fix.
 
 When every urgent candidate is explicitly lookahead work, the frontier now keeps
-executable immediate non-capital work alongside those candidates. Existing
+executable immediate non-capital work alongside those candidates. This policy
+lives in the capital planner, covered by the existing blob-bound decision
+contract, so the source admission can distinguish the actual candidate change. Existing
 immediate urgency keeps its priority. This neither accepts the speculative
 refill nor chooses an action for JEV: native checks, cost/reservation gates,
 failure history, model eligibility and strict choice confidence remain in force.

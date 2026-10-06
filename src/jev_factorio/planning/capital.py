@@ -305,3 +305,20 @@ def offers(planner):
         except (KeyError, ValueError):
             continue
     return result
+
+
+def urgent_frontier(plans, evidence):
+    """Keep current work visible when only speculative supply claims urgency.
+
+    This candidate policy is part of the blob-bound decision contract. It
+    operates on plans already screened for capital costs and reservations;
+    native feasibility and strict JEV selection remain with their callers.
+    """
+    urgent = [plan for plan in plans if evidence[plan.id]['urgency'] >= 2]
+    if urgent and all(evidence[plan.id]['work_scope'] == 'lookahead' for plan in urgent):
+        immediate = [plan for plan in plans
+                     if evidence[plan.id]['work_scope'] == 'immediate'
+                     and not evidence[plan.id]['passive']
+                     and MARKER not in (plan.materials or {})]
+        return [*immediate, *urgent]
+    return urgent
