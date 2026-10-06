@@ -13,7 +13,7 @@ from .native_current_attachment import current_connector_snapshot_command
 
 
 def qualify_completed_connectors(client, result, checkpoint_binding, *, completed_craft=None,
-                                 background_craft=None):
+                                 background_craft=None, output_commitments=None):
     saved = deepcopy(validate_binding(checkpoint_binding, result['session_id']))
     routes = saved['routes']
     if (not routes or any(not route_paid_coverage(routes, receipt)
@@ -22,7 +22,8 @@ def qualify_completed_connectors(client, result, checkpoint_binding, *, complete
                           for receipt, row in routes.items())):
         raise RuntimeError('Completed connector checkpoint requires reconciliation')
     command = current_connector_snapshot_command(result, completed_routes=True,
-                                                 completed_craft=completed_craft, background_craft=background_craft)
+                                                 completed_craft=completed_craft, background_craft=background_craft,
+                                                 output_commitments=output_commitments)
 
     fields = {'schema', 'session_id', 'actor_unit', 'tick', 'connector_ownership',
               'settled_factory', 'completed_craft'}
@@ -49,17 +50,23 @@ def qualify_completed_connectors(client, result, checkpoint_binding, *, complete
             verify_completed_craft(row['completed_craft'], completed_craft, result, row['tick'],
                                    recipe=row.get('completed_craft_recipe'))
         settled = row['settled_factory']
+        expected_fields = {'sites', 'output_offers', 'outpost_offers'}
+        if output_commitments:
+            expected_fields.add('output_cells')
         if (not isinstance(settled, dict)
-                or set(settled) != {'sites', 'output_offers', 'outpost_offers'}):
+                or set(settled) != expected_fields):
             raise RuntimeError('Settled factory qualification is missing')
         for name, values in settled.items():
             if values == []:
                 settled[name] = {}
             # Output buffers support iron, copper and steel; the ore registries
             # remain limited to their two original roles.
-            limit = 3 if name == 'output_offers' else 2
+            limit = 3 if name in {'output_offers', 'output_cells'} else 2
             if not isinstance(settled[name], dict) or len(settled[name]) > limit:
                 raise RuntimeError('Settled factory qualification exceeds its bound')
+        if output_commitments:
+            from .native_paid_output_attachment import validate_snapshot
+            validate_snapshot(settled['output_cells'], output_commitments)
         owned = row['connector_ownership']
         if (not isinstance(owned, dict)
                 or set(owned) != {'protocol', 'session_id', 'tick', 'routes'}

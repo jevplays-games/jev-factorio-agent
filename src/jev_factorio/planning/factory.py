@@ -29,12 +29,15 @@ class FactoryPlanner:
         self.max_expansions = max_expansions
         self.materials = None
         self._active_native_research_trigger = None
+        self._recipe_cycle_prefix = ()
 
     def _visit(self, key, path):
         self.expansions += 1
         if self.expansions > self.max_expansions:
             raise ValueError("Native production expansion budget exceeded")
-        if key in path:
+        prefix = self._recipe_cycle_prefix
+        cycle_path = path[len(prefix):] if prefix and tuple(path[:len(prefix)]) == prefix else path
+        if key in cycle_path:
             raise ValueError(f"Native production cycle: {' -> '.join((*path, key))}")
         return (*path, key)
 
