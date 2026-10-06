@@ -251,6 +251,28 @@ def test_reducer_rejects_bad_envelopes_gaps_duplicates_and_top_level_override(tm
     assert isinstance(monitor.view["seen"], list)
 
 
+@pytest.mark.parametrize('phase', ['waiting_for_changed_game_evidence',
+    'evaluating_changed_game_evidence', 'evaluation_outcome_unknown_waiting'])
+@pytest.mark.parametrize('kind,stage', [('model_started', 5), ('action', 6)])
+def test_fresh_work_supersedes_recovery_caption_without_rewriting_history(tmp_path, phase, kind, stage):
+    monitor = Monitor(tmp_path / 'events')
+    monitor.accept(event())
+    old = event(2, 'decision_recorded', 7, record={
+        'status': 'blocked', 'persistent_recovery': {'phase': phase, 'reason': 'retained refusal'}})
+    monitor.accept(old)
+    monitor.accept(event(3, 'cycle_started', 2))
+    monitor.accept(event(4, 'observation', 2, state={'tick': 42}))
+    assert monitor.view['persistent_recovery']['phase'] == phase  # Observation alone is not recovery.
+    monitor.accept(event(5, kind, stage, action='factory_gather', parameters={'resource': 'iron-ore'}))
+    assert 'persistent_recovery' not in monitor.view
+    assert old['data']['record']['persistent_recovery']['phase'] == phase
+    assert monitor.view.get('verified') is not True
+    # A new actual rejection remains visible; this is not permanent suppression.
+    monitor.accept(event(6, 'decision_recorded', 7, record={
+        'status': 'blocked', 'persistent_recovery': {'phase': phase, 'reason': 'new refusal'}}))
+    assert monitor.view['persistent_recovery']['reason'] == 'new refusal'
+
+
 def test_legacy_read_only_projection_and_supervisor_identity(tmp_path):
     path = tmp_path / "legacy.jsonl"
     sup = tmp_path / "supervisor.json"

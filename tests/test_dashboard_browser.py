@@ -75,6 +75,27 @@ def seed(writer):
     return plan
 
 
+@pytest.mark.parametrize('next_kind', ['model_started', 'action'])
+def test_current_work_clears_prior_blocked_caption(live, next_kind):
+    page, writer, url, errors = live
+    writer.emit('decision_recorded', 7, record={'status': 'blocked',
+        'state': {'session_id': 'caption-test', 'world_kind': 'mock', 'tick': 10},
+        'persistent_recovery': {'phase': 'waiting_for_changed_game_evidence',
+            'reason': 'Candidate evidence insufficient', 'next_observation_seconds': 2}})
+    page.goto(url)
+    playwright.expect(page.locator('#thinking-status')).to_have_text('Blocked · waiting for changed game evidence')
+    playwright.expect(page.locator('#model-detail')).to_contain_text('no gameplay action running')
+    if next_kind == 'model_started':
+        writer.emit('model_started', 5)
+        playwright.expect(page.locator('#thinking-status')).to_have_text('JEV is evaluating')
+    else:
+        writer.emit('controller_state', 2, status='running', pending={'action': 'factory_gather'})
+        writer.emit('action', 6, action='factory_gather', parameters={'resource': 'iron-ore'})
+        playwright.expect(page.locator('#thinking-status')).not_to_contain_text('Blocked')
+    playwright.expect(page.locator('#model-detail')).not_to_contain_text('no gameplay action running')
+    assert not errors
+
+
 CAPTURE_FIXTURE = """(() => {
   window.testCapture = null;
   const media = () => {

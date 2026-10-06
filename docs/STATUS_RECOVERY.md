@@ -236,3 +236,13 @@ native path safety check. If any leg has moved the actor and the target remains
 unreachable, the result stays uncertain rather than being classified as a
 no-movement rejection. This source change is for future deployments; the
 ongoing campaign remains pinned to its original source.
+
+### Stale recovery captions after resumed work
+
+The dashboard clears a previous persistent-recovery caption when a fresh
+model_started or ction event arrives. Observations and cycle starts alone
+retain the caption because they do not prove that evaluation or gameplay
+resumed. The original recovery event remains in the log, and a subsequent
+refusal restores its current blocked state. Verify the actual OBS Program
+output after recovery; this display change does not authorize gameplay or
+certify useful progress.

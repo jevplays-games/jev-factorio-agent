@@ -663,6 +663,9 @@ class Monitor:
             view["response"] = None
             view["decision"] = None
         elif kind == "model_started":
+            # A new provider call supersedes the previous cycle's wait caption.
+            # Keep the original recovery record in the event log.
+            view.pop("persistent_recovery", None)
             view["model_busy"] = True
             view["model_started_at"] = event["time"]
         elif kind in ("model_returned", "model_failed"):
@@ -671,6 +674,8 @@ class Monitor:
         elif kind == "model_response":
             view["response"] = data
         elif kind == "action":
+            # Observed dispatch contradicts the old "no gameplay action" claim.
+            view.pop("persistent_recovery", None)
             view["action"] = data.get("action")
             view["parameters"] = data.get("parameters")
             view["dispatch"] = {
