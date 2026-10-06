@@ -89,6 +89,8 @@ def test_legacy_none_prepares_only_empty_binding_and_consumes_one_use(tmp_path):
         'protocol': 1, 'session_id': 'retained-session', 'routes': {}}
     original.pop('connector_ownership')
     original.pop('capital_investment', None)  # normal checkpoint serializer omits null
+    if original.get('async_decision') is None:
+        original.pop('async_decision', None)  # optional async extension preserves historical null omission
     original.pop('blocked_recovery', None)  # empty extension state retains historical bytes
     original.pop('blocked_recovery_archive', None)  # absent archive retains historical bytes
     assert after == original

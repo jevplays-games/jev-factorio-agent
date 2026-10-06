@@ -83,6 +83,45 @@ def test_attempt_is_saved_before_dispatch_and_bound_to_exact_step(monkeypatch, t
     assert load(tmp_path / "checkpoint.json").attempt_outcomes == [outcome]
 
 
+def test_cancelled_before_dispatch_requires_exact_non_entry_witness():
+    from copy import deepcopy
+
+    base = make_attempt(
+        "receipt-session", "bootstrap_mining",
+        {"id": "cancel-plan", "steps": [{"action": "walk_to_coal"}]},
+        0, {"started_tick": 0}, process_id="a" * 32)
+    phase = {
+        "stage": "dispatch", "status": "failed", "at_utc": utc_now(),
+        "seconds": 0.0, "error_code": "cancelled_before_entry",
+    }
+    valid = {
+        **base, "dispatch_phases": {"dispatch": phase},
+        "outcome": "cancelled_before_dispatch", "finished_tick": 0,
+        "finished_at_utc": utc_now(), "latency_seconds": 0.0,
+    }
+    validate_attempt(valid, finished=True)
+
+    for status, code, extra_stage in [
+        ("started", None, None),
+        ("returned", None, None),
+        ("failed", "cancelled_before_entry", "approach"),
+        ("failed", "execution", None),
+    ]:
+        forged = deepcopy(valid)
+        forged_phase = {**phase, "status": status,
+                        "error_code": code,
+                        "seconds": None if status == "started" else 0.0}
+        forged["dispatch_phases"] = {"dispatch": forged_phase}
+        if extra_stage:
+            forged["dispatch_phases"][extra_stage] = {
+                "stage": extra_stage, "status": "started", "at_utc": utc_now(),
+                "seconds": None, "error_code": None,
+            }
+        with pytest.raises(ValueError, match="Invalid attempt outcome"):
+            validate_attempt(forged, finished=True)
+
+
+
 @pytest.mark.parametrize("mode", ["delayed", "lost_ack", "lost_observation", "interrupt"])
 def test_late_verification_survives_resume_without_replay(monkeypatch, tmp_path, mode):
     backend = ReceiptBackend(mode)

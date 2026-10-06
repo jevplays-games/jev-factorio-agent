@@ -41,11 +41,25 @@ def test_identical_bytes_skip_but_every_changed_state_is_written(tmp_path, monke
     expected.pop('capital_investment', None)
     expected.pop('blocked_recovery', None)
     expected.pop('blocked_recovery_archive', None)
+    expected.pop('async_decision', None)
     assert saved == expected == checkpoint_data(memory)
     expected_payload = json.dumps(expected, sort_keys=True, allow_nan=False).encode('utf-8')
     assert path.read_bytes() == expected_payload
     # Historical checkpoint bytes keep unrelated nullable fields in the schema.
     assert saved['active_goal'] is None
+
+
+def test_empty_async_decision_is_omitted_and_roundtrips_as_legacy_none(tmp_path):
+    memory = CampaignMemory('session', 'rocket_launch')
+    path = tmp_path/'state.json'
+
+    memory.save(path)
+    saved = json.loads(path.read_bytes())
+    restored = CampaignMemory.load(path, 'session', 'rocket_launch')
+
+    assert 'async_decision' not in saved
+    assert restored.async_decision is None
+    assert checkpoint_data(memory) == saved
 
 
 @pytest.mark.parametrize('change', ['delete', 'overwrite', 'replace', 'other_path', 'loaded_instance'])
