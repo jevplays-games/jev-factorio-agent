@@ -5,6 +5,7 @@ from importlib.resources import files
 
 from ..factory_contract import validate_command
 from ..telemetry import Trace, phase
+from ..craft_jobs import craft_actor_observation_failure
 
 
 class CraftJobFactory:
@@ -21,6 +22,9 @@ class CraftJobFactory:
 
     def observe(self, snapshot):
         snapshot = self.native.observe(snapshot)
+        marker = snapshot.factory.get("craft_job_observation_failure")
+        if marker is not None:
+            raise craft_actor_observation_failure(marker)
         evidence = snapshot.factory.pop("craft_job_inventory", None)
         if not isinstance(evidence, dict) or evidence.get("tick") != snapshot.tick:
             raise ValueError("Missing atomic crafting inventory observation")

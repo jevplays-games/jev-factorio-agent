@@ -37,9 +37,14 @@ class ObservedFactory(NativeFactory):
             from .atomic_observation import observe_atomic
             return observe_atomic(self, snapshot)
         from fle.env import Position, Resource
+        from ..craft_jobs import parse_craft_actor_observation_failure
 
         profile = self.backend._observation_profile
-        result = parse_snapshot(self.call("observation_snapshot", self._discovery_epoch), profile)
+        raw = self.call("observation_snapshot", self._discovery_epoch)
+        failure = parse_craft_actor_observation_failure(raw)
+        if failure is not None:
+            raise failure
+        result = parse_snapshot(raw, profile)
         factory = result.get("factory")
         if not isinstance(factory, dict) or result.get("session_id") != snapshot.session_id:
             raise ValueError("Consolidated observation session changed")

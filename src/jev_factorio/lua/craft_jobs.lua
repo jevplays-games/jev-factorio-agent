@@ -40,6 +40,19 @@ local function same_actor(job, identity)
     return true
 end
 
+local function observation_actor_failure_code(message)
+    if type(message) ~= "string" then return nil end
+    if string.find(message, "Fair play requires the original connected character", 1, true) then
+        return "actor_unavailable"
+    end
+    if string.find(message, "Fair player binding changed", 1, true) then
+        return "actor_changed"
+    end
+    if string.find(message, "Fair play requires normal game speed", 1, true) then
+        return "actor_policy_changed"
+    end
+end
+
 local function queue_valid(player, job)
     local remaining = 0
     for _, entry in pairs(player.crafting_queue or {}) do
@@ -152,7 +165,20 @@ if campaign.observe ~= jobs.observe_wrapper then jobs.previous_observe = campaig
 local previous_observe = jobs.previous_observe
 jobs.observe_wrapper = function()
     local result = previous_observe()
-    local player, identity = actor()
+    local actor_ok, player, identity = pcall(actor)
+    if not actor_ok then
+        local job = jobs.job
+        local code = observation_actor_failure_code(player)
+        if (code and type(result) == "table" and type(job) == "table"
+                and job.paid == true and type(job.id) == "string"
+                and #job.id > 0 and #job.id <= 128) then
+            result.craft_job_observation_failure = {
+                schema = 1, receipt = job.id, code = code
+            }
+            return result
+        end
+        error(player)
+    end
     result.craft_jobs_protocol, result.craft_job_actor = 1, identity
     -- FLE's earlier inventory read can precede a crafting event. Capture the
     -- main inventory in this same Lua observation as the receipt and game tick.
