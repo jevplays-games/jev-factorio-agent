@@ -14,6 +14,23 @@ from test_buffer_component_demand import captured, context
 from test_two_stage_decision import Client, SOURCE
 
 
+def test_unscoped_bootstrap_retains_its_existing_goal():
+    from jev_factorio.skills import Plan, Step
+    from jev_factorio.planning.decision_support import scheduling_context
+    from test_deadline_scheduling import scenario
+    snapshot, catalog = scenario(available=0)
+    plan = Plan('coal', 'stockpile_fuel', 'Gather five coal',
+                (Step('mine_coal', 'inventory', 'coal', 5),))
+    state = {'facts': snapshot.for_jev(),
+             **scheduling_context(snapshot, catalog, [plan], 'stockpile_fuel')}
+    packet, _, offered = question_batch(state, [plan], max_bytes=48000)
+    assert offered == [plan]
+    assert packet['local_objective']['primary_target'] == {
+        'item': 'coal', 'inventory_target': 5, 'ultimate_goal': 'stockpile_fuel'}
+    assert 'candidate_objective_binding' not in packet['selection_contract']
+    assert 'candidate_targets' not in packet['local_objective']
+
+
 def frontier():
     snapshot, catalog, loop = captured()
     snapshot.inventory.update({'iron-gear-wheel': 1, 'iron-plate': 1,

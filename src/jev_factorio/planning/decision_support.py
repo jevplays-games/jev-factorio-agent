@@ -4426,7 +4426,8 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
         json.dumps(target, sort_keys=True, ensure_ascii=False, allow_nan=False)
         for target in candidate_targets.values()
     }
-    candidate_target_mode = (bool(plans) and (
+    scoped_frontier = any('local_objective' in (plan.materials or {}) for plan in plans)
+    candidate_target_mode = (scoped_frontier and (
         len(candidate_targets) != len(plans) or len(target_identities) != 1))
     if candidate_target_mode:
         primary = None
@@ -4448,6 +4449,6 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
         'candidate_evidence': evidence,
         'deterministic_ranking': sorted(evidence, key=lambda key: ranking_key(evidence[key])),
         'selection_contract': {'schema': 1, 'observed_tick': snapshot.tick,
-                               'candidate_objective_binding': 2,
+                               **({'candidate_objective_binding': 2} if scoped_frontier else {}),
                                'heuristics_are_not_native_timing_measurements': True},
     }
