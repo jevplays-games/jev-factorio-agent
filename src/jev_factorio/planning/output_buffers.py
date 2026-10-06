@@ -298,6 +298,23 @@ class OutputBufferPlanner(ReadyWorkPlanner):
             return scope_commissioning(self.snapshot, self.catalog, plan, row, path)
         if not flow_complete(row["source"], row["layout"], self.snapshot):
             self._buffer_service = True
+            recipe = self.catalog.recipe_for(row['item'])
+            chest = self.entities.get(row['chest_role'], {})
+            machine = self.entities[row['source']]
+            # Stored stock cannot produce another positive transport sample.
+            # An empty producer must receive its ordinary current recipe inputs
+            # before waiting for the unchanged native three-sample flow gate.
+            transportable = potential(row, self.snapshot, recipe) - chest.get('output', {}).get(row['item'], 0)
+            ready = machine.get('output', {}).get(row['item'], 0) + row.get('held', 0)
+            if transportable <= 0 or (ready <= 0 and machine.get('fuel', {}).get('coal', 0) < 1):
+                output = next(entry['amount'] for entry in recipe['products'] if entry['name'] == row['item'])
+                missing = amount - self.snapshot.inventory.get(row['item'], 0)
+                if missing > 0:
+                    production_path = self._visit('item:' + row['item'], path)
+                    prerequisite = self._production(recipe, row['source'],
+                        min(20, math.ceil(missing / output)), production_path)
+                    if prerequisite:
+                        return prerequisite
             # A short, explicit commissioning interval. Never call placement
             # success proof of transport; all three native growth samples count.
             return self._wait("buffer_flow", row["layout"], 3, row["source"],
