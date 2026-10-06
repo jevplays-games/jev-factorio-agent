@@ -2991,6 +2991,17 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     'intermediate; the pickup and inventory delta still need verification. '
                     'Contrary current facts can make usefulness unsupported.'
                 )
+            from .planning.buffer_demand import qualified as qualified_buffer_demand
+            buffer_demand_hint = ''
+            if qualified_buffer_demand(plan, facts, row):
+                buffer_demand_hint = (
+                    ' The candidate local target is the next missing component of a currently paid '
+                    'partial output buffer. `buffer_component_parent_purpose` independently binds '
+                    'its current owners and separate parent recipe demand. The component is not a '
+                    'recipe ingredient of that parent. Judge this bounded component input or '
+                    'intermediate on its own current start evidence; placement, transport flow '
+                    'and parent output remain unverified. Contrary facts can still make it unsupported.'
+                )
             questions[plan.id + "/useful_progress"] = {
                 "type": "choice",
                 "criteria": {
@@ -3117,6 +3128,8 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     'absence alone is not contrary start evidence. Judge independently; '
                     'travel cost can affect scheduling but does not change recipe '
                     'quantities. Execution and completion still require native checks.')
+            questions[plan.id + '/useful_progress']['instructions'] += buffer_demand_hint
+            contribution_hint += buffer_demand_hint
             questions[plan.id + "/benefit"] = {
                 "type": "score",
                 "instructions": (

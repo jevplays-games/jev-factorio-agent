@@ -3985,6 +3985,7 @@ class HierarchicalLoop(AgentLoop):
                 facts = self._model_facts(snapshot)
                 if self.catalog is not None and any(
                         isinstance((plan.materials or {}).get('bootstrap_output_pickup'), dict)
+                        or isinstance((plan.materials or {}).get('buffer_component_demand'), dict)
                         or isinstance((self._selection_support.get('candidate_evidence') or {})
                             .get(plan.id, {}).get('craft_recipe_demand'), dict)
                         or any(isinstance(((self._selection_support.get('candidate_evidence') or {})
