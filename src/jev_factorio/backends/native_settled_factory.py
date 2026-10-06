@@ -78,3 +78,12 @@ for resource,row in pairs(o.offers) do
  settled.outpost_offers[resource]={layout=row.layout,steps=steps}
 end
 '''
+
+
+def settled_factory_guards(output_commitments=None):
+    if not output_commitments:
+        return SETTLED_FACTORY_GUARDS
+    from .native_paid_output_attachment import PAID_OUTPUT_GUARDS
+    empty_buffers = 'assert(b and b.protocol==1 and empty(b.cells) and type(b.offers)=="table")'
+    assert SETTLED_FACTORY_GUARDS.count(empty_buffers) == 1
+    return SETTLED_FACTORY_GUARDS.replace(empty_buffers, PAID_OUTPUT_GUARDS)
