@@ -75,6 +75,14 @@ class FleBackend:
             raise RuntimeError("Native factory capabilities have not been enabled")
         return self._factory.execute(action, parameters, trace=trace)
 
+    def execute_transfer_preflight_traced(self, action: str, parameters: dict,
+                                          trace: Trace, context: dict) -> str:
+        """Execute a controller-owned transfer with exact pre-mutation evidence enabled."""
+        if self._factory is None:
+            raise RuntimeError("Native factory capabilities have not been enabled")
+        return self._factory.execute_transfer_preflight(action, parameters,
+                                                        trace, context)
+
     def native_mine_target(self, resource: str):
         """Return a fresh, cursor-selectable native raw-resource target.
 

@@ -271,6 +271,31 @@ class CampaignMemory:
                         or attempt["step_sha256"] != fingerprint(step)
                         or attempt["receipt"] != (step.get("parameters") or {}).get("receipt")):
                     raise ValueError("Attempt does not match the pending operation")
+                transfer_phase = attempt["dispatch_phases"].get("transfer_rpc")
+                if (isinstance(transfer_phase, dict)
+                        and transfer_phase.get("error_code") == "transfer_preflight_rejected"):
+                    proof = transfer_phase["proof"]
+                    request = proof["request"]
+                    parameters = step.get("parameters") or {}
+                    action = step["action"]
+                    from .bootstrap_output import ROLE as BOOTSTRAP_ROLE
+                    if (action not in {"factory_insert", "factory_extract"}
+                            or request["session_id"] != memory.session_id
+                            or request["attempt_id"] != attempt["id"]
+                            or request["plan_id"] != plan.id
+                            or request["step_index"] != memory.step_index
+                            or request["step_sha256"] != fingerprint(step)
+                            or request["action"] != action
+                            or request["started_tick"] != memory.pending["started_tick"]
+                            or request["receipt"] != parameters.get("receipt")
+                            or request["item"] != parameters.get("item")
+                            or request["quantity"] != parameters.get("quantity")
+                            or request["role"] != parameters.get("role")
+                            or request["direction"] != ("extract" if action == "factory_extract" else "insert")
+                            or request["machine_unit_number"] != attempt["expected_unit_number"]
+                            or request["role"] == BOOTSTRAP_ROLE
+                            or proof["tick"] > memory.last_tick):
+                        raise ValueError("Transfer preflight proof is not bound to the retained checkpoint step")
             if not isinstance(memory.attempt_outcomes, list) or len(memory.attempt_outcomes) > 64:
                 raise ValueError("Invalid attempt outcome history")
             seen = {memory.attempt["id"]} if memory.attempt else set()

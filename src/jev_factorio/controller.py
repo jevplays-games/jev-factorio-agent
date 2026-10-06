@@ -1093,13 +1093,20 @@ class HierarchicalLoop(AgentLoop):
                         if (attempt.get("plan_id") != entry["selected_plan_id"]
                                 or attempt.get("outcome") not in {
                                     "connection_preflight_rejected",
+                                    "transfer_preflight_rejected",
                                     "rejected_transfer_reconciled",
                                     "partial_transfer_reconciled",
                                     "zero_effect_transfer_reconciled",
                                     "wait_expired",
                                 }
                                 or type(terminal.get("proof_event")) is not dict
-                                or terminal["proof_event"].get("attempt_id") != attempt["id"]):
+                                or terminal["proof_event"].get("attempt_id") != attempt["id"]
+                                or (attempt["outcome"] == "transfer_preflight_rejected"
+                                    and (terminal["proof_event"].get("kind")
+                                         != "transfer_preflight_rejected"
+                                         or terminal["proof_event"].get("mutation_started") is not False
+                                         or terminal["proof_event"].get("proof")
+                                         != attempt["dispatch_phases"].get("transfer_rpc", {}).get("proof")))):
                             raise ValueError("Checkpoint async failed-plan terminal proof is invalid")
                         if attempt["id"] in seen_attempts:
                             raise ValueError("Checkpoint async terminal attempt is reused")
@@ -1307,6 +1314,7 @@ class HierarchicalLoop(AgentLoop):
         attempt = candidates[0]
         proof_kind = {
             "connection_preflight_rejected": "connection_preflight_rejected",
+            "transfer_preflight_rejected": "transfer_preflight_rejected",
             "rejected_transfer_reconciled": "rejected_transfer_reconciled",
             "partial_transfer_reconciled": "partial_transfer_reconciled",
             "zero_effect_transfer_reconciled": "zero_effect_transfer_reconciled",
@@ -1324,7 +1332,11 @@ class HierarchicalLoop(AgentLoop):
         if (event_plan != plan["id"]
                 or proof_event.get("step_index") != attempt["step_index"]
                 or (attempt["outcome"] == "connection_preflight_rejected"
-                    and proof_event.get("mutation_started") is not False)):
+                    and proof_event.get("mutation_started") is not False)
+                or (attempt["outcome"] == "transfer_preflight_rejected"
+                    and (proof_event.get("mutation_started") is not False
+                         or proof_event.get("proof")
+                         != attempt["dispatch_phases"].get("transfer_rpc", {}).get("proof")))):
             return None
         return {
             "kind": "plan_failed", "plan_id": plan["id"],
@@ -1567,6 +1579,7 @@ class HierarchicalLoop(AgentLoop):
                 return
             event_kind = {
                 "connection_preflight_rejected": "connection_preflight_rejected",
+                "transfer_preflight_rejected": "transfer_preflight_rejected",
                 "rejected_transfer_reconciled": "rejected_transfer_reconciled",
                 "partial_transfer_reconciled": "partial_transfer_reconciled",
                 "zero_effect_transfer_reconciled": "zero_effect_transfer_reconciled",
@@ -1579,7 +1592,11 @@ class HierarchicalLoop(AgentLoop):
                     or proof_event.get("step_index") != attempt["step_index"]
                     or proof_event.get("tick", -1) > self.memory.last_tick
                     or (attempt["outcome"] == "connection_preflight_rejected"
-                        and proof_event.get("mutation_started") is not False)):
+                        and proof_event.get("mutation_started") is not False)
+                    or (attempt["outcome"] == "transfer_preflight_rejected"
+                        and (proof_event.get("mutation_started") is not False
+                             or proof_event.get("proof")
+                             != attempt["dispatch_phases"].get("transfer_rpc", {}).get("proof")))):
                 raise ValueError("Abandoned async plan lacks exact terminal failure evidence")
             return
         if kind == "goal_completed":
@@ -2611,6 +2628,17 @@ class HierarchicalLoop(AgentLoop):
         if self.memory is not None and self.memory.attempt is not None:
             if event["stage"] in DISPATCH_STAGES:
                 self.memory.attempt["dispatch_phases"][event["stage"]] = deepcopy(event)
+                if event.get("error_code") == "transfer_preflight_rejected":
+                    attempt = self.memory.attempt
+                    proof = event["proof"]
+                    plan = Plan.from_dict(self.memory.active_plan)
+                    step = plan.steps[self.memory.step_index]
+                    self._validate_transfer_preflight_binding(
+                        proof, attempt, plan, step, self.memory.step_index,
+                        self.memory.session_id)
+                    self.memory.last_tick = max(self.memory.last_tick, proof["tick"])
+                from .telemetry import validate_attempt
+                validate_attempt(self.memory.attempt)
                 self._save()
             elif event["status"] == "failed":
                 self.memory.attempt["observation_error"] = deepcopy(event)
@@ -3266,6 +3294,141 @@ class HierarchicalLoop(AgentLoop):
             and machine.get("output", {}).get(item, 0) >= quantity
         )
 
+    def _transfer_preflight_context(self, snapshot: GameSnapshot, plan: Plan,
+                                    step, index: int) -> dict | None:
+        """Build opt-in identity for the bundled Lua's narrow read-only transfer check."""
+        if (snapshot.world_kind != "fle"
+                or step.action not in {"factory_insert", "factory_extract"}
+                or not isinstance(self.memory.attempt, dict)
+                or self.memory.attempt.get("origin") != "new"):
+            return None
+        parameters = step.parameters or {}
+        role, item, quantity, receipt = (parameters.get("role"), parameters.get("item"),
+                                         parameters.get("quantity"), parameters.get("receipt"))
+        from .bootstrap_output import ROLE as BOOTSTRAP_ROLE
+        if role == BOOTSTRAP_ROLE:
+            return None
+        runtime = snapshot.factory.get("acceptance_runtime")
+        machine = snapshot.factory.get("entities", {}).get(role, {})
+        attempt = self.memory.attempt
+        if (type(runtime) is not dict or type(runtime.get("schema")) is not int
+                or runtime.get("schema") != 1
+                or runtime.get("session_id") != snapshot.session_id
+                or type(runtime.get("actor_unit")) is not int or runtime["actor_unit"] < 1
+                or type(runtime.get("player_index")) is not int or runtime["player_index"] < 1
+                or type(runtime.get("surface_index")) is not int or runtime["surface_index"] < 1
+                or type(runtime.get("force_index")) is not int or runtime["force_index"] < 1
+                or snapshot.factory.get("player_bound") is not True
+                or not isinstance(machine, dict)
+                or type(machine.get("unit_number")) is not int
+                or machine["unit_number"] < 1
+                or machine["unit_number"] != attempt.get("expected_unit_number")
+                or type(machine.get("name")) is not str or not machine["name"]
+                or attempt.get("action") != step.action
+                or attempt.get("plan_id") != plan.id
+                or attempt.get("step_index") != index
+                or attempt.get("step_sha256") != fingerprint(asdict(step))
+                or attempt.get("receipt") != receipt
+                or attempt.get("started_tick") > snapshot.tick
+                or snapshot.session_id != self.memory.session_id
+                or not isinstance(role, str) or not role
+                or not isinstance(item, str) or not item
+                or type(quantity) is not int or quantity < 1
+                or not isinstance(receipt, str) or not receipt):
+            return None
+        context = {
+            "schema": 1, "attempt_id": attempt["id"], "session_id": snapshot.session_id,
+            "plan_id": plan.id, "step_index": index, "step_sha256": attempt["step_sha256"],
+            "action": step.action, "started_tick": attempt["started_tick"],
+            "observed_tick": snapshot.tick, "receipt": receipt, "item": item,
+            "quantity": quantity, "direction": "extract" if step.action == "factory_extract" else "insert",
+            "role": role, "machine_unit_number": machine["unit_number"],
+            "machine_name": machine["name"], "actor_unit_number": runtime["actor_unit"],
+            "actor_player_index": runtime["player_index"],
+            "surface_index": runtime["surface_index"], "force_index": runtime["force_index"],
+        }
+        from .telemetry import validate_transfer_preflight_context
+        validate_transfer_preflight_context(context)
+        return context
+
+    @staticmethod
+    def _validate_transfer_preflight_binding(proof: dict, attempt: dict, plan: Plan,
+                                             step, index: int, session_id: str) -> None:
+        from .telemetry import validate_transfer_preflight_proof
+
+        validate_transfer_preflight_proof(proof)
+        context = proof["request"]
+        parameters = step.parameters or {}
+        if (context["session_id"] != session_id
+                or context["attempt_id"] != attempt.get("id")
+                or context["plan_id"] != plan.id
+                or context["step_index"] != index
+                or context["step_sha256"] != fingerprint(asdict(step))
+                or context["action"] != step.action
+                or context["started_tick"] != attempt.get("started_tick")
+                or context["receipt"] != parameters.get("receipt")
+                or context["item"] != parameters.get("item")
+                or context["quantity"] != parameters.get("quantity")
+                or context["role"] != parameters.get("role")
+                or context["machine_unit_number"] != attempt.get("expected_unit_number")
+                or proof["tick"] < context["observed_tick"]):
+            raise ValueError("Transfer preflight proof does not bind the active operation")
+
+    @staticmethod
+    def _transfer_preflight_owner_matches(snapshot: GameSnapshot, proof: dict,
+                                          memory: CampaignMemory) -> bool:
+        context = proof["request"]
+        runtime = snapshot.factory.get("acceptance_runtime")
+        machine = snapshot.factory.get("entities", {}).get(context["role"], {})
+        if (snapshot.world_kind != "fle" or snapshot.session_id != memory.session_id
+                or snapshot.tick < proof["tick"] or snapshot.factory.get("player_bound") is not True
+                or type(runtime) is not dict
+                or type(runtime.get("schema")) is not int or runtime.get("schema") != 1
+                or runtime.get("session_id") != context["session_id"]
+                or type(runtime.get("actor_unit")) is not int
+                or runtime.get("actor_unit") != context["actor_unit_number"]
+                or type(runtime.get("player_index")) is not int
+                or runtime.get("player_index") != context["actor_player_index"]
+                or type(runtime.get("surface_index")) is not int
+                or runtime.get("surface_index") != context["surface_index"]
+                or type(runtime.get("force_index")) is not int
+                or runtime.get("force_index") != context["force_index"]
+                or type(machine) is not dict
+                or machine.get("unit_number") != context["machine_unit_number"]
+                or machine.get("name") != context["machine_name"]):
+            return False
+        if context["receipt"] in snapshot.factory.get("receipts", {}):
+            return False
+        source_quantity = (snapshot.inventory.get(context["item"], 0)
+                           if context["direction"] == "insert"
+                           else machine.get("output", {}).get(context["item"], 0))
+        # A changed observed source is outside the durable preflight's exact
+        # identity. Keep the pending operation for reconciliation; never replay.
+        expected_source_quantity = proof["source"]["quantity"]
+        return (type(source_quantity) is int and source_quantity == expected_source_quantity)
+
+    def _settle_transfer_preflight_rejection(self, snapshot: GameSnapshot, plan: Plan,
+                                             proof: dict) -> dict:
+        attempt = self.memory.attempt
+        if attempt is None:
+            raise ValueError("Cannot settle transfer preflight without its attempt")
+        reason = (f"Native {proof['request']['item']} transfer to {proof['request']['role']} "
+                  f"was rejected before mutation: destination capacity "
+                  f"{proof['target']['insertable_count']} is below requested "
+                  f"{proof['request']['quantity']}")
+        self.memory.last_tick = max(self.memory.last_tick, proof["tick"])
+        self.memory.event(
+            "transfer_preflight_rejected", plan_id=plan.id, step_index=self.memory.step_index,
+            attempt_id=attempt["id"], receipt=proof["request"]["receipt"], proof=deepcopy(proof),
+            mutation_started=False, tick=proof["tick"],
+        )
+        finished_snapshot = deepcopy(snapshot)
+        finished_snapshot.tick = proof["tick"]
+        self._finish_attempt(finished_snapshot, "transfer_preflight_rejected")
+        self.memory.status = "running"
+        self._fail_plan(reason)
+        return self._record(snapshot, "reconcile", reason)
+
     def _dispatch_retained_transfer(self, plan: Plan, step, snapshot: GameSnapshot) -> dict:
         """Dispatch the exact preserved native transfer, then verify its receipt."""
         # Preserve the interrupted-phase proof before the normal dispatch tracing
@@ -3344,6 +3507,28 @@ class HierarchicalLoop(AgentLoop):
         plan = Plan.from_dict(self.memory.active_plan)
         step = plan.steps[self.memory.step_index]
         pending = self.memory.pending
+        preflight_event = ((self.memory.attempt or {}).get("dispatch_phases") or {}).get("transfer_rpc")
+        if isinstance(preflight_event, dict) and preflight_event.get("error_code") == "transfer_preflight_rejected":
+            proof = preflight_event.get("proof")
+            try:
+                self._validate_transfer_preflight_binding(
+                    proof, self.memory.attempt, plan, step, self.memory.step_index,
+                    self.memory.session_id)
+                owner_matches = (
+                    self.memory.transfer_recovery is None
+                    and preflight_event.get("status") == "failed"
+                    and self._transfer_preflight_owner_matches(snapshot, proof, self.memory)
+                )
+            except (TypeError, ValueError, KeyError, AttributeError):
+                owner_matches = False
+            if owner_matches:
+                return self._settle_transfer_preflight_rejection(snapshot, plan, proof)
+            self.memory.status = "uncertain"
+            self.memory.reason = (
+                "Transfer preflight proof no longer matches the retained actor, source, or receipt; "
+                "pending action retained without replay"
+            )
+            return self._record(snapshot, "observe", self.memory.reason)
         if step.action == 'factory_connect' and snapshot.world_kind == 'fle':
             from .connector_checkpoint import pending_owned
             if not pending_owned(self.memory, step):
@@ -4123,6 +4308,7 @@ class HierarchicalLoop(AgentLoop):
         # Write-ahead checkpoint: after a crash even a prepared command is
         # treated as potentially dispatched, never blindly replayed.
         self._save()
+        transfer_preflight = self._transfer_preflight_context(fresh, plan, step, index)
         try:
             def dispatch():
                 if self.async_decisions:
@@ -4134,6 +4320,12 @@ class HierarchicalLoop(AgentLoop):
                         # dispatch receipt and verification before returning.
                         execution["dispatch_entered"] = True
                 if step.action.startswith("factory_"):
+                    if transfer_preflight is not None:
+                        preflight = getattr(self.backend, "execute_transfer_preflight_traced", None)
+                        if not callable(preflight):
+                            raise RuntimeError("FLE backend lacks typed transfer preflight support")
+                        return preflight(step.action, step.parameters or {},
+                                         self._diagnostic_trace, transfer_preflight)
                     traced = getattr(self.backend, "execute_traced", None)
                     return (traced(step.action, step.parameters or {}, self._diagnostic_trace) if traced else
                             self.backend.execute(step.action, step.parameters or {}))
@@ -4204,6 +4396,29 @@ class HierarchicalLoop(AgentLoop):
         except Exception as error:
             if self._persistence_failed:
                 raise  # A phase checkpoint failure is not a backend acknowledgement.
+            from .backends.native_factory import TransferPreflightRejected
+            if type(error) is TransferPreflightRejected:
+                attempt = self.memory.attempt
+                phase_row = ((attempt or {}).get("dispatch_phases") or {}).get("transfer_rpc")
+                try:
+                    proof = error.proof
+                    if (transfer_preflight is None
+                            or not isinstance(phase_row, dict)
+                            or phase_row.get("status") != "failed"
+                            or phase_row.get("error_code") != "transfer_preflight_rejected"
+                            or phase_row.get("proof") != proof
+                            or proof.get("request") != transfer_preflight
+                            or attempt is None
+                            or self.memory.pending is None
+                            or self.memory.pending.get("action") != step.action):
+                        raise ValueError("Typed transfer proof lacks its exact durable phase witness")
+                    self._validate_transfer_preflight_binding(
+                        proof, attempt, plan, step, index, fresh.session_id)
+                    return self._settle_transfer_preflight_rejection(fresh, plan, proof)
+                except (TypeError, ValueError, KeyError, AttributeError):
+                    # A malformed or mismatched proof is not authority to clear
+                    # a paid action. Continue through the ordinary ambiguous path.
+                    pass
             if step.action == "factory_connect" and type(error) is ConnectionPreflightRejected:
                 # Only this explicit backend contract proves the connection
                 # mutator was never entered. Generic errors, lost replies and
