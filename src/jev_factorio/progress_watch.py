@@ -293,8 +293,8 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
     # A repeated historical tick cannot be made fresh by a rewritten timestamp.
     if prior_tick == tick and number(prior.get('last_progress_at')):
         stamp = prior['last_progress_at']
-    elif type(prior_tick) is int and tick > prior_tick:
-        stamp = max(stamp or 0, now)
+    # Newly learned receipts may be historical. Their supplied completion
+    # time remains authoritative even when the progress watermark increases.
     result.update(progress_tick=tick, last_progress_at=stamp,
                   progress_age_seconds=max(0, now - stamp) if stamp is not None else None,
                   pending=sample.get('pending') is True)
