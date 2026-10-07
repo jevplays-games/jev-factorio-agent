@@ -434,6 +434,12 @@ def atomic_json(path, data):
         json.dump(data, stream, sort_keys=True, allow_nan=False)
         stream.write('\n'); stream.flush(); os.fsync(stream.fileno())
     os.replace(temp, path)
+    # Windows supports the flushed file plus same-directory atomic replacement,
+    # but Python does not expose a portable parent-directory fsync there.
+    # Keep the directory durability barrier mandatory on POSIX and let any real
+    # open/fsync/close error propagate to the caller.
+    if os.name == 'nt':
+        return
     directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
     try: os.fsync(directory)
     finally: os.close(directory)
