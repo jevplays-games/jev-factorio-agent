@@ -93,6 +93,16 @@ class InputRoutePlanner(OutputBufferPlanner):
                         if prior is not None:
                             semantics = _manual_step_semantics(plan)
                             if semantics == _manual_step_semantics(prior):
+                                prior_kit = (prior.materials or {}).get('input_route_kit_prerequisite') or {}
+                                ordinary = plan.materials or {}
+                                # The same physical prerequisite can serve the
+                                # current batch and an optional construction kit.
+                                # Keep its immediate parent production purpose.
+                                if (prior_kit.get('state') == 'proposed'
+                                        and not ordinary.get('input_route_kit_prerequisite')
+                                        and ordinary.get('local_objective') == prior_kit.get('parent_local_objective')
+                                        and ordinary.get('work_intent', {}).get('scope') == 'immediate'):
+                                    unique[plan.id] = plan
                                 continue
                             encoded = json.dumps(semantics, sort_keys=True,
                                                  separators=(",", ":"), allow_nan=False)
