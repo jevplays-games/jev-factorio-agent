@@ -156,6 +156,41 @@ def research_progress(sample, previous, now):
     return result
 
 
+def completed_progress_sample(checkpoint, owner, *, owner_qualified=False):
+    """Project completed work without treating bounded history eviction as loss.
+
+    The adapter must independently bind a qualified owner to the exact reviewed
+    script, execution, live child and checkpoint session. Its retained watermark
+    supplements history; it never supplies a new completion time.
+    """
+    session = checkpoint.get('session_id')
+    tick = checkpoint.get('last_tick')
+    history = checkpoint.get('history')
+    if (not isinstance(session, str) or not session
+            or type(tick) is not int or tick < 0
+            or not isinstance(history, list) or len(history) > 65):
+        raise ValueError('invalid completed progress checkpoint')
+    useful = []
+    for row in history:
+        if not isinstance(row, dict):
+            raise ValueError('invalid completed progress history')
+        if (row.get('kind') == 'background_job_completed'
+                or row.get('kind') == 'step_verified' and row.get('action') not in
+                (None, 'factory_wait', 'idle', 'observe', 'verify')):
+            value = row.get('tick')
+            if type(value) is not int or not 0 <= value <= tick:
+                raise ValueError('invalid completed progress tick')
+            useful.append(value)
+    if owner_qualified:
+        watermark = owner.get('useful_tick')
+        if (owner.get('session_id') != session or type(watermark) is not int
+                or not 0 <= watermark <= tick):
+            raise ValueError('invalid qualified owner progress watermark')
+        useful.append(watermark)
+    return {'progress_tick': max(useful, default=0),
+            'last_progress_at': owner.get('last_useful_action_at')}
+
+
 def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
              stall_seconds=120):
     """Do not turn process liveness, tick movement or a restart into progress."""
