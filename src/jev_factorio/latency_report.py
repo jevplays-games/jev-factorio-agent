@@ -70,12 +70,12 @@ def _validate_clock_window(value: object, *, scope: str) -> dict:
 
 def _validate_setup_attribution(value: object, *, backend: str) -> dict:
     from .setup_timing import BACKEND_STAGES as BACKEND_SETUP_STAGES
+    from .setup_timing import LEGACY_SETUP_STAGES
     from .setup_timing import STAGES as SETUP_STAGES
     fields = {'schema', 'status', 'clocks', 'scope', 'phases', 'backend_phases'}
     if (not isinstance(value, dict) or set(value) != fields
             or value['schema'] != 'jev.setup-attribution.v1'
-            or value['status'] not in {'complete', 'partial'}
-            or value['scope'] != 'ordered_setup_boundaries; backend phases are nested in preflight_to_backend'):
+            or value['status'] not in {'complete', 'partial'}):
         raise ValueError('Invalid initialization timing')
     clocks = value['clocks']
     if (not isinstance(clocks, dict) or set(clocks) != {'wall', 'process_cpu', 'thread_cpu'}
@@ -83,28 +83,49 @@ def _validate_setup_attribution(value: object, *, backend: str) -> dict:
             or clocks['thread_cpu'] not in (None, 'thread_time_ns')):
         raise ValueError('Invalid initialization clock identities')
 
-    def phases(rows, stages):
-        if not isinstance(rows, list) or len(rows) > len(stages) - 1:
+    def phases(rows, stage_orders):
+        if not isinstance(rows, list):
             raise ValueError('Invalid initialization phase count')
-        for index, row in enumerate(rows):
-            if (not isinstance(row, dict)
-                    or set(row) != {'from', 'to', 'wall_ns', 'process_cpu_ns', 'thread_cpu_ns'}
-                    or row['from'] != stages[index] or row['to'] != stages[index + 1]):
-                raise ValueError('Invalid initialization phase identity')
+        matching_orders = []
+        for stages in stage_orders:
+            if len(rows) > len(stages) - 1:
+                continue
+            if all(isinstance(row, dict)
+                   and set(row) == {'from', 'to', 'wall_ns', 'process_cpu_ns', 'thread_cpu_ns'}
+                   and row['from'] == stages[index]
+                   and row['to'] == stages[index + 1]
+                   for index, row in enumerate(rows)):
+                matching_orders.append(stages)
+        if not matching_orders:
+            raise ValueError('Invalid initialization phase identity')
+        stages = matching_orders[0]
+        for row in rows:
             nonnegative(row['wall_ns'])
             nonnegative(row['process_cpu_ns'])
             if row['thread_cpu_ns'] is not None:
                 nonnegative(row['thread_cpu_ns'])
             if (clocks['thread_cpu'] == 'thread_time_ns') != (row['thread_cpu_ns'] is not None):
                 raise ValueError('Initialization thread clock availability changed')
-        return rows
+        return rows, stages
 
-    main = phases(value['phases'], SETUP_STAGES)
-    nested = phases(value['backend_phases'], BACKEND_SETUP_STAGES)
+    main, main_stages = phases(value['phases'],
+                               (SETUP_STAGES, LEGACY_SETUP_STAGES))
+    nested, nested_stages = phases(value['backend_phases'],
+                                   (BACKEND_SETUP_STAGES,))
+    legacy_scope = ('ordered_setup_boundaries; backend phases are nested in '
+                    'preflight_to_backend')
+    current_scope = ('ordered_setup_boundaries; backend phases are nested in '
+                     'dashboard_ready_to_backend_ready')
+    if main:
+        expected_scope = (current_scope if main_stages == SETUP_STAGES else legacy_scope)
+        if value['scope'] != expected_scope:
+            raise ValueError('Initialization scope disagrees with phase order')
+    elif value['scope'] not in {legacy_scope, current_scope}:
+        raise ValueError('Invalid initialization scope')
     if value['status'] == 'complete':
-        if len(main) != len(SETUP_STAGES) - 1:
+        if len(main) != len(main_stages) - 1:
             raise ValueError('Complete initialization timing lacks stages')
-        if (backend == 'fle') != (len(nested) == len(BACKEND_SETUP_STAGES) - 1):
+        if (backend == 'fle') != (len(nested) == len(nested_stages) - 1):
             raise ValueError('Complete backend timing lacks expected stages')
     return value
 
@@ -555,7 +576,7 @@ def analyze_research_run(run_dir: Path, *, max_records: int = MAX_RECORDS,
         'counts': dict(sorted(counts.items())),
         'scopes': {
             'startup_window': 'sample before run_started event construction through sample before controller_initialized event construction; overlaps ordered initialization phase rows',
-            'initialization_backend_phase_nested': 'nested within preflight_to_backend; do not add to top-level initialization phases',
+            'initialization_backend_phase_nested': 'nested within its containing top-level backend phase; do not add to top-level initialization phases',
             'model_inter_request': 'pairwise non-overlapping window from a clock sample after model-response event emission through a clock sample after the next model-request event emission and immediately before client.evaluate; includes event emission and endpoint-sampling overhead',
             'model_response_operation': 'clock samples around the client.evaluate call; the boundaries include small endpoint-sampling overhead',
             'prior_iteration_phase_exclusive': 'nonoverlapping components within one decorated controller step',

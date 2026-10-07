@@ -15,6 +15,13 @@ from .iteration_timing import validate_timing
 
 
 STAGES = (
+    'setup_start', 'preflight_ready', 'research_ready', 'dashboard_ready',
+    'backend_ready', 'controller_ready', 'outputs_ready', 'initialized',
+)
+# setup-attribution.v1 records written before selected checkpoint preflight
+# moved ahead of telemetry writer creation used this order. Keep it available
+# so offline reports can validate already-sealed runs without relabeling them.
+LEGACY_SETUP_STAGES = (
     'setup_start', 'research_ready', 'dashboard_ready', 'preflight_ready',
     'backend_ready', 'controller_ready', 'outputs_ready', 'initialized',
 )
@@ -150,7 +157,8 @@ class SetupTiming:
             'status': 'complete' if complete else 'partial',
             'clocks': {'wall': 'perf_counter_ns', 'process_cpu': 'process_time_ns',
                        'thread_cpu': 'thread_time_ns' if self.thread_valid else None},
-            'scope': 'ordered_setup_boundaries; backend phases are nested in preflight_to_backend',
+            'scope': ('ordered_setup_boundaries; backend phases are nested in '
+                      'dashboard_ready_to_backend_ready'),
             'phases': phases,
             'backend_phases': backend_phases,
         }

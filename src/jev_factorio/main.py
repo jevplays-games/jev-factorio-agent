@@ -103,6 +103,89 @@ def _checkpoint_capture_matches(path: Path, captured: bytes) -> bool:
     return Path(path).read_bytes() == captured
 
 
+def _bind_resume_checkpoint_capture(loop_type, checkpoint_path: Path, captured: bytes):
+    """Bind the selected checkpoint bytes through composed construction and restore.
+
+    CLI preflight and the controller's lazy first restore are separated by writer,
+    backend, and composed-controller construction. Keep the selected bytes and
+    original composed memory type together until that first restore succeeds;
+    a replacement on disk must not become a different controller's state.
+    """
+    from .memory import load_checkpoint_bytes
+
+    checkpoint_path = Path(checkpoint_path)
+    selected_memory_type = loop_type.memory_type
+    state = {"restored": False, "first_save_pending": False}
+
+    class CapturedMemory(selected_memory_type):
+        @classmethod
+        def from_bytes(cls, raw, session_id: str, target: str):
+            if not state["restored"] and raw != captured:
+                raise ValueError("Checkpoint differs from the selected CLI capture")
+            return super(CapturedMemory, cls).from_bytes(raw, session_id, target)
+
+        @classmethod
+        def load(cls, path: Path, session_id: str, target: str):
+            if state["restored"]:
+                return super(CapturedMemory, cls).load(path, session_id, target)
+            selected_path = Path(path)
+            if selected_path != checkpoint_path:
+                raise ValueError("Controller restore path differs from the selected checkpoint")
+            if selected_path.read_bytes() != captured:
+                raise ValueError("Checkpoint changed after selected CLI preflight")
+            memory = load_checkpoint_bytes(
+                captured, session_id, target,
+                checkpoint_path=selected_path, memory_type=cls)
+            try:
+                if selected_path.read_bytes() != captured:
+                    raise ValueError("Checkpoint changed during selected controller restore")
+            except BaseException:
+                archive_index = getattr(memory, "_blocked_recovery_archive_index", None)
+                if archive_index is not None:
+                    archive_index.close()
+                raise
+            return memory
+
+        def save(self, path: Path | None) -> None:
+            if state["first_save_pending"]:
+                selected_path = Path(path) if path is not None else None
+                if (selected_path != checkpoint_path
+                        or selected_path.read_bytes() != captured):
+                    raise ValueError("Checkpoint changed before the first resumed controller write")
+                state["first_save_pending"] = False
+            return super(CapturedMemory, self).save(path)
+
+    class CapturedLoop(loop_type):
+        memory_type = CapturedMemory
+
+        def _initial_memory(self, snapshot):
+            if state["restored"]:
+                return super(CapturedLoop, self)._initial_memory(snapshot)
+            memory = super(CapturedLoop, self)._initial_memory(snapshot)
+            try:
+                if checkpoint_path.read_bytes() != captured:
+                    raise ValueError("Checkpoint changed before selected restore completed")
+            except BaseException:
+                archive_index = getattr(memory, "_blocked_recovery_archive_index", None)
+                if archive_index is not None:
+                    archive_index.close()
+                raise
+            state["restored"] = True
+            state["first_save_pending"] = True
+            return memory
+
+    CapturedLoop.__name__ = f"Captured{loop_type.__name__}"
+    CapturedLoop.__qualname__ = CapturedLoop.__name__
+    CapturedLoop.__module__ = loop_type.__module__
+    return CapturedLoop
+
+
+def _suppress_unstarted_dashboard_boundary(writer) -> None:
+    """Do not emit a lone run_finished row if setup failed before attach()."""
+    if writer is not None and getattr(writer, "seq", 0) == 0:
+        writer.disabled = True
+
+
 def _preflight_sync_async_rollback(path: Path, target: str) -> bytes:
     """Reject sync resume while this checkpoint still owns async decision work.
 
@@ -877,6 +960,7 @@ def cli() -> None:
             treatment_sha256=treatment_digest,
         )
     setup_timing = None
+    register_setup_timing = None
     if args.setup_timing_file or args.profile_latency:
         target = args.setup_timing_file.absolute() if args.setup_timing_file else None
         if target is not None and (
@@ -885,31 +969,20 @@ def cli() -> None:
                        for other in (args.checkpoint, args.log_file, args.dashboard_events))):
             p.error("Setup timing output must be a new separate file in an existing directory")
         from .setup_timing import SetupTiming
-        if target is not None:
-            import atexit
         setup_timing = SetupTiming(target, backend_expected=args.backend == 'fle')
         if target is not None:
-            atexit.register(setup_timing.write)
+            def register_setup_timing_writer():
+                import atexit
+                atexit.register(setup_timing.write)
+            register_setup_timing = register_setup_timing_writer
         setup_timing.mark('setup_start')
     with ExitStack() as cleanup:
+        # Keep telemetry contexts nested so a newly created async provider is
+        # still closed before either run writer seals its admitted lifecycle.
+        # Rejected preflight exits this empty stack without creating boundaries.
+        telemetry_cleanup = cleanup.enter_context(ExitStack())
         research = None
-        if run_dir is not None:
-            try:
-                research = cleanup.enter_context(ResearchLog(run_dir, configuration))
-            except (OSError, ValueError) as error:
-                p.error(f"Cannot initialize research evidence ({type(error).__name__}); backend not started")
-        if setup_timing:
-            setup_timing.mark('research_ready')
         writer = None
-        if args.dashboard_events:
-            from .dashboard import EventWriter
-            try:
-                writer = cleanup.enter_context(EventWriter(
-                    args.dashboard_events, forbidden=(args.checkpoint, args.log_file)))
-            except (OSError, ValueError) as error:
-                p.error(str(error))
-        if setup_timing:
-            setup_timing.mark('dashboard_ready')
         async_close_state = None
         if args.async_decisions:
             from .jev_client import AsyncMockJevClient, make_async_client
@@ -935,6 +1008,14 @@ def cli() -> None:
 
             cleanup.callback(close_async_provider_before_runner)
         if args.controller == "flat":
+            if register_setup_timing is not None:
+                register_setup_timing()
+            if run_dir is not None:
+                try:
+                    research = telemetry_cleanup.enter_context(
+                        ResearchLog(run_dir, configuration))
+                except (OSError, ValueError) as error:
+                    p.error(f"Cannot initialize research evidence ({type(error).__name__}); backend not started")
             options["research_log"] = research
             connector_witness = (Path(args.checkpoint).with_name(
                 'native-connector-observer-v1.witness.jsonl') if args.checkpoint else None)
@@ -1130,6 +1211,8 @@ def cli() -> None:
                     unchanged = False
                 if not unchanged:
                     p.error("Checkpoint changed after composed preflight; backend not started")
+                loop_type = _bind_resume_checkpoint_capture(
+                    loop_type, Path(args.checkpoint), selected_resume_checkpoint_capture)
             connector_witness = (Path(args.checkpoint).with_name(
                 'native-connector-observer-v1.witness.jsonl') if args.checkpoint else None)
             attachment = {}
@@ -1148,6 +1231,40 @@ def cli() -> None:
                     tracked = checkpoint_background_craft(json.loads(selected_resume_checkpoint_capture))
                     if tracked is not None:
                         attachment['background_craft'] = tracked
+            # The selected composed checkpoint, treatment, source, archive and
+            # client gates above are admission checks. Do not create either run
+            # writer until they all pass: their context entry records lifecycle
+            # boundaries even if no backend step can start.
+            if register_setup_timing is not None:
+                register_setup_timing()
+            if run_dir is not None:
+                try:
+                    research = telemetry_cleanup.enter_context(
+                        ResearchLog(run_dir, configuration))
+                except (OSError, ValueError) as error:
+                    p.error(f"Cannot initialize research evidence ({type(error).__name__}); backend not started")
+            options["research_log"] = research
+            if setup_timing:
+                setup_timing.mark('research_ready')
+            if args.dashboard_events:
+                from .dashboard import EventWriter
+                try:
+                    writer = telemetry_cleanup.enter_context(EventWriter(
+                        args.dashboard_events, forbidden=(args.checkpoint, args.log_file)))
+                except (OSError, ValueError) as error:
+                    p.error(str(error))
+                telemetry_cleanup.callback(_suppress_unstarted_dashboard_boundary, writer)
+                if selected_resume_checkpoint_capture is not None:
+                    try:
+                        unchanged = _checkpoint_capture_matches(
+                            Path(args.checkpoint), selected_resume_checkpoint_capture)
+                    except OSError:
+                        unchanged = False
+                    if not unchanged:
+                        raise RuntimeError(
+                            "Checkpoint changed after composed preflight; backend not started")
+            if setup_timing:
+                setup_timing.mark('dashboard_ready')
             if setup_timing:
                 backend = make_backend(args.backend, resume=args.resume,
                                        adopt_session=args.adopt_session,
