@@ -968,6 +968,32 @@ def _qualified_direct_parent_demand(plan, row, selected, facts) -> bool:
         and witness.get('parent_utility_annotation_is_not_power_start_evidence') is True)
 
 
+def _qualified_direct_parent_objective(plan, row, parents, facts) -> bool:
+    """Version-four objective binding also checks the retained parent document."""
+    if not isinstance(row, dict) or not _qualified_direct_parent_demand(plan, row, parents, facts):
+        return False
+    marker = (plan.materials or {}).get('direct_alternative_to_proposed_outpost')
+    if not isinstance(marker, dict):
+        return False
+    parent = next((p for p in parents if p.id == marker.get('investment_plan_id')), None)
+    purpose = marker.get('parent_purpose')
+    if parent is None or not isinstance(purpose, dict):
+        return False
+    materials = parent.materials or {}
+    witness = row['direct_alternative_parent_demand_start_evidence']
+    return (type(marker.get('schema')) is int and marker['schema'] == 2
+            and type(purpose.get('schema')) is int and purpose['schema'] == 1
+            and marker.get('investment_plan_id') == witness['parent_plan_id']
+            and marker.get('observed_tick') == facts['tick']
+            and purpose.get('observed_tick') == facts['tick']
+            and parent.goal == plan.goal
+            and materials.get('local_objective') == row.get('local_target')
+            and all(purpose.get(key) == materials.get(key) for key in (
+                'local_objective', 'work_intent', 'proposed_outpost_request',
+                'utility_power_prerequisite', 'economics'))
+            and marker.get('proposed_outpost_request') == materials.get('proposed_outpost_request'))
+
+
 def _qualified_utility_lab_dependency(plan, row, local, tick) -> bool:
     if not isinstance(row, dict) or not isinstance(local, dict):
         return False
@@ -1556,7 +1582,8 @@ def _factor_bootstrap_recipes(context):
 
 
 def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
-                   max_candidates: int = 16) -> tuple[dict, dict, list[Plan]]:
+                   max_candidates: int = 16, *,
+                   assessed_purpose_plans=None) -> tuple[dict, dict, list[Plan]]:
     """Bound serialized request bytes, NOT estimated tokens or provider limits."""
     if max_bytes < 1 or not 1 <= max_candidates <= 254:
         raise ValueError("Invalid request budget")
@@ -1632,16 +1659,40 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
         bind_retained_targets = (
             current_contract
             and type(contract.get('candidate_objective_binding')) is int
-            and contract['candidate_objective_binding'] in (2, 3))
+            and contract['candidate_objective_binding'] in (2, 3, 4))
+        bind_direct_parent = (bind_retained_targets
+                              and contract['candidate_objective_binding'] == 4)
+        purpose_plans = list(selected)
+        if bind_direct_parent and assessed_purpose_plans is not None:
+            # Only the durable two-stage assessment supplies this argument.
+            # A rejected investment can explain demand without becoming a choice.
+            purpose_plans += [p for p in assessed_purpose_plans
+                              if p.id not in {candidate.id for candidate in selected}]
+        context.pop('local_objective_parent_plans', None)
         candidate_targets = {}
         if current_contract and isinstance(source_goal, str):
             for plan in selected:
                 target_document = candidate_target_objective(
                     plan, evidence.get(plan.id), tick, source_goal,
                     allow_power_promotion=(bind_retained_targets
-                                           and contract['candidate_objective_binding'] == 3))
+                                           and contract['candidate_objective_binding'] in (3, 4)),
+                    qualified_direct_parent=(bind_direct_parent
+                        and _qualified_direct_parent_objective(
+                            plan, evidence.get(plan.id, {}), purpose_plans, facts)))
                 if target_document is not None:
                     candidate_targets[plan.id] = target_document
+                    if bind_direct_parent:
+                        witness = evidence.get(plan.id, {}).get(
+                            'direct_alternative_parent_demand_start_evidence')
+                        parent_id = witness.get('parent_plan_id') if isinstance(witness, dict) else None
+                        for parent in purpose_plans:
+                            if parent.id == parent_id and parent.id not in context['candidate_plans']:
+                                context.setdefault('local_objective_parent_plans', {})[parent.id] = parent.to_dict()
+        if context.get('local_objective_parent_plans'):
+            context['execution_contract'] += (
+                ' local_objective_parent_plans preserves assessed parent demand as evidence only. '
+                'These parents are not eligible choices or execution permission; '
+                'choose only from candidate_plans.')
         target_identities = {
             json.dumps(target, sort_keys=True, ensure_ascii=False, allow_nan=False)
             for target in candidate_targets.values()
@@ -1911,7 +1962,7 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 "local-target completion, outpost payback, electricity, or research "
                 "completion. Later steps need fresh native checks. A contrary "
                 "current fact can make usefulness unsupported or lower benefit."
-                if _qualified_direct_parent_demand(plan, row, selected, facts) else "")
+                if _qualified_direct_parent_demand(plan, row, purpose_plans, facts) else "")
             if direct_parent_hint:
                 questions['candidate']['instructions'] += (
                     f" For {pointer}:" + direct_parent_hint)
