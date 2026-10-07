@@ -3,6 +3,8 @@
 For strict confidence holds, see [two-stage JEV decisions](TWO_STAGE_JEV.md).
 For repeated stale decisions during unrelated fish movement, see
 [the fish freshness diagnosis and recovery note](FISH_FRESHNESS.md).
+For an optional input route hiding existing serial service, see
+[the input-route service diagnosis](INPUT_ROUTE_SERIAL_SERVICE.md).
 For the October 6 planner cycle and guest-agent access failure, see the
 [incident checklist](RECOVERY_20261006.md).
 
