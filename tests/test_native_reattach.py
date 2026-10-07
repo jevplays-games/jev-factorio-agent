@@ -232,20 +232,29 @@ def test_versioned_probe_rejects_replaced_observer_closure_without_mutation():
         local actor={valid=true,unit_number=17}
         local force={};local surface={}
         actor.force=force;actor.surface=surface
-        local player={connected=true,character=actor,force=force,surface=surface,
-                      cheat_mode=false}
-        game={speed=1,tick_paused=false,get_player=function() return player end}
-        local function callback() end
-        local fair={actor=callback,bind=callback,observe=callback,place=callback,
-                    tick_handler=callback}
-        local launch={schema=1,launch=callback,craft=callback,observer=callback,
-                      transfer=callback}
-        local campaign={launch=launch.launch,craft=launch.craft,
-                        observe=launch.observer,transfer=launch.transfer,
-                        configure=callback,observation_snapshot=callback,
-                        observation_snapshot_v2=callback}
-        jev_fle_runtime={jev_session_id='synthetic-session',agent_characters={[1]=actor},
-                         campaign=campaign,fair=fair,launch_readiness=launch}
+            local player={connected=true,character=actor,force=force,surface=surface,
+                          cheat_mode=false}
+            game={speed=1,tick_paused=false,get_player=function() return player end}
+            local event_handlers={}
+            defines={events={on_script_path_request_finished='path',
+                on_player_mined_entity='mined',on_pre_player_crafted_item='pre',
+                on_player_cancelled_crafting='cancel',on_player_crafted_item='crafted',
+                on_tick='tick'}}
+            script={get_event_handler=function(event) return event_handlers[event] end}
+            local function callback() end
+            local fair={actor=callback,bind=callback,observe=callback,place=callback,
+                        tick_handler=callback,path_handler=callback}
+            local launch={schema=1,launch=callback,craft=callback,observer=callback,
+                          transfer=callback,mined_handler=callback}
+            local campaign={launch=launch.launch,craft=launch.craft,
+                            observe=launch.observer,transfer=launch.transfer,
+                            configure=callback,observation_snapshot=callback,
+                            observation_snapshot_v2=callback}
+            event_handlers[defines.events.on_script_path_request_finished]=fair.path_handler
+            event_handlers[defines.events.on_player_mined_entity]=launch.mined_handler
+            event_handlers[defines.events.on_tick]=fair.tick_handler
+            jev_fle_runtime={jev_session_id='synthetic-session',agent_characters={[1]=actor},
+                             campaign=campaign,fair=fair,launch_readiness=launch}
     ''')
     source = files('jev_factorio').joinpath('lua/factory.lua').read_text()
     marker = prepare_install_command(source)[len(source) + 1:]
