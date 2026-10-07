@@ -48,6 +48,27 @@ alone caused the model's `0.20` response, or guarantee a confident future choice
 No scheduler fallback, candidate removal, threshold change, model reroll, or
 failure-history reset is part of the repair. A `0.20` choice still rejects.
 
+## Saved requests and live recovery
+
+The initial focused checks missed a saved-request compatibility case. Full CI
+caught eight failures: seven expectations of the superseded scope promotion,
+and one historical two-stage request whose questions no longer reconstructed
+exactly. Fresh requests now carry `power_intent_scope: 1` in their selection
+contract. Historical unmarked requests reconstruct their original evidence and
+questions unchanged; this does not reopen a settled refusal or authorize an
+action. Invalid version markers reject. Current requests independently reject
+retained false power evidence. The historical fish-observation fixture and the
+exact V44 rejected choice both validate without rewriting their bytes.
+
+The first V45 decision still held: iron loading won with confidence `0.40`,
+below `0.45`, against an optional input-route build. That refusal is retained.
+The same controller subsequently resumed without another intervention: iron
+loading verified at `19376810`, iron collection at `19381533`, copper loading
+at `19382724`, and copper collection at `19387127`. These receipts demonstrate
+recovery, not uninterrupted operation or completion of the 24-hour requirement.
+The deployed initial source and later compatibility correction must be tracked
+separately; CI success alone does not prove the final source is deployed.
+
 ## Relationship to earlier repairs
 
 - [PR #280](https://github.com/jevplays-games/jev-factorio-agent/pull/280) prepared

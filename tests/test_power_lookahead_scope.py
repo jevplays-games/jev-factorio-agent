@@ -16,6 +16,7 @@ from jev_factorio.planning.decision_support import (
 )
 from jev_factorio.planning.ready_work import ReadyWorkPlanner
 from jev_factorio.skills import Plan
+from jev_factorio import two_stage_decision as protocol
 from jev_factorio.two_stage_decision import NON_LAUNCH_PROJECTION, native_digest
 from test_buffer_component_demand import captured, context
 from test_utility_power_prerequisite_evidence import fixture
@@ -74,6 +75,32 @@ def test_retained_false_promotion_cannot_bypass_the_judgment_consumer():
     assert row['work_scope'] == 'immediate'
     assert row['utility_power_prerequisite_start_evidence'] is not None
     assert not _qualified_utility_power_dependency(plan, row, saved['snapshot']['tick'], source['facts'])
+    # New requests cannot present this retained false witness as current demand.
+    source = deepcopy(source)
+    source['selection_contract']['power_intent_scope'] = 1
+    _, questions, offered = question_batch(source, [plan], max_bytes=48000)
+    assert offered == [plan]
+    assert "current consumer's native power prerequisite" not in questions[BOILER + '/benefit']['instructions']
+
+
+def test_saved_power_choice_reconstructs_without_rewriting_or_reauthorizing_it():
+    saved = json.loads((Path(__file__).parent / 'fixtures' / FIXTURE).read_bytes())
+    record = saved['saved_decision']
+    original = protocol.encoded(record)
+    assert 'power_intent_scope' not in record['prepared']['context']['selection_contract']
+    protocol.validate(record, record['binding']['session_id'], record['binding']['target'])
+    assert protocol.encoded(record) == original
+    assert record['phase'] == 'settled' and record['outcome'] == 'low_choice_confidence'
+
+
+@pytest.mark.parametrize('marker', [None, True, 0, 2, '1'])
+def test_malformed_power_contract_cannot_use_historical_projection(marker):
+    state, catalog, loop = captured(FIXTURE)
+    plans, source = context(state, catalog, loop)
+    assert source['selection_contract']['power_intent_scope'] == 1
+    source['selection_contract']['power_intent_scope'] = marker
+    with pytest.raises(ValueError, match='Invalid power intent scope contract'):
+        question_batch(source, plans, max_bytes=48000)
 
 
 @pytest.mark.parametrize('intent', [

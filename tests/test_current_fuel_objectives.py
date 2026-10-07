@@ -1,10 +1,11 @@
 """Replay the accepted V33 fuel frontier without native/model calls."""
 from copy import deepcopy
+from dataclasses import replace
 
 import pytest
 
 from jev_factorio.judgments import question_batch, _qualified_utility_power_dependency
-from jev_factorio.planning.decision_support import candidate_target_objective, candidate_evidence
+from jev_factorio.planning.decision_support import candidate_evidence
 from test_buffer_component_demand import captured, context
 
 
@@ -33,30 +34,30 @@ def test_registered_furnace_fuel_retains_its_direct_kit_recipe_purpose():
     assert loop.backend.calls == []
 
 
-def test_current_power_promotion_keeps_its_own_target_under_new_binding():
+def test_future_power_keeps_its_own_target_without_scope_promotion():
     snapshot, _, _, plans, state, _, boiler = frontier()
     row = state['candidate_evidence'][boiler.id]
     assert boiler.materials['work_intent']['scope'] == 'lookahead'
-    assert row['work_scope'] == 'immediate'
-    assert _qualified_utility_power_dependency(boiler, row, snapshot.tick)
+    assert row['work_scope'] == 'lookahead'
+    assert row['utility_power_prerequisite_start_evidence'] is None
+    assert not _qualified_utility_power_dependency(boiler, row, snapshot.tick)
     before = deepcopy(state)
     packet, questions, offered = question_batch(state, plans, max_bytes=48000)
     assert boiler in offered
     assert packet['local_objective']['candidate_targets'][boiler.id] == boiler.materials['local_objective']
     assert 'unavailable for this candidate' not in questions[boiler.id+'/benefit']['instructions']
     assert state == before
-    # Version two must reproduce the already-saved exclusion without rewriting it.
-    legacy = deepcopy(state)
-    legacy['selection_contract']['candidate_objective_binding'] = 2
-    packet, questions, _ = question_batch(legacy, plans, max_bytes=48000)
-    assert boiler.id not in packet['local_objective']['candidate_targets']
-    assert 'unavailable for this candidate' in questions[boiler.id+'/benefit']['instructions']
+    assert "current consumer's native power prerequisite" not in questions[boiler.id+'/benefit']['instructions']
 
 
 @pytest.mark.parametrize('change', ['tick', 'unit', 'receipt', 'paid', 'connections', 'scope_only'])
-def test_scope_promotion_requires_the_existing_action_bound_power_witness(change):
-    snapshot, _, _, _, state, _, boiler = frontier()
-    row = deepcopy(state['candidate_evidence'][boiler.id])
+def test_current_power_requires_the_existing_action_bound_power_witness(change):
+    snapshot, catalog, _, _, _, _, boiler = frontier()
+    # Qualify a current intent independently of the captured forecast intent.
+    boiler = replace(boiler, materials={**boiler.materials,
+        'work_intent': {'scope': 'immediate', 'observed_tick': snapshot.tick}})
+    row = candidate_evidence(snapshot, catalog, [boiler])[boiler.id]
+    assert _qualified_utility_power_dependency(boiler, row, snapshot.tick)
     proof = row['utility_power_prerequisite_start_evidence']
     if change == 'tick': proof['observed_tick'] -= 1
     elif change == 'unit': proof['consumer_unit'] += 1
@@ -64,8 +65,7 @@ def test_scope_promotion_requires_the_existing_action_bound_power_witness(change
     elif change == 'paid': proof['paid_inventory_sufficient_now'] = False
     elif change == 'connections': proof['connections_current']['boiler_to_engine_steam'] = False
     else: row['utility_power_prerequisite_start_evidence'] = None
-    assert candidate_target_objective(boiler, row, snapshot.tick, boiler.goal,
-                                      allow_power_promotion=True) is None
+    assert not _qualified_utility_power_dependency(boiler, row, snapshot.tick)
 
 
 @pytest.mark.parametrize('change', ['owned_conflict', 'recipe', 'local_satisfied', 'malformed_zero',
