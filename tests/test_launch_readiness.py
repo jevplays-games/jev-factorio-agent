@@ -118,6 +118,8 @@ def test_exact_receipt_required_not_inventory_alone():
     data,state=scenario(inventory={'raw-fish':1});step=step_for(state,data)
     row=state.factory['launch_readiness'];row['silo']['cargo']={'raw-fish':1}
     assert not step.satisfied(state)
+    row['attempts']['load']={'receipt':step.parameters['receipt'],'silo_unit':30,'rocket_unit':31,
+        'item':'raw-fish','tick':state.tick}
     row['receipts'][step.parameters['receipt']]={'kind':'load','session_id':state.session_id,'actor_unit':10,
         'tick':state.tick,'quantity':1,'item':'raw-fish','silo_unit':30,'rocket_unit':31}
     assert step.satisfied(state)
@@ -286,6 +288,8 @@ def test_backend_pad_walks_and_uses_native_receipt_in_one_build_rpc():
     calls=[]
     class Native:
         backend=SimpleNamespace(_fair=SimpleNamespace(approach=lambda p,n:calls.append(('approach',p.x,p.y,n))))
+        def require_launch_reconciliation(self):
+            return None
         def call(self, function, parameters):
             calls.append((function,dict(parameters)))
             return '{"name":"cargo-landing-pad","position":{"x":2,"y":4}}'
@@ -300,6 +304,7 @@ def test_backend_fish_does_not_walk_or_instantly_mine():
     from jev_factorio.backends.launch_readiness import execute
     calls=[]
     native=SimpleNamespace(call=lambda *args:calls.append(args),
+        require_launch_reconciliation=lambda:None,
         backend=SimpleNamespace(_fair=SimpleNamespace(wait=lambda **kwargs:calls.append(('wait',kwargs)))))
     execute(native,'factory_launch_fish',{'target':'fish:1','receipt':'f1'})
     assert [c[0] for c in calls]==['begin_launch_fish','wait']
@@ -359,9 +364,11 @@ def test_controller_restart_reconciles_exact_receipt_after_lost_ack_without_dupl
             elif action=='load':
                 state.inventory['raw-fish']-=1;row['silo']['cargo']={'raw-fish':1}
                 row['receipts'][p['receipt']]={**base,'item':p['item'],'silo_unit':30,'rocket_unit':31,'quantity':1}
+                row['attempts'][action]={'receipt':p['receipt'],'silo_unit':30,'rocket_unit':31,
+                    'item':p['item'],'tick':state.tick}
             else:
                 state.victory=True;state.victory_source='native:base-game-rocket-launch'
-            row['attempts'][action]={'tick':state.tick}
+            if action!='load':row['attempts'][action]={'tick':state.tick}
             raise TimeoutError('Synthetic lost native acknowledgment')
     backend=Backend()
     def make(resume):

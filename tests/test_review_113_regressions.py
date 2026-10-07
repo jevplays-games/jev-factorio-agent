@@ -124,7 +124,8 @@ def test_every_paid_adapter_decode_has_one_span_and_preserves_order(monkeypatch,
     def call(operation, *values):
         events.append(operation)
         return result
-    native = NS(call=call, backend=NS(_fair=NS(approach=lambda *args: events.append('approach'))))
+    native = NS(call=call, backend=NS(_fair=NS(approach=lambda *args: events.append('approach'))),
+                require_launch_reconciliation=lambda: events.append('reconcile'))
     if kind:
         adapter = kind.__new__(kind)
         adapter.native = native
@@ -139,10 +140,39 @@ def test_every_paid_adapter_decode_has_one_span_and_preserves_order(monkeypatch,
                 execute(action, args)
         else:
             execute(action, args)
-    assert events == ([prepare] if malformed else [prepare, 'approach', build])
+    expected = [prepare] if malformed else [prepare, 'approach', build]
+    if case[0] == 'launch':
+        expected.insert(0, 'reconcile')
+    assert events == expected
     assert ledger.rows.get('native_decode', {}).get('calls') == 1
     assert ledger.rows['native_decode']['failed'] == int(malformed)
     assert 'private' not in json.dumps(ledger.snapshot(1, 'error' if malformed else 'returned'))
+
+
+def test_launch_reconciliation_rejection_precedes_rpc_and_native_decode(monkeypatch):
+    monkeypatch.setitem(sys.modules, 'fle.env', NS(Position=NS))
+    events = []
+
+    def call(operation, *values):
+        events.append(operation)
+        return json.dumps({'name': 'cargo-landing-pad', 'position': {'x': 1, 'y': 2}})
+
+    def reject_reconciliation():
+        events.append('reconcile')
+        raise RuntimeError('retained load receipt is unresolved')
+
+    native = NS(
+        call=call,
+        backend=NS(_fair=NS(approach=lambda *args: events.append('approach'))),
+        require_launch_reconciliation=reject_reconciliation,
+    )
+    with recording() as ledger:
+        with pytest.raises(RuntimeError, match='retained load receipt is unresolved'):
+            launch_readiness.execute(
+                native, 'factory_launch_pad', {'site': 's1', 'receipt': 'r1'})
+
+    assert events == ['reconcile']
+    assert ledger.rows.get('native_decode', {}).get('calls', 0) == 0
 
 
 @pytest.mark.parametrize('corridor', [False, True])

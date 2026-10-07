@@ -81,6 +81,65 @@ def payload(silo: dict) -> str | None:
     return next((item for item in PAYLOADS if type(cargo.get(item)) is int and cargo[item] == 1), None)
 
 
+def load_reconciled(snapshot, row: dict | None = None) -> bool:
+    """Bind retained paid-load history to its exact current cargo receipt.
+
+    A legacy observation may contain an already-loaded payload without a load
+    attempt. Once the producer records an attempt, however, only its matching
+    receipt from the same session/actor/tick and same silo/rocket/item proves
+    that this payload transfer completed. The Lua producer does not emit a
+    separate source identifier or cryptographic attestation, so this validates
+    only the producer's existing typed envelope.
+    """
+    try:
+        row = evidence(snapshot) if row is None else row
+        attempts, receipts = row['attempts'], row['receipts']
+        if not isinstance(attempts, dict) or not isinstance(receipts, dict):
+            return False
+        load_receipts = [(key, value) for key, value in receipts.items()
+                         if isinstance(value, dict) and value.get('kind') == 'load']
+        if 'load' not in attempts:
+            return not load_receipts
+
+        attempt = attempts['load']
+        attempt_fields = {'receipt', 'silo_unit', 'rocket_unit', 'item', 'tick'}
+        if (not isinstance(attempt, dict) or set(attempt) != attempt_fields
+                or not text(attempt.get('receipt'))
+                or not integer(attempt.get('silo_unit'), 1)
+                or not integer(attempt.get('rocket_unit'), 1)
+                or attempt.get('item') not in PAYLOADS
+                or not integer(attempt.get('tick'))):
+            return False
+        if len(load_receipts) != 1 or load_receipts[0][0] != attempt['receipt']:
+            return False
+
+        receipt = receipts.get(attempt['receipt'])
+        receipt_fields = {'kind', 'session_id', 'actor_unit', 'tick', 'item', 'quantity',
+                          'silo_unit', 'rocket_unit'}
+        silo = row.get('silo')
+        item = payload(silo) if isinstance(silo, dict) else None
+        if (not isinstance(receipt, dict) or set(receipt) != receipt_fields
+                or receipt.get('kind') != 'load'
+                or receipt.get('session_id') != row.get('session_id')
+                or type(receipt.get('actor_unit')) is not int
+                or receipt['actor_unit'] != row.get('actor_unit')
+                or not integer(receipt.get('tick'))
+                or receipt['tick'] != attempt['tick'] or receipt['tick'] > row.get('tick')
+                or receipt.get('item') != attempt['item'] or receipt.get('item') != item
+                or type(receipt.get('quantity')) is not int or receipt['quantity'] != 1
+                or not integer(receipt.get('silo_unit'), 1)
+                or receipt['silo_unit'] != attempt['silo_unit']
+                or not integer(receipt.get('rocket_unit'), 1)
+                or receipt['rocket_unit'] != attempt['rocket_unit']
+                or not isinstance(silo, dict)
+                or silo.get('unit_number') != attempt['silo_unit']
+                or silo.get('rocket_unit') != attempt['rocket_unit']):
+            return False
+        return True
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
 def _reservation_evidence(snapshot) -> dict:
     """Validate current, composed identities before inferring payload ownership.
 
@@ -131,7 +190,8 @@ def ready(snapshot) -> bool:
                 and silo.get('cargo_available') is True and integer(silo.get('rocket_unit'), 1)
                 and silo.get('automatic') is False and payload(silo)
                 and row['pad']['accepts'].get(payload(silo)) is True
-                and not row['attempts'].get('launch'))
+                and not row['attempts'].get('launch')
+                and load_reconciled(snapshot, row))
 
 
 def allowed(action: str, parameters: dict, snapshot) -> bool:
@@ -153,7 +213,7 @@ def allowed(action: str, parameters: dict, snapshot) -> bool:
                     and not payload(row['silo']))
     silo = row['silo']
     return bool(row['pad'] and row['pad']['accepts'].get(parameters['item']) is True
-                and not row['attempts'].get('load') and silo.get('ready') is True
+                and 'load' not in row['attempts'] and silo.get('ready') is True
                 and silo.get('automatic') is False and silo.get('cargo_available') is True
                 and silo.get('unit_number') == parameters['silo_unit']
                 and silo.get('rocket_unit') == parameters['rocket_unit'] and not silo['cargo']
@@ -167,6 +227,8 @@ def satisfied(effect: str, action: str, parameters: dict, snapshot) -> bool:
     try:
         validate(action, parameters)
         row = evidence(snapshot)
+        if effect == 'launch_payload' and not load_reconciled(snapshot, row):
+            return False
         receipt = row['receipts'].get(parameters['receipt'], {})
         if (receipt.get('kind') != kinds[effect][1] or receipt.get('session_id') != snapshot.session_id
                 or type(receipt.get('actor_unit')) is not int or receipt['actor_unit'] != row['actor_unit']

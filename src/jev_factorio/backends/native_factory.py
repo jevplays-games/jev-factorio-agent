@@ -50,6 +50,18 @@ class NativeFactory:
             self.command("do\n" + files("jev_factorio").joinpath("lua/launch_readiness.lua").read_text() + "\nend")
             self.command("storage.campaign.discover()")
 
+    def require_launch_reconciliation(self) -> dict:
+        from .native_attachment import LAUNCH_RECONCILIATION_PROBE, require_launch_reconciliation
+        proof = decode_native(self.command(LAUNCH_RECONCILIATION_PROBE))
+        require_launch_reconciliation(getattr(self.backend, '_native_attachment', None), proof)
+        return proof
+
+    def prepare_launch_reconciliation_upgrade(self) -> str:
+        """Build an explicit legacy-profile command; never send it implicitly."""
+        from .native_attachment import prepare_launch_reconciliation_upgrade_command
+        return prepare_launch_reconciliation_upgrade_command(
+            getattr(self.backend, '_native_attachment', None))
+
     def command(self, script: str) -> str:
         from .native_attachment import prepare_install_command
         script = prepare_install_command(script, getattr(self.backend, '_native_attachment', None))
@@ -62,12 +74,21 @@ class NativeFactory:
         return result or ""
 
     def call(self, function: str, *arguments: Any) -> str:
+        launch_proof = None
+        if function in {"launch", "load_launch_payload", "prepare_launch_pad",
+                        "build_launch_pad", "begin_launch_fish"}:
+            launch_proof = self.require_launch_reconciliation()
         encoded = ", ".join(
             "helpers.json_to_table(" + json.dumps(json.dumps(value, allow_nan=False)) + ")"
             if isinstance(value, (dict, list)) else json.dumps(value, allow_nan=False)
             for value in arguments
         )
-        return self.command(f"storage.campaign.{function}({encoded})")
+        script = f"storage.campaign.{function}({encoded})"
+        if launch_proof is not None:
+            from .native_attachment import launch_reconciliation_call_guard
+            script = ('do\n' + launch_reconciliation_call_guard(launch_proof)
+                      + '\n' + script + '\nend')
+        return self.command(script)
 
     def approach(self, position: Any) -> None:
         self.backend._fair.approach(position)
@@ -401,6 +422,8 @@ class NativeFactory:
                 raise ValueError("Bootstrap transfer does not use the campaign transfer preflight")
             validate_transfer_preflight_context(transfer_preflight)
         from ..launch_readiness import COMMANDS
+        if action == "factory_launch":
+            self.require_launch_reconciliation()
         if action in COMMANDS:
             from .launch_readiness import execute
             return execute(self, action, parameters, trace)

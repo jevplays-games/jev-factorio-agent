@@ -12,6 +12,8 @@ def prerequisite(planner):
     silo = row['silo']
     if row['attempts'].get('launch'):
         return planner._wait('rocket_launched', timeout=18000, identity='launch:submitted')
+    if not contract.load_reconciled(planner.snapshot, row):
+        raise ValueError('Unresolved rocket cargo transfer; retain its original receipt')
     if not row['pad']:
         if row['attempts'].get('pad'):
             raise ValueError('Unresolved landing-pad build; do not repeat placement')

@@ -8,6 +8,7 @@ from ..telemetry import phase
 
 def execute(native, action: str, parameters: dict, trace=None) -> str:
     validate(action, parameters)
+    native.require_launch_reconciliation()
     if action == 'factory_launch_pad':
         with phase('entity_lookup', trace):
             target = decode_native(native.call('prepare_launch_pad', parameters))
