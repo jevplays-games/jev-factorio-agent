@@ -1137,8 +1137,15 @@ def _qualified_power_child(step, row, evidence, tick, facts=None):
             and witness.get('coal_to_transfer') == quantity and witness.get('native_receipt') == receipt)
 
 
-def _qualified_utility_power_dependency(plan, row, tick, facts=None):
+def _qualified_utility_power_dependency(plan, row, tick, facts=None, *, respect_work_intent=True):
     """Give prerequisite guidance only for a current, action-bound witness."""
+    materials = plan.materials or {}
+    if respect_work_intent and 'work_intent' in materials:
+        intent = materials['work_intent']
+        if (not isinstance(intent, dict) or intent.get('scope') != 'immediate'
+                or type(intent.get('observed_tick')) is not int
+                or intent['observed_tick'] != tick):
+            return False
     evidence = row.get('utility_power_prerequisite_start_evidence')
     annotation = (plan.materials or {}).get('utility_power_prerequisite')
     if (len(plan.steps) != 1 or not isinstance(evidence, dict)
@@ -1652,6 +1659,12 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
             and type(contract.get('observed_tick')) is int
             and contract['observed_tick'] == tick
             and contract.get('heuristics_are_not_native_timing_measurements') is True)
+        # Preserve historical request bytes; only freshly versioned requests use
+        # the stricter power-scope projection. A malformed marker is not legacy.
+        power_intent_scope = isinstance(contract, dict) and 'power_intent_scope' in contract
+        if power_intent_scope and (type(contract['power_intent_scope']) is not int
+                or contract['power_intent_scope'] != 1):
+            raise ValueError('Invalid power intent scope contract')
         qualified_shared_parent = _qualified_shared_parent_comparison(
             facts, selected, evidence)
         # Version the projection in saved requests. Unmarked durable decisions
@@ -1676,6 +1689,7 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                     plan, evidence.get(plan.id), tick, source_goal,
                     allow_power_promotion=(bind_retained_targets
                                            and contract['candidate_objective_binding'] in (3, 4)),
+                    respect_power_intent=power_intent_scope,
                     qualified_direct_parent=(bind_direct_parent
                         and _qualified_direct_parent_objective(
                             plan, evidence.get(plan.id, {}), purpose_plans, facts)))
@@ -2575,7 +2589,8 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
                 "Construction still needs the existing native site, "
                 "receipt and fresh postcondition checks. A contrary current "
                 "fact can lower the score."
-                if _qualified_utility_power_dependency(plan, row, tick, facts) else ""
+                if _qualified_utility_power_dependency(
+                    plan, row, tick, facts, respect_work_intent=power_intent_scope) else ""
             )
             fuel = row.get('fuel_prerequisite')
             fuel_step = plan.steps[0] if len(plan.steps) == 1 else None

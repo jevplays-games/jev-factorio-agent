@@ -680,6 +680,16 @@ def _utility_power_prerequisite_start_evidence(
             'observed_tick', 'consumer_role', 'consumer_unit', 'planner_path', 'research'}:
         return None
 
+    # A prerequisite of a forecast consumer is still forecast work. Its live
+    # recipe and connected power chain cannot promote the planner's explicit
+    # lookahead scope to immediate demand. Legacy serial plans omit this field.
+    if 'work_intent' in materials:
+        intent = materials['work_intent']
+        if (not isinstance(intent, dict) or intent.get('scope') != 'immediate'
+                or type(intent.get('observed_tick')) is not int
+                or intent['observed_tick'] != snapshot.tick):
+            return None
+
     tick, session = snapshot.tick, snapshot.session_id
     factory = snapshot.factory
     identity = (session, tick)
@@ -4329,7 +4339,7 @@ def add_current_raw_bill_evidence(snapshot, catalog, plans, rows):
 
 
 def candidate_target_objective(plan, row, tick, goal, *, allow_power_promotion=False,
-                               qualified_direct_parent=False):
+                               qualified_direct_parent=False, respect_power_intent=True):
     """Return a candidate's exact, current local target when its producer binds it."""
     materials = plan.materials if isinstance(plan.materials, dict) else {}
     target = materials.get('local_objective')
@@ -4350,7 +4360,8 @@ def candidate_target_objective(plan, row, tick, goal, *, allow_power_promotion=F
                 and isinstance(row.get('reasons'), list)
                 and 'current_power_consumer_prerequisite' in row.get('reasons', [])):
             from ..judgments import _qualified_utility_power_dependency
-            promoted_power = _qualified_utility_power_dependency(plan, row, tick)
+            promoted_power = _qualified_utility_power_dependency(
+                plan, row, tick, respect_work_intent=respect_power_intent)
         if (not isinstance(target.get('item'), str)
                 or not target['item'] or len(target['item']) > 200
                 or type(target.get('inventory_target')) is not int
@@ -4495,6 +4506,7 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
         'candidate_evidence': evidence,
         'deterministic_ranking': sorted(evidence, key=lambda key: ranking_key(evidence[key])),
         'selection_contract': {'schema': 1, 'observed_tick': snapshot.tick,
+                               'power_intent_scope': 1,
                                **({'candidate_objective_binding': 4} if scoped_frontier else {}),
                                'heuristics_are_not_native_timing_measurements': True},
     }
