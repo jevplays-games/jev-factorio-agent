@@ -4318,7 +4318,8 @@ def add_current_raw_bill_evidence(snapshot, catalog, plans, rows):
         }
 
 
-def candidate_target_objective(plan, row, tick, goal, *, allow_power_promotion=False):
+def candidate_target_objective(plan, row, tick, goal, *, allow_power_promotion=False,
+                               qualified_direct_parent=False):
     """Return a candidate's exact, current local target when its producer binds it."""
     materials = plan.materials if isinstance(plan.materials, dict) else {}
     target = materials.get('local_objective')
@@ -4348,7 +4349,7 @@ def candidate_target_objective(plan, row, tick, goal, *, allow_power_promotion=F
                     and row.get('work_scope') != 'immediate')
                 or (intent['scope'] == 'lookahead'
                     and row.get('work_scope') not in {'lookahead', 'shared_prerequisite'}
-                    and not promoted_power)):
+                    and not promoted_power and not qualified_direct_parent)):
             return None
         return deepcopy(target)
     if set(target) != {
@@ -4448,9 +4449,13 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
             "travel, lab power, and research completion remain unverified and require "
             "the existing native action and later observations.")
     candidate_targets = {}
+    from ..judgments import _qualified_direct_parent_objective
     for plan in plans:
         target = candidate_target_objective(
-            plan, evidence.get(plan.id), snapshot.tick, goal, allow_power_promotion=True)
+            plan, evidence.get(plan.id), snapshot.tick, goal, allow_power_promotion=True,
+            qualified_direct_parent=_qualified_direct_parent_objective(
+                plan, evidence.get(plan.id, {}), plans,
+                {'tick': snapshot.tick, 'session_id': snapshot.session_id}))
         if target is not None:
             candidate_targets[plan.id] = target
     target_identities = {
@@ -4480,6 +4485,6 @@ def scheduling_context(snapshot, catalog, plans, goal: str) -> dict:
         'candidate_evidence': evidence,
         'deterministic_ranking': sorted(evidence, key=lambda key: ranking_key(evidence[key])),
         'selection_contract': {'schema': 1, 'observed_tick': snapshot.tick,
-                               **({'candidate_objective_binding': 3} if scoped_frontier else {}),
+                               **({'candidate_objective_binding': 4} if scoped_frontier else {}),
                                'heuristics_are_not_native_timing_measurements': True},
     }
