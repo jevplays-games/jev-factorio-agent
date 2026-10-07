@@ -1139,6 +1139,13 @@ def _qualified_power_child(step, row, evidence, tick, facts=None):
 
 def _qualified_utility_power_dependency(plan, row, tick, facts=None):
     """Give prerequisite guidance only for a current, action-bound witness."""
+    materials = plan.materials or {}
+    if 'work_intent' in materials:
+        intent = materials['work_intent']
+        if (not isinstance(intent, dict) or intent.get('scope') != 'immediate'
+                or type(intent.get('observed_tick')) is not int
+                or intent['observed_tick'] != tick):
+            return False
     evidence = row.get('utility_power_prerequisite_start_evidence')
     annotation = (plan.materials or {}).get('utility_power_prerequisite')
     if (len(plan.steps) != 1 or not isinstance(evidence, dict)
