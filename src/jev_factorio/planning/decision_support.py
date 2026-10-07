@@ -3182,12 +3182,22 @@ def _candidate_local_raw_demand(snapshot, catalog, plans, plan, rows):
         return None
     try:
         from .input_routes import InputRoutePlanner
-        matches = [candidate for candidate in InputRoutePlanner(
-            catalog, snapshot, plan.goal).candidates()
-            if candidate.id == plan.id and candidate.steps == plan.steps
-            and all((candidate.materials or {}).get(key) == (plan.materials or {}).get(key)
-                    for key in ("local_objective", "raw_prerequisite", "work_intent", "shortages", "batches"))]
-        if len(matches) != 1:
+        derived = None
+        # Match the same ordinary-work mode as the current kit-purpose
+        # validator. Exhausted capital proposals can make the controller use
+        # this mode without changing any native plan or failure budget.
+        for ordinary in (False, True):
+            planner = InputRoutePlanner(catalog, snapshot, plan.goal)
+            planner._economic_acquiring = ordinary
+            matches = [candidate for candidate in planner.candidates()
+                if candidate.id == plan.id and candidate.steps == plan.steps
+                and all((candidate.materials or {}).get(key) == (plan.materials or {}).get(key)
+                        for key in ("local_objective", "raw_prerequisite", "work_intent",
+                                    "shortages", "batches"))]
+            if len(matches) == 1:
+                derived = matches[0]
+                break
+        if derived is None:
             return None
     except (KeyError, TypeError, ValueError, AttributeError):
         return None
