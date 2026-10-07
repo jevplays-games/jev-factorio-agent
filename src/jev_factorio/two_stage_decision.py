@@ -120,7 +120,7 @@ def choice_request(record):
     # Build the complete qualified set, then bound the actual choice-only wire.
     context, questions, offered = question_batch(
         prepared["context"], qualified, max_bytes=MAX_RECORD_BYTES,
-        max_candidates=len(qualified))
+        max_candidates=len(qualified), assessed_purpose_plans=plans)
     if len(offered) != len(qualified):
         raise ValueError("Qualified choice cannot preserve every approved candidate")
     assessments = {}
