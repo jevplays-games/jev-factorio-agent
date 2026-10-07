@@ -179,6 +179,10 @@ streaming state, audio activity/settings, browser-source configuration and the
 dashboard's campaign identity, source timestamp and supervisor phase. A local
 selection or successful dashboard HTTP request is insufficient visual proof.
 
+For reset stream counters, RTMP reconnects, and logs spanning several days, use
+[the stream-continuity procedure](OBS_STREAM_CONTINUITY.md). Keep outbound
+broadcast continuity and useful native gameplay evidence distinct.
+
 ## Observed recovery on 2026-09-27 UTC
 
 This is a sanitized incident record, not a reusable command or an automatic
