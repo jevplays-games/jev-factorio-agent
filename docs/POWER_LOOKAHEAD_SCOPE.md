@@ -60,6 +60,11 @@ action. Invalid version markers reject. Current requests independently reject
 retained false power evidence. The historical fish-observation fixture and the
 exact V44 rejected choice both validate without rewriting their bytes.
 
+The version marker identifies the request format, not the quality of its native
+evidence. Missing or stale facts still follow the existing candidate refusal
+path. They must not raise a format error that obscures the actual rejection;
+only an unsupported or malformed version marker does that.
+
 The first V45 decision still held: iron loading won with confidence `0.40`,
 below `0.45`, against an optional input-route build. That refusal is retained.
 The same controller subsequently resumed without another intervention: iron
