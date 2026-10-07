@@ -83,7 +83,7 @@ def test_real_controller_uses_same_projection_for_requests_and_phase_checks(
     else:
         assert backend.actions[0] == 'walk_to_coal' and len(client.calls) == 2
         for state, _ in client.calls:
-            assert state['native_freshness_projection'] == protocol.NATIVE_PROJECTION
+            assert state['native_freshness_projection'] == protocol.NON_LAUNCH_PROJECTION
             boiler = state['facts']['factory']['entities']['utility:boiler']
             assert 'fluids' not in boiler and boiler['fluid_presence']['steam'] is True
 

@@ -1,6 +1,8 @@
 # Status checks, recovery, and the live overlay
 
 For strict confidence holds, see [two-stage JEV decisions](TWO_STAGE_JEV.md).
+For repeated stale decisions during unrelated fish movement, see
+[the fish freshness diagnosis and recovery note](FISH_FRESHNESS.md).
 For the October 6 planner cycle and guest-agent access failure, see the
 [incident checklist](RECOVERY_20261006.md).
 
