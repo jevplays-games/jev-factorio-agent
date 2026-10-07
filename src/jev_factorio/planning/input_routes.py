@@ -75,7 +75,14 @@ class InputRoutePlanner(OutputBufferPlanner):
             worker._defer_proposed_input_route = True
             worker._economic_acquiring = getattr(self, '_economic_acquiring', False)
             alternatives = super(InputRoutePlanner, worker).candidates()
-            if not worker._buffer_service:
+            if worker._buffer_service:
+                # Deferring an optional route can expose a serial prerequisite
+                # of the ordinary production path, such as refuelling its paid
+                # output arm. Preserve that entire serial frontier; discarding
+                # it leaves the unstarted proposal hiding the required service.
+                # Do not merge the proposal or speculative work into this path.
+                plans = alternatives
+            else:
                 # A ready optional build must not let old lookahead candidates
                 # fill the frontier before its ordinary production alternative.
                 unique = {plan.id: plan for plan in (plans[:1] if proposed_build else plans)}
