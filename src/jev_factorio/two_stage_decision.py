@@ -21,6 +21,7 @@ from .skills import Plan
 
 PROTOCOL = "jev-assess-then-choose-v1"
 NATIVE_PROJECTION = "boiler-fluid-presence-v1"
+NON_LAUNCH_PROJECTION = "boiler-fluid-presence-non-launch-fish-v2"
 MAX_RECORD_BYTES = 1_048_576
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _PHASES = {"assessment_ready", "assessment_pending", "assessment_received",
@@ -39,18 +40,38 @@ def digest(value):
     return hashlib.sha256(encoded(value)).hexdigest()
 
 
+def projection_for_plans(plans):
+    """Retain exact launch observations whenever this frontier uses them."""
+    if not plans or any(
+            step.action.startswith('factory_launch')
+            or step.effect in {'launch_pad', 'launch_fish', 'launch_payload', 'rocket_launched'}
+            for plan in plans for step in plan.steps):
+        return NATIVE_PROJECTION
+    return NON_LAUNCH_PROJECTION
+
+
 def selection_facts(facts, projection=None):
     """Versioned model/freshness projection; native observations stay complete.
 
     Boiler fluid amounts are passive telemetry, not a planner/native action
     quantity predicate. Expose only empty/present stock to both JEV and its
-    freshness check. Identity, ports, fuel, status and all other facts remain.
+    freshness check. V2 also omits the moving fish encounter for frontiers
+    without launch actions. The same projection binds model requests, durable
+    input identities and every fresh-native phase check. Native data stays full.
     """
     if projection is None:
         return facts  # Original saved decisions retain their exact contract.
-    if projection != NATIVE_PROJECTION:
+    if projection not in (NATIVE_PROJECTION, NON_LAUNCH_PROJECTION):
         raise ValueError("Unknown native decision projection")
     result = deepcopy(facts)
+    if projection == NON_LAUNCH_PROJECTION and 'launch_readiness' in result.get('factory', {}):
+        from .launch_readiness import evidence
+        from .state import GameSnapshot
+        # Do not hide malformed, foreign or incomplete native evidence. Other
+        # readiness identities, faults, attempts, cargo and receipts stay exact.
+        evidence(GameSnapshot(session_id=result.get('session_id', ''),
+                              tick=result.get('tick', -1), factory=result['factory']))
+        del result['factory']['launch_readiness']['fish']
     boiler = result.get('factory', {}).get('entities', {}).get('utility:boiler')
     if (not isinstance(boiler, dict) or boiler.get('name') != 'boiler'
             or type(boiler.get('unit_number')) is not int or boiler['unit_number'] <= 0):
@@ -197,8 +218,11 @@ def validate(record, session_id, target):
             or record["prepared_sha256"] != digest({"binding": binding, "prepared": prepared})):
         raise ValueError("Two-stage prepared request identity mismatch")
     plans = [Plan.from_dict(p) for p in prepared["plans"]]
-    if prepared['context'].get('native_freshness_projection') not in (None, NATIVE_PROJECTION):
+    projection = prepared['context'].get('native_freshness_projection')
+    if projection not in (None, NATIVE_PROJECTION, NON_LAUNCH_PROJECTION):
         raise ValueError("Unknown native decision projection")
+    if projection == NON_LAUNCH_PROJECTION and projection_for_plans(plans) != NON_LAUNCH_PROJECTION:
+        raise ValueError("Launch actions require complete native fish evidence")
     ids = [p.id for p in plans]
     inputs = prepared["input_candidate_ids"]
     if (len(set(ids)) != len(ids) or not isinstance(inputs, list)
