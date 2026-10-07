@@ -215,10 +215,10 @@ already followed the correct campaign; no frontend code change was needed.
 These measurements establish that recovery episode only. They do not establish
 a durable fix for short control-lease expiry under scheduling/transport delays,
 nor general automatic reconciliation after a failed approach. The attribution
-and capacity work in [#96](https://github.com/CompleteDotTech/jev-factorio-agent/issues/96)
-and [#97](https://github.com/CompleteDotTech/jev-factorio-agent/issues/97) remains
+and capacity work in [#96](https://github.com/jevplays-games/jev-factorio-agent/issues/96)
+and [#97](https://github.com/jevplays-games/jev-factorio-agent/issues/97) remains
 separate, as does the broader native acceptance in
-[#92](https://github.com/CompleteDotTech/jev-factorio-agent/issues/92).
+[#92](https://github.com/jevplays-games/jev-factorio-agent/issues/92).
 Private raw evidence and incident-specific operational scripts remain outside
 this public repository.
 
@@ -244,7 +244,7 @@ ongoing campaign remains pinned to its original source.
 ### Stale recovery captions after resumed work
 
 The dashboard clears a previous persistent-recovery caption when a fresh
-model_started or ction event arrives. Observations and cycle starts alone
+`model_started` or `action` event arrives. Observations and cycle starts alone
 retain the caption because they do not prove that evaluation or gameplay
 resumed. The original recovery event remains in the log, and a subsequent
 refusal restores its current blocked state. Verify the actual OBS Program
