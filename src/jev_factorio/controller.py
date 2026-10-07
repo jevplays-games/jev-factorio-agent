@@ -1914,10 +1914,11 @@ class HierarchicalLoop(AgentLoop):
                         "ultimate_goal": self.memory.active_goal,
                     }
                 if self.two_stage_decisions:
-                    from .two_stage_decision import PROTOCOL, NATIVE_PROJECTION, selection_facts
+                    from .two_stage_decision import PROTOCOL, projection_for_plans, selection_facts
                     state["decision_protocol"] = PROTOCOL
-                    state['native_freshness_projection'] = NATIVE_PROJECTION
-                    state['facts'] = selection_facts(state['facts'], NATIVE_PROJECTION)
+                    projection = projection_for_plans(plans)
+                    state['native_freshness_projection'] = projection
+                    state['facts'] = selection_facts(state['facts'], projection)
                 # Every resumable Jev selection is write-ahead persisted. Do
                 # not wait for the legacy stalled-decision threshold: a lost
                 # response on the first running request is already ambiguous.
