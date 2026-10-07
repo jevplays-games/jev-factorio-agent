@@ -1662,8 +1662,7 @@ def question_batch(state: dict, plans: list[Plan], max_bytes: int = 32000,
         # Preserve historical request bytes; only freshly versioned requests use
         # the stricter power-scope projection. A malformed marker is not legacy.
         power_intent_scope = isinstance(contract, dict) and 'power_intent_scope' in contract
-        if power_intent_scope and (not current_contract
-                or type(contract['power_intent_scope']) is not int
+        if power_intent_scope and (type(contract['power_intent_scope']) is not int
                 or contract['power_intent_scope'] != 1):
             raise ValueError('Invalid power intent scope contract')
         qualified_shared_parent = _qualified_shared_parent_comparison(
