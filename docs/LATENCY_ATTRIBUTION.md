@@ -28,9 +28,11 @@ The `controller_initialized` event records a startup window and ordered setup
 phases. The startup window runs from the sample immediately before constructing
 the `run_started` event to the sample immediately before constructing the
 `controller_initialized` event. Setup phases divide the
-ordered initialization boundaries; FLE backend phases are nested inside the
-`preflight_ready` to `backend_ready` phase and must not be added to that outer
-phase.
+ordered initialization boundaries. New setup-attribution records place
+`preflight_ready` before research and dashboard writer readiness. FLE backend
+phases are nested inside the `dashboard_ready` to `backend_ready` phase and must
+not be added to that outer phase. The report also accepts the exact historical
+phase order for already sealed version-1 records.
 
 Each `model_response` after the first can include an `inter_request_timing`
 window. The report first verifies that each request and response form one

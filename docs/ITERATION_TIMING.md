@@ -56,23 +56,30 @@ shutdown outside a decorated step are not relabeled as iteration work.
 
 For a reviewed one-step diagnostic run, `--setup-timing-file NEW_FILE` writes a
 separate content-free `jev.setup-timing.v1` result at process exit. Ordered
-wall/process-CPU cuts partition setup from the start of the research context
-through research/dashboard readiness, composed preflight, FLE backend attachment
-and native installation readback, controller construction, output attachment and
-the `controller_initialized` event. Missing cuts or regressing clocks yield a
-partial result. The file is exclusive and diagnostic only; failure to write it
-does not change action or checkpoint outcomes. It contains no commands, paths,
+wall/process-CPU cuts partition setup from before selected-checkpoint preflight
+through preflight completion, research/dashboard writer readiness, FLE backend
+attachment and native installation readback, controller construction, output
+attachment and the `controller_initialized` event. Preflight is recorded before
+writer readiness because rejected preflight must not enter either run writer.
+Missing cuts or regressing clocks yield a partial result. The file is exclusive
+and diagnostic only; failure to write it does not change action or checkpoint
+outcomes. It contains no commands, paths,
 session IDs or native response data. It also publishes the final completed
 one-step timing ledger when profiling is enabled, with the following gap marked
 unknown. This does not add a final gameplay record or infer an unobserved sleep.
+New `jev.setup-attribution.v1` records use the preflight-first phase order. The
+offline latency report continues to accept the exact historical phase order for
+already sealed version-1 runs; it rejects mixed or reordered phase sequences.
 Setup intervals still do not separate native server time from RCON transport or
 guest scheduling pressure.
 The setup record ends at `controller_initialized`; it does not measure later
 step, post-step sleep, teardown or its own exit-time encoding and file sync.
 On FLE runs a nested backend partition separates instance construction and
 session checks, installed-campaign readback, and fair-action adapter setup;
-these backend rows sit inside the outer preflight-to-backend interval and must
-not be added to it. No command or native result content is recorded.
+these backend rows sit inside the `dashboard_ready` to `backend_ready` phase and
+must not be added to that phase. This phase follows the research and dashboard
+writer-readiness phases after preflight. No command or native result content is
+recorded.
 
 Native command, batch and JSON-decode spans wrap the actual public adapter/client
 path. A depth guard counts one **logical client call** across nested

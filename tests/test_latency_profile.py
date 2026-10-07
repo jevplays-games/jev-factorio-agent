@@ -9,7 +9,7 @@ from jev_factorio.causal_trace import CausalTrace
 from jev_factorio.iteration_timing import profiled_iteration
 from jev_factorio.latency_report import _validate_setup_attribution, analyze
 from jev_factorio.research_log import ResearchLog, RunConfiguration, verify_run
-from jev_factorio.setup_timing import STAGES, SetupTiming
+from jev_factorio.setup_timing import LEGACY_SETUP_STAGES, STAGES, SetupTiming
 from jev_factorio.timing_attribution import elapsed_clocks
 
 
@@ -62,7 +62,7 @@ def test_setup_profile_has_thread_cpu_and_nested_backend_scope():
                          thread_clock=lambda: next(threads))
     for stage in STAGES:
         timing.mark(stage)
-        if stage == 'preflight_ready':
+        if stage == 'dashboard_ready':
             for backend_stage in ('attach_start', 'instance_ready', 'installation_ready', 'fair_ready'):
                 timing.mark_backend(backend_stage)
 
@@ -70,11 +70,13 @@ def test_setup_profile_has_thread_cpu_and_nested_backend_scope():
     assert result['status'] == 'complete'
     assert result['clocks']['thread_cpu'] == 'thread_time_ns'
     for row in result['phases']:
-        expected = (50, 20, 5) if row['from'] == 'preflight_ready' else (10, 4, 1)
+        expected = (50, 20, 5) if row['from'] == 'dashboard_ready' else (10, 4, 1)
         assert (row['wall_ns'], row['process_cpu_ns'], row['thread_cpu_ns']) == expected
     assert all((row['wall_ns'], row['process_cpu_ns'], row['thread_cpu_ns']) == (10, 4, 1)
                for row in result['backend_phases'])
-    assert result['scope'] == 'ordered_setup_boundaries; backend phases are nested in preflight_to_backend'
+    assert result['scope'] == (
+        'ordered_setup_boundaries; backend phases are nested in '
+        'dashboard_ready_to_backend_ready')
 
 
 def test_partial_setup_clock_failure_keeps_only_verified_phase_prefix():
@@ -98,8 +100,55 @@ def test_partial_setup_clock_failure_keeps_only_verified_phase_prefix():
     result = timing.profile_result()
     assert result['status'] == 'partial'
     assert [(row['from'], row['to']) for row in result['phases']] == [
-        ('setup_start', 'research_ready'), ('research_ready', 'dashboard_ready')]
+        ('setup_start', 'preflight_ready'), ('preflight_ready', 'research_ready')]
     assert _validate_setup_attribution(result, backend='mock') == result
+
+
+def test_setup_attribution_v1_accepts_exact_historical_phase_order():
+    phases = [
+        {'from': start, 'to': end, 'wall_ns': 10, 'process_cpu_ns': 3,
+         'thread_cpu_ns': None}
+        for start, end in zip(LEGACY_SETUP_STAGES, LEGACY_SETUP_STAGES[1:])
+    ]
+    historical = {
+        'schema': 'jev.setup-attribution.v1',
+        'status': 'complete',
+        'clocks': {'wall': 'perf_counter_ns', 'process_cpu': 'process_time_ns',
+                   'thread_cpu': None},
+        'scope': 'ordered_setup_boundaries; backend phases are nested in preflight_to_backend',
+        'phases': phases,
+        'backend_phases': [],
+    }
+
+    assert _validate_setup_attribution(historical, backend='mock') == historical
+
+    historical_partial = {**historical, 'status': 'partial', 'phases': phases[:2]}
+    assert (_validate_setup_attribution(historical_partial, backend='mock')
+            == historical_partial)
+
+
+@pytest.mark.parametrize('mutation', ['mixed', 'reordered', 'wrong_scope'])
+def test_setup_attribution_v1_rejects_mixed_reordered_or_mismatched_scope(mutation):
+    timing = SetupTiming(None)
+    for stage in STAGES:
+        timing.mark(stage)
+    current = timing.profile_result()
+
+    if mutation == 'mixed':
+        current['phases'][1]['from'] = 'research_ready'
+        current['phases'][1]['to'] = 'dashboard_ready'
+    elif mutation == 'wrong_scope':
+        current['scope'] = (
+            'ordered_setup_boundaries; backend phases are nested in preflight_to_backend')
+    else:
+        current['phases'][1], current['phases'][2] = (
+            current['phases'][2], current['phases'][1])
+
+    expected_error = ('Initialization scope disagrees with phase order'
+                      if mutation == 'wrong_scope'
+                      else 'Invalid initialization phase identity')
+    with pytest.raises(ValueError, match=expected_error):
+        _validate_setup_attribution(current, backend='mock')
 
 
 def test_opt_in_cli_profile_records_durable_between_call_window_and_verified_report(

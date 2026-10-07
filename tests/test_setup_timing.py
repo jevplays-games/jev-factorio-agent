@@ -5,7 +5,24 @@ import subprocess
 import sys
 import pytest
 
-from jev_factorio.setup_timing import BACKEND_STAGES, STAGES, SetupTiming
+from jev_factorio.setup_timing import (BACKEND_STAGES, LEGACY_SETUP_STAGES,
+                                       STAGES, SetupTiming)
+
+
+def test_setup_boundaries_follow_preflight_before_run_writer_readiness():
+    assert STAGES == (
+        'setup_start', 'preflight_ready', 'research_ready', 'dashboard_ready',
+        'backend_ready', 'controller_ready', 'outputs_ready', 'initialized',
+    )
+    assert LEGACY_SETUP_STAGES == (
+        'setup_start', 'research_ready', 'dashboard_ready', 'preflight_ready',
+        'backend_ready', 'controller_ready', 'outputs_ready', 'initialized',
+    )
+
+    timing = SetupTiming(None)
+    for stage in LEGACY_SETUP_STAGES:
+        timing.mark(stage)
+    assert timing.result()['status'] == 'partial'
 
 
 def test_setup_boundaries_are_ordered_nonoverlapping_and_content_free(tmp_path):
@@ -45,13 +62,13 @@ def test_fle_backend_subphases_are_nested_without_counting_them_twice(tmp_path):
                          cpu_clock=lambda: next(cpus))
     for stage in STAGES:
         timing.mark(stage)
-        if stage == 'preflight_ready':
+        if stage == 'dashboard_ready':
             for detail in BACKEND_STAGES:
                 timing.mark_backend(detail)
     data = timing.result()
     assert data['status'] == 'complete'
     assert [row['to'] for row in data['backend_phases']] == list(BACKEND_STAGES[1:])
-    outer = next(row for row in data['phases'] if row['from'] == 'preflight_ready')
+    outer = next(row for row in data['phases'] if row['from'] == 'dashboard_ready')
     assert sum(row['wall_ns'] for row in data['backend_phases']) <= outer['wall_ns']
 
 
@@ -107,4 +124,7 @@ def test_failed_research_setup_publishes_partial_without_starting_step(tmp_path)
     data = json.loads(result.read_text())
     assert data['status'] == 'partial'
     assert data['final_iteration'] is None
-    assert data['phases'] == []
+    assert [(row['from'], row['to']) for row in data['phases']] == [
+        ('setup_start', 'preflight_ready')]
+    assert all(row['wall_ns'] >= 0 and row['process_cpu_ns'] >= 0
+               for row in data['phases'])
