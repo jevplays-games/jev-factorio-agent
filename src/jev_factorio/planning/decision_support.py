@@ -680,6 +680,16 @@ def _utility_power_prerequisite_start_evidence(
             'observed_tick', 'consumer_role', 'consumer_unit', 'planner_path', 'research'}:
         return None
 
+    # A prerequisite of a forecast consumer is still forecast work. Its live
+    # recipe and connected power chain cannot promote the planner's explicit
+    # lookahead scope to immediate demand. Legacy serial plans omit this field.
+    if 'work_intent' in materials:
+        intent = materials['work_intent']
+        if (not isinstance(intent, dict) or intent.get('scope') != 'immediate'
+                or type(intent.get('observed_tick')) is not int
+                or intent['observed_tick'] != snapshot.tick):
+            return None
+
     tick, session = snapshot.tick, snapshot.session_id
     factory = snapshot.factory
     identity = (session, tick)

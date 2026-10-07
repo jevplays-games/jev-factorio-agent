@@ -7,6 +7,8 @@ For an optional input route hiding existing serial service, see
 [the input-route service diagnosis](INPUT_ROUTE_SERIAL_SERVICE.md).
 For identical kit and production actions losing their immediate purpose, see
 [the shared-service purpose diagnosis](SHARED_SERVICE_PRODUCTION_PURPOSE.md).
+For a boiler lookahead action incorrectly promoted to immediate demand, see
+[the power-scope diagnosis](POWER_LOOKAHEAD_SCOPE.md).
 For the October 6 planner cycle and guest-agent access failure, see the
 [incident checklist](RECOVERY_20261006.md).
 
