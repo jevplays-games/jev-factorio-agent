@@ -3884,6 +3884,11 @@ class HierarchicalLoop(AgentLoop):
         self._save()
         self._trace.observation_phase = "post_recovery_dispatch"
         after = self._observe("post_dispatch_observe")
+        if self._execution_barrier(after):
+            return self._record(
+                snapshot, step.action,
+                str(outcome) + "; pending retained for reconciliation", after,
+            )
         with phase("verification", self._diagnostic_trace):
             verified = self._trace.verify(
                 step, after, plan_id=plan.id, index=self.memory.step_index,
