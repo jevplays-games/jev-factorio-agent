@@ -156,6 +156,74 @@ def research_progress(sample, previous, now):
     return result
 
 
+def smelting_sample(observation, validation, **binding):
+    """Project registered native furnaces from the same accepted event contract."""
+    research_sample(observation, validation, **binding)  # Also validates idle research.
+    factory = observation['payload']['snapshot']['factory']
+    entities = factory.get('entities')
+    if not isinstance(entities, dict):
+        raise ValueError('missing native furnace observations')
+    machines = []
+    for recipe in ('iron-plate', 'copper-plate', 'steel-plate'):
+        role = 'recipe:' + recipe
+        row = entities.get(role)
+        if row is None:
+            continue
+        if (not isinstance(row, dict) or row.get('name') not in {
+                'stone-furnace', 'steel-furnace', 'electric-furnace'}):
+            raise ValueError('invalid registered furnace')
+        # Empty furnaces have no active recipe. Neither idle inventory nor an
+        # unrelated recipe supplies activity credit for this registered role.
+        if row.get('recipe') != recipe:
+            continue
+        machines.append({key: row.get(key) for key in (
+            'unit_number', 'name', 'recipe', 'products_finished', 'crafting')} | {'role': role})
+    return {'observed_tick': factory['tick'],
+            'force_index': factory['acceptance_runtime']['force_index'], 'machines': machines}
+
+
+def smelting_progress(sample, previous, now):
+    """Require a stable furnace identity and increasing native completed batches."""
+    if sample is None:
+        return None
+    if (not isinstance(sample, dict) or type(sample.get('observed_tick')) is not int
+            or sample['observed_tick'] < 0 or type(sample.get('force_index')) is not int
+            or sample['force_index'] < 1 or not isinstance(sample.get('machines'), list)
+            or len(sample['machines']) > 3):
+        raise ValueError('invalid native smelting evidence')
+    old = previous if isinstance(previous, dict) else {}
+    result = {'observed_tick': sample['observed_tick'],
+              'force_index': sample['force_index'], 'machines': []}
+    seen = set()
+    for machine in sample['machines']:
+        if (not isinstance(machine, dict) or type(machine.get('unit_number')) is not int
+                or machine['unit_number'] <= 0 or machine.get('recipe') not in {
+                    'iron-plate', 'copper-plate', 'steel-plate'}
+                or machine.get('role') != 'recipe:' + machine['recipe']
+                or machine.get('name') not in {'stone-furnace', 'steel-furnace', 'electric-furnace'}
+                or type(machine.get('products_finished')) is not int
+                or machine['products_finished'] < 0 or type(machine.get('crafting')) is not bool
+                or machine['role'] in seen or machine['unit_number'] in seen):
+            raise ValueError('invalid native furnace counter')
+        seen.update((machine['role'], machine['unit_number']))
+        identity = ('unit_number', 'role', 'name', 'recipe')
+        prior = next((row for row in old.get('machines', []) if isinstance(row, dict)
+                      and all(row.get(k) == machine[k] for k in identity)), None)
+        row = dict(machine, advanced_at=None)
+        if prior is not None and old.get('force_index') == sample['force_index']:
+            count, tick = prior.get('products_finished'), old.get('observed_tick')
+            if (type(count) is not int or type(tick) is not int
+                    or machine['products_finished'] < count or sample['observed_tick'] < tick
+                    or machine['products_finished'] > count and sample['observed_tick'] == tick):
+                raise ValueError('native furnace counter regressed or changed')
+            stamp = prior.get('advanced_at')
+            if stamp is not None and (not number(stamp) or not 0 <= stamp <= now + 2):
+                raise ValueError('invalid furnace progress time')
+            row['advanced_at'] = now if machine['products_finished'] > count else stamp
+        result['machines'].append(row)
+    return result
+
+
 def completed_progress_sample(checkpoint, owner, *, owner_qualified=False):
     """Project completed work without treating bounded history eviction as loss.
 
@@ -203,7 +271,7 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
               'progress_age_seconds': None, 'blocked_since': None,
               'blocked_age_seconds': None, 'pending': False,
               'automatic_recovery_allowed': False, 'craft_progress': None,
-              'research_progress': None}
+              'research_progress': None, 'smelting_progress': None}
     if number(prior.get('at')) and now + 2 < prior['at']:
         result['reason'] = 'monitor clock regressed'
         return result
@@ -251,6 +319,17 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
         research = None
         research_error = str(error)
     research_stamp = research.get('advanced_at') if research else None
+    smelting_error = None
+    try:
+        smelting = smelting_progress(sample.get('native_smelting'),
+            prior.get('smelting_progress') if continuous_sample else None, now)
+        result['smelting_progress'] = smelting
+    except ValueError as error:
+        smelting = None
+        smelting_error = str(error)
+    advancing_furnaces = [row for row in (smelting or {}).get('machines', [])
+        if row['crafting'] and number(row['advanced_at'])
+        and now - row['advanced_at'] < stall_seconds]
     status, phase = sample.get('checkpoint_status'), sample.get('owner_phase')
     if phase == 'stopped_by_service_owner':
         result.update(status='stopped', reason='stopped by service owner', attention=False)
@@ -260,7 +339,7 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
         result.update(status='stopped', reason='controller process unavailable')
     elif status in {'blocked', 'uncertain'}:
         since = prior.get('blocked_since')
-        if (prior.get('status') not in {'blocked', 'uncertain', 'crafting', 'researching'}
+        if (prior.get('status') not in {'blocked', 'uncertain', 'crafting', 'researching', 'smelting'}
                 or not number(since) or since > now):
             since = now
         result.update(status=status, reason=str(sample.get('reason') or status)[:180],
@@ -270,27 +349,38 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
         # Native uncertainty and unrelated holds keep their attention priority.
         if (status == 'blocked' and sample.get('reason') in {
                 'low choice confidence', 'Candidate evidence insufficient'}
-                and not research_error and number(craft_stamp) and now - craft_stamp < stall_seconds):
+                and not research_error and not smelting_error
+                and number(craft_stamp) and now - craft_stamp < stall_seconds):
             result.update(status='crafting', reason='tracked craft is advancing; foreground decision waiting',
                           attention=False, foreground_status=status,
                           foreground_reason=sample['reason'])
         elif (status == 'blocked' and sample.get('reason') in {
                 'low choice confidence', 'Candidate evidence insufficient'}
-                and not craft_error and number(research_stamp)
+                and not craft_error and not smelting_error and number(research_stamp)
                 and now - research_stamp < stall_seconds):
             result.update(status='researching', reason='native research is advancing; foreground decision waiting',
                           attention=False, foreground_status=status,
                           foreground_reason=sample['reason'])
+        elif (status == 'blocked' and sample.get('reason') in {
+                'low choice confidence', 'Candidate evidence insufficient'}
+                and not craft_error and not research_error and advancing_furnaces):
+            result.update(status='smelting',
+                          reason='native furnace production is advancing; foreground decision waiting',
+                          attention=False, foreground_status=status, foreground_reason=sample['reason'])
     elif status != 'running':
         result['reason'] = 'unrecognized controller state'
     elif craft_error:
         result['reason'] = craft_error
     elif research_error:
         result['reason'] = research_error
+    elif smelting_error:
+        result['reason'] = smelting_error
     elif number(craft_stamp) and now - craft_stamp < stall_seconds:
         result.update(status='progressing', reason='tracked craft is advancing', attention=False)
     elif number(research_stamp) and now - research_stamp < stall_seconds:
         result.update(status='progressing', reason='native research is advancing', attention=False)
+    elif advancing_furnaces:
+        result.update(status='progressing', reason='native furnace production is advancing', attention=False)
     elif stamp is None or now - stamp >= stall_seconds:
         result.update(status='no_progress', reason=('awaiting verified progress' if stamp is None
                       else 'no recent verified useful action'))
@@ -310,6 +400,9 @@ def banner(state):
     if status == 'researching':
         research = state['research_progress']
         return (f"JEV researching: {research['technology']} {research['progress']:.1%}"
+                f" | Foreground waiting: {state['foreground_reason']}")[:240]
+    if status == 'smelting':
+        return ("JEV smelting: native furnace production advancing"
                 f" | Foreground waiting: {state['foreground_reason']}")[:240]
     age = state.get('progress_age_seconds')
     suffix = f' | {int(age // 60)}m since progress' if number(age) else ''

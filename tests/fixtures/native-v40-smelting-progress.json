@@ -1,0 +1,198 @@
+{
+  "pairs": [
+    [
+      {
+        "event_type": "observation",
+        "time": {
+          "factorio_tick": 17816851,
+          "monotonic_ns": 188439273840522,
+          "utc": "2026-10-07T00:23:32.192435Z"
+        },
+        "payload": {
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "world_kind": "fle",
+          "factorio_tick": 17816851,
+          "observation_id": "observation:96",
+          "status": "ok",
+          "supervisor_provenance": {
+            "code_revision": {
+              "commit": "8873b1eb2f38046d998bd939f802a907b6601aa3",
+              "source_sha256": "ac7b76c21c7c9033dbd3494655fddc651e658b28974fb8f98f5f9559666e3750"
+            },
+            "execution_id": "71131153abb745e0aeaaf4ef90f47481",
+            "run_id": "jev-continuous-20261004",
+            "segment_id": "frozen-source"
+          },
+          "snapshot": {
+            "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+            "tick": 17816851,
+            "world_kind": "fle",
+            "factory": {
+              "tick": 17816851,
+              "observation_snapshot_schema": 2,
+              "acceptance_runtime": {
+                "actor_unit": 2543,
+                "force_index": 1,
+                "mods": {
+                  "base": "2.0.77"
+                },
+                "player_index": 1,
+                "schema": 1,
+                "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+                "speed": 1,
+                "surface_index": 1,
+                "tick_paused": false
+              },
+              "research": "concrete",
+              "research_progress": 0.15999999999992193,
+              "entities": {
+                "recipe:copper-plate": {
+                  "name": "stone-furnace",
+                  "recipe": "",
+                  "unit_number": 2546,
+                  "products_finished": 584,
+                  "crafting": false
+                },
+                "recipe:iron-plate": {
+                  "name": "stone-furnace",
+                  "recipe": "iron-plate",
+                  "unit_number": 2547,
+                  "products_finished": 1625,
+                  "crafting": true
+                },
+                "recipe:steel-plate": {
+                  "name": "stone-furnace",
+                  "recipe": "",
+                  "unit_number": 2588,
+                  "products_finished": 0,
+                  "crafting": false
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "event_type": "observation_validated",
+        "time": {
+          "factorio_tick": 17816851,
+          "monotonic_ns": 188439439128086,
+          "utc": "2026-10-07T00:23:32.357723Z"
+        },
+        "payload": {
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "world_kind": "fle",
+          "factorio_tick": 17816851,
+          "observation_id": "observation:96",
+          "accepted": true,
+          "supervisor_provenance": {
+            "code_revision": {
+              "commit": "8873b1eb2f38046d998bd939f802a907b6601aa3",
+              "source_sha256": "ac7b76c21c7c9033dbd3494655fddc651e658b28974fb8f98f5f9559666e3750"
+            },
+            "execution_id": "71131153abb745e0aeaaf4ef90f47481",
+            "run_id": "jev-continuous-20261004",
+            "segment_id": "frozen-source"
+          }
+        }
+      }
+    ],
+    [
+      {
+        "event_type": "observation",
+        "time": {
+          "factorio_tick": 17816990,
+          "monotonic_ns": 188441742829282,
+          "utc": "2026-10-07T00:23:34.661421Z"
+        },
+        "payload": {
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "world_kind": "fle",
+          "factorio_tick": 17816990,
+          "observation_id": "observation:97",
+          "status": "ok",
+          "supervisor_provenance": {
+            "code_revision": {
+              "commit": "8873b1eb2f38046d998bd939f802a907b6601aa3",
+              "source_sha256": "ac7b76c21c7c9033dbd3494655fddc651e658b28974fb8f98f5f9559666e3750"
+            },
+            "execution_id": "71131153abb745e0aeaaf4ef90f47481",
+            "run_id": "jev-continuous-20261004",
+            "segment_id": "frozen-source"
+          },
+          "snapshot": {
+            "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+            "tick": 17816990,
+            "world_kind": "fle",
+            "factory": {
+              "tick": 17816990,
+              "observation_snapshot_schema": 2,
+              "acceptance_runtime": {
+                "actor_unit": 2543,
+                "force_index": 1,
+                "mods": {
+                  "base": "2.0.77"
+                },
+                "player_index": 1,
+                "schema": 1,
+                "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+                "speed": 1,
+                "surface_index": 1,
+                "tick_paused": false
+              },
+              "research": "concrete",
+              "research_progress": 0.15999999999992193,
+              "entities": {
+                "recipe:copper-plate": {
+                  "name": "stone-furnace",
+                  "recipe": "",
+                  "unit_number": 2546,
+                  "products_finished": 584,
+                  "crafting": false
+                },
+                "recipe:iron-plate": {
+                  "name": "stone-furnace",
+                  "recipe": "iron-plate",
+                  "unit_number": 2547,
+                  "products_finished": 1626,
+                  "crafting": true
+                },
+                "recipe:steel-plate": {
+                  "name": "stone-furnace",
+                  "recipe": "",
+                  "unit_number": 2588,
+                  "products_finished": 0,
+                  "crafting": false
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "event_type": "observation_validated",
+        "time": {
+          "factorio_tick": 17816990,
+          "monotonic_ns": 188441906705328,
+          "utc": "2026-10-07T00:23:34.825298Z"
+        },
+        "payload": {
+          "session_id": "a0072f75985343a8abd9e73993d0c5d5",
+          "world_kind": "fle",
+          "factorio_tick": 17816990,
+          "observation_id": "observation:97",
+          "accepted": true,
+          "supervisor_provenance": {
+            "code_revision": {
+              "commit": "8873b1eb2f38046d998bd939f802a907b6601aa3",
+              "source_sha256": "ac7b76c21c7c9033dbd3494655fddc651e658b28974fb8f98f5f9559666e3750"
+            },
+            "execution_id": "71131153abb745e0aeaaf4ef90f47481",
+            "run_id": "jev-continuous-20261004",
+            "segment_id": "frozen-source"
+          }
+        }
+      }
+    ]
+  ]
+}
