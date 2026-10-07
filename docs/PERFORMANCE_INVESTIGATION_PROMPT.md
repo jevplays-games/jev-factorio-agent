@@ -2,7 +2,7 @@
 
 Act as a persistent performance, gameplay-strategy, and reliability investigator for this repository:
 
-- Canonical repository: https://github.com/CompleteDotTech/jev-factorio-agent
+- Canonical repository: https://github.com/jevplays-games/jev-factorio-agent
 - Local workspace, when available: `/home/agent/factorio/jev-factorio`
 - Related fork: https://github.com/CompleteDotTech/jev-factorio
 
