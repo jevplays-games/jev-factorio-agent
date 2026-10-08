@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import uuid
+import weakref
 from collections import deque
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -361,6 +362,189 @@ class EventWriter:
             self.fd = None
 
 
+class _DashboardModelObserver:
+    """The one model wrapper admitted by dashboard.attach.
+
+    Its dispatch implementation is pinned below so a later instance or class
+    override cannot keep the original provider visible while routing evaluation
+    through a different client.
+    """
+
+    def __init__(self, model_client, emit, measured):
+        self.model_client = model_client
+        self._emit = emit
+        self._measured = measured
+
+    def __getattr__(self, key):
+        return getattr(self.model_client, key)
+
+    def evaluate(self, state, questions):
+        self._emit("model_request", 5,
+                   candidates=state.get("candidate_plans", {}), questions=questions)
+        result = self._measured("model", 5, self.model_client.evaluate, state, questions)
+        self._emit("model_response", 5, answers=result,
+                   usage=getattr(self.model_client, "last_usage", None),
+                   model=getattr(self.model_client, "last_model", None))
+        return result
+
+
+_SUPPORTED_DASHBOARD_MODEL_OBSERVER_TYPE = _DashboardModelObserver
+_SUPPORTED_DASHBOARD_MODEL_OBSERVER_NAMESPACE = dict(
+    vars(_SUPPORTED_DASHBOARD_MODEL_OBSERVER_TYPE))
+_SUPPORTED_DASHBOARD_MODEL_OBSERVER_METHODS = {
+    name: _SUPPORTED_DASHBOARD_MODEL_OBSERVER_NAMESPACE[name]
+    for name in ("__init__", "__getattr__", "evaluate")
+}
+_SUPPORTED_DASHBOARD_MODEL_OBSERVER_CODE = {
+    name: method.__code__
+    for name, method in _SUPPORTED_DASHBOARD_MODEL_OBSERVER_METHODS.items()
+}
+_dashboard_model_observer_lock = threading.RLock()
+_dashboard_model_observer_bindings = weakref.WeakKeyDictionary()
+
+
+def _dashboard_callback_signature(callback, expected_code):
+    """Snapshot the implementation and closure of an attach-owned callback."""
+    if (type(callback) is not type(attach)
+            or callback.__code__ is not expected_code
+            or callback.__globals__ is not globals()):
+        return None
+    try:
+        closure = callback.__closure__ or ()
+        values = tuple(cell.cell_contents for cell in closure)
+        return (
+            callback.__code__, callback.__globals__, callback.__defaults__,
+            callback.__kwdefaults__, closure, values,
+        )
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _dashboard_callback_signature_is_current(callback, expected_code, signature) -> bool:
+    current = _dashboard_callback_signature(callback, expected_code)
+    if current is None or signature is None:
+        return False
+    if any(current[index] is not signature[index] for index in range(4)):
+        return False
+    current_cells, saved_cells = current[4], signature[4]
+    current_values, saved_values = current[5], signature[5]
+    return (
+        len(current_cells) == len(saved_cells) == len(current_values) == len(saved_values)
+        and all(current_cell is saved_cell and current_value is saved_value
+                for current_cell, saved_cell, current_value, saved_value in zip(
+                    current_cells, saved_cells, current_values, saved_values))
+    )
+
+
+def _dashboard_model_observer_shape_is_current(observer, model_client) -> bool:
+    """Check exact dashboard wrapper code and direct per-instance bindings."""
+    if type(observer) is not _SUPPORTED_DASHBOARD_MODEL_OBSERVER_TYPE:
+        return False
+    try:
+        if globals().get("_DashboardModelObserver") is not _SUPPORTED_DASHBOARD_MODEL_OBSERVER_TYPE:
+            return False
+        namespace = type.__getattribute__(type(observer), "__dict__")
+        if (set(namespace) != set(_SUPPORTED_DASHBOARD_MODEL_OBSERVER_NAMESPACE)
+                or any(namespace.get(name) is not value
+                       for name, value in _SUPPORTED_DASHBOARD_MODEL_OBSERVER_NAMESPACE.items())):
+            return False
+        if any(namespace[name].__code__ is not code
+               for name, code in _SUPPORTED_DASHBOARD_MODEL_OBSERVER_CODE.items()):
+            return False
+        attributes = vars(observer)
+        return (
+            set(attributes) == {"model_client", "_emit", "_measured"}
+            and attributes.get("model_client") is model_client
+        )
+    except (TypeError, AttributeError):
+        return False
+
+
+def _register_dashboard_model_observer_binding(
+        loop, observer, model_client) -> bool:
+    """Record the wrapper only from its authentic, unmodified ``attach`` call.
+
+    The observer's exact type and callback shape are not proof of origin: an
+    independently constructed instance can have the same shape. Requiring
+    the module globals and exact caller-frame locals prevents a copied code
+    object or substituted constructor from minting attachment provenance.
+    The callback implementation and closure are then pinned for every use.
+    """
+    try:
+        frame = sys._getframe(1)
+        if (frame.f_code is not _DASHBOARD_ATTACH_CODE
+                or frame.f_globals is not globals()):
+            return False
+    except (AttributeError, ValueError):
+        return False
+    frame_locals = frame.f_locals
+    if (frame_locals.get("loop") is not loop
+            or frame_locals.get("observer") is not observer
+            or frame_locals.get("original_model") is not model_client
+            or globals().get("_DashboardModelObserver") is not _SUPPORTED_DASHBOARD_MODEL_OBSERVER_TYPE):
+        return False
+    if not _dashboard_model_observer_shape_is_current(observer, model_client):
+        return False
+    try:
+        attributes = vars(observer)
+        observer_emit = frame_locals.get("observer_emit")
+        observer_measured = frame_locals.get("observer_measured")
+        emit = frame_locals.get("emit")
+        measured = frame_locals.get("measured")
+        if (attributes.get("_emit") is not observer_emit
+                or attributes.get("_measured") is not observer_measured):
+            return False
+        observer_emit_signature = _dashboard_callback_signature(
+            observer_emit, _DASHBOARD_OBSERVER_EMIT_CODE)
+        observer_measured_signature = _dashboard_callback_signature(
+            observer_measured, _DASHBOARD_OBSERVER_MEASURED_CODE)
+        writer = frame_locals.get("writer")
+        if (observer_emit_signature is None or observer_measured_signature is None
+                or len(observer_emit_signature[5]) != 1
+                or observer_emit_signature[5][0] is not writer
+                or len(observer_measured_signature[5]) != 1
+                or observer_measured_signature[5][0] is not observer_emit):
+            return False
+        binding = (weakref.ref(loop), id(model_client),
+                   observer_emit, observer_measured,
+                   observer_emit_signature, observer_measured_signature)
+        with _dashboard_model_observer_lock:
+            # The first attachment is immutable for this observer.  In
+            # particular, an altered callback cannot be rebound by calling
+            # this helper again.
+            if observer in _dashboard_model_observer_bindings:
+                return False
+            _dashboard_model_observer_bindings[observer] = binding
+        return True
+    except (TypeError, AttributeError):
+        return False
+
+
+def _dashboard_model_observer_binding_is_current(
+        loop, observer, model_client) -> bool:
+    """Authenticate the attached wrapper before it can support legacy resume."""
+    if not _dashboard_model_observer_shape_is_current(observer, model_client):
+        return False
+    try:
+        attributes = vars(observer)
+        with _dashboard_model_observer_lock:
+            binding = _dashboard_model_observer_bindings.get(observer)
+        return (
+            binding is not None
+            and len(binding) == 6
+            and binding[0]() is loop
+            and binding[1] == id(model_client)
+            and binding[2] is attributes.get("_emit")
+            and binding[3] is attributes.get("_measured")
+            and _dashboard_callback_signature_is_current(
+                attributes.get("_emit"), _DASHBOARD_OBSERVER_EMIT_CODE, binding[4])
+            and _dashboard_callback_signature_is_current(
+                attributes.get("_measured"), _DASHBOARD_OBSERVER_MEASURED_CODE, binding[5])
+        )
+    except (TypeError, AttributeError):
+        return False
+
+
 def attach(loop: Any, writer: EventWriter) -> None:
     """Decorate only this loop instance; delegate every existing call exactly once.
 
@@ -392,6 +576,31 @@ def attach(loop: Any, writer: EventWriter) -> None:
         emit(kind + "_returned", stage, duration_ms=elapsed)
         return result
 
+    # Keep the model wrapper's mutable callbacks separate from the dashboard's
+    # own step/observation instrumentation.  A changed observer callback must
+    # be rejected by the controller before model evaluation, and must never
+    # become the callback used by the outer decorator before that gate runs.
+    observer_writer = writer
+
+    def observer_emit(kind: str, stage: int, **data: Any) -> None:
+        try:
+            observer_writer.emit(kind, stage, **data)
+        except Exception:
+            pass
+
+    def observer_measured(kind: str, stage: int, function: Callable, *args, **kwargs):
+        observer_emit(kind + "_started", stage)
+        started = time.perf_counter_ns()
+        try:
+            result = function(*args, **kwargs)
+        except BaseException:
+            elapsed = (time.perf_counter_ns() - started) / 1e6
+            observer_emit(kind + "_failed", stage, duration_ms=elapsed)
+            raise
+        elapsed = (time.perf_counter_ns() - started) / 1e6
+        observer_emit(kind + "_returned", stage, duration_ms=elapsed)
+        return result
+
     class BackendObserver:
         def __init__(self, backend):
             self.backend = backend
@@ -421,23 +630,20 @@ def attach(loop: Any, writer: EventWriter) -> None:
             emit("action", 6, action=action, parameters=parameters)
             return measured("dispatch", 6, self.backend.execute, action, parameters)
 
-    class ModelObserver:
-        def __init__(self, model):
-            self.model_client = model
-
-        def __getattr__(self, key):
-            return getattr(self.model_client, key)
-
-        def evaluate(self, state, questions):
-            emit("model_request", 5, candidates=state.get("candidate_plans", {}), questions=questions)
-            result = measured("model", 5, self.model_client.evaluate, state, questions)
-            emit("model_response", 5, answers=result, usage=getattr(self.model_client, "last_usage", None),
-                 model=getattr(self.model_client, "last_model", None))
-            return result
-
     loop.backend = BackendObserver(loop.backend)
     if loop.jev is not None:
-        loop.jev = ModelObserver(loop.jev)
+        original_model = loop.jev
+        observer = _DashboardModelObserver(original_model, observer_emit, observer_measured)
+        # Register only the exact observer just constructed here, and only
+        # with the supported controller type. The controller uses this pair
+        # to detect later observer/client replacement; it does not infer
+        # health authority through arbitrary wrappers.
+        from .controller import HierarchicalLoop
+        if isinstance(loop, HierarchicalLoop):
+            _register_dashboard_model_observer_binding(loop, observer, original_model)
+            HierarchicalLoop._register_dashboard_model_observer(
+                loop, observer, original_model)
+        loop.jev = observer
 
     def decorate(name: str, wrapper: Callable) -> None:
         original = getattr(loop, name)
@@ -496,6 +702,15 @@ def attach(loop: Any, writer: EventWriter) -> None:
     decorate("step", step)
     emit("run_started", 2, target=loop.target, policy=loop.policy,
          model=getattr(loop.jev, "model", None), controller="hierarchical")
+
+
+_DASHBOARD_ATTACH_CODE = attach.__code__
+_DASHBOARD_OBSERVER_EMIT_CODE = next(
+    value for value in attach.__code__.co_consts
+    if getattr(value, "co_name", None) == "observer_emit")
+_DASHBOARD_OBSERVER_MEASURED_CODE = next(
+    value for value in attach.__code__.co_consts
+    if getattr(value, "co_name", None) == "observer_measured")
 
 
 def open_regular(path: Path):

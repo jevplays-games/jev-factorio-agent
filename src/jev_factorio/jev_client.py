@@ -31,7 +31,10 @@ from .async_provider import (
     request_payload_sha256,
     snapshot_json,
 )
-from .provider_health import ProviderPayloadError
+from .provider_health import (
+    ProviderPayloadError,
+    _register_builtin_provider_health_terminal,
+)
 
 API_URL = "https://api.typesafe.ai/v1/systemone"
 GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/systemone"  # confirm path against Gateway docs
@@ -577,3 +580,30 @@ def make_async_client(*, allow_mock: bool = True, model: str | None = None,
     if transport_options:
         raise ValueError("async mock does not accept HTTP transport options")
     return AsyncMockJevClient()
+
+
+# Exact implementations covered by the provider-health terminal contract.
+# Subclasses and third-party adapters remain valid for ordinary calls, but they
+# do not authorize a legacy checkpoint migration unless a separately reviewed
+# implementation is added here with equivalent identity and call-path rules.
+_register_builtin_provider_health_terminal(
+    JevClient, kind="typesafe-sync-v1", identity_fields=("base_url", "model"),
+    requires_circuit=True)
+_register_builtin_provider_health_terminal(
+    CloudflareJevClient, kind="cloudflare-sync-v1", identity_fields=("url", "model"),
+    requires_circuit=True)
+_register_builtin_provider_health_terminal(
+    MockJevClient, kind="mock-sync-v1", identity_fields=("model",))
+_register_builtin_provider_health_terminal(
+    AsyncJevClient, kind="typesafe-async-v1", identity_fields=("base_url", "model"),
+    mode="async", requires_circuit=True)
+_register_builtin_provider_health_terminal(
+    AsyncCloudflareJevClient, kind="cloudflare-async-v1", identity_fields=("url", "model"),
+    mode="async", requires_circuit=True)
+_register_builtin_provider_health_terminal(
+    AsyncMockJevClient, kind="mock-async-v1", identity_fields=("model",),
+    mode="async")
+_register_builtin_provider_health_terminal(
+    AsyncTracedClient, kind="async-traced-v1", delegate_field="_client",
+    delegate_kinds=("typesafe-async-v1", "cloudflare-async-v1", "mock-async-v1"),
+    mode="async", requires_circuit=True)

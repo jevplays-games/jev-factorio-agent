@@ -29,7 +29,8 @@ def test_blocked_duration_survives_monitor_restart_and_new_verified_progress_cle
     second = classify({**blocked, 'at': 1060}, prior, 1060, 'campaign')
     assert second['blocked_age_seconds'] == 60 and second['progress_age_seconds'] == 160
     assert 'low choice confidence' in banner(second)
-    recovered = classify(sample(at=1061, progress_tick=81), second, 1061, 'campaign')
+    recovered = classify(sample(at=1061, progress_tick=81, last_progress_at=1061),
+                         second, 1061, 'campaign')
     assert recovered['status'] == 'progressing' and not recovered['attention']
     assert recovered['blocked_since'] is None and banner(recovered) == ''
 

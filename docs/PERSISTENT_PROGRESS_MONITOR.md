@@ -90,6 +90,18 @@ ticks cannot become fresh because an owner rewrites their timestamp. Missing
 identity, stale heartbeat, regressed progress or a regressed clock is unknown.
 A separate monitor lock prevents two instances sharing the same state directory.
 
+The public `atomic_json()` and `run_once()` library APIs work on Windows and
+POSIX. Status writes use a temporary file in the state directory, flush and
+`fsync` that file, then install it with `os.replace`. On POSIX, the containing
+directory is also opened and synchronized; failures from file writes, flushes,
+replacement, or directory synchronization are reported to the caller. Python's
+portable Windows API does not expose the same parent-directory `fsync`, so a
+successful Windows write confirms the flushed file and replacement but does
+not claim that the directory entry will survive sudden power loss. The service
+CLI's separate instance lock uses `fcntl`, so the service command currently
+requires POSIX or WSL; this library persistence support does not add Windows
+service-lock support.
+
 For a Train user service, enable lingering and `Restart=on-failure`; the service
 may restart this observer, never a gameplay launcher. Keep monitor state outside
 the campaign's checkpoint directory. Verify `status.json`, the transition log,

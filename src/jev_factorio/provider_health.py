@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import dis
 import hashlib
 import inspect
 import json
 import math
 import time
+import types
 from copy import deepcopy
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -15,6 +17,240 @@ from uuid import uuid4
 import requests
 
 from .operational_safety import SafetyStateError, atomic_json, read_json
+
+
+# Legacy checkpoint migration must know which concrete provider implementation
+# is the terminal health authority.  ``uses_http_provider``, a public ``state``
+# field, or an inspectable ``__dict__`` is not sufficient: an arbitrary adapter
+# can delegate through a closure to a different ProviderCircuit.  The supported
+# Jev implementations register their exact concrete types in jev_client.py.
+# This registry is intentionally private and has no plugin/duck-typed extension
+# path; adding an implementation requires a reviewed registration here.
+_SUPPORTED_PROVIDER_HEALTH_TERMINALS = {}
+
+
+def _provider_evaluator_implementation_binding(evaluator):
+    """Capture the executable parts of a reviewed built-in evaluator.
+
+    Function identity alone is not an implementation pin: Python permits an
+    existing function object's ``__code__`` to be replaced in place. Capture
+    the code, its global lookup bindings, defaults, and closure so the health
+    contract stops qualifying if any of those call semantics change.
+    """
+    if type(evaluator) is not types.FunctionType:
+        return None
+    try:
+        code = evaluator.__code__
+        namespace = evaluator.__globals__
+        builtins_namespace = evaluator.__builtins__
+        if type(namespace) is not dict or type(builtins_namespace) is not dict:
+            return None
+        global_names = tuple(sorted({
+            instruction.argval for instruction in dis.get_instructions(code)
+            if instruction.opname in {"LOAD_GLOBAL", "LOAD_NAME"}
+            and type(instruction.argval) is str
+        }))
+        global_bindings = tuple(
+            (name, name in namespace, namespace.get(name))
+            for name in global_names
+        )
+        builtin_bindings = tuple(
+            (name, name in builtins_namespace, builtins_namespace.get(name))
+            for name in global_names if name not in namespace
+        )
+        defaults = evaluator.__defaults__
+        kwdefaults = evaluator.__kwdefaults__
+        closure = evaluator.__closure__
+        if ((defaults is not None and type(defaults) is not tuple)
+                or (kwdefaults is not None and type(kwdefaults) is not dict)
+                or (closure is not None and type(closure) is not tuple)):
+            return None
+        default_values = defaults or ()
+        kwdefault_items = tuple(
+            (name, True, value)
+            for name, value in sorted((kwdefaults or {}).items())
+        )
+        closure_values = tuple(cell.cell_contents for cell in (closure or ()))
+        # Registered clients currently use only immutable defaults/captures.
+        # Refuse future mutable captures unless their semantics are explicitly
+        # added to this reviewed contract.
+        if any(not _provider_capture_is_immutable(value)
+               for value in (*default_values,
+                             *(value for _, _, value in kwdefault_items),
+                             *closure_values)):
+            return None
+        if any(type(name) is not str for name, _, _ in kwdefault_items):
+            return None
+        return (
+            evaluator, code, namespace, global_names, global_bindings,
+            builtins_namespace, builtin_bindings, defaults, default_values,
+            kwdefaults, kwdefault_items, closure, closure_values,
+        )
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _provider_capture_is_immutable(value):
+    if type(value) in (type(None), bool, int, float, str, bytes):
+        return True
+    if type(value) is tuple:
+        return all(_provider_capture_is_immutable(item) for item in value)
+    return False
+
+
+def _provider_identity_bindings_match(current, expected):
+    if len(current) != len(expected):
+        return False
+    return all(
+        current_name == expected_name
+        and current_found is expected_found
+        and current_value is expected_value
+        for (current_name, current_found, current_value),
+            (expected_name, expected_found, expected_value)
+        in zip(current, expected)
+    )
+
+
+def _provider_identity_sequence_matches(current, expected):
+    return (len(current) == len(expected)
+            and all(current_value is expected_value
+                    for current_value, expected_value in zip(current, expected)))
+
+
+def _provider_evaluator_binding_is_current(evaluator, expected):
+    current = _provider_evaluator_implementation_binding(evaluator)
+    if current is None or expected is None:
+        return False
+    # Bind the function object, code, globals dictionary, builtins, and the
+    # containers that supply defaults/captures by identity. Compare their
+    # contents by identity too, without invoking provider-defined equality.
+    identity_slots = (0, 1, 2, 5, 7, 9, 11)
+    if any(current[index] is not expected[index] for index in identity_slots):
+        return False
+    if current[3] != expected[3]:
+        return False
+    if (not _provider_identity_bindings_match(current[4], expected[4])
+            or not _provider_identity_bindings_match(current[6], expected[6])
+            or not _provider_identity_sequence_matches(current[8], expected[8])
+            or not _provider_identity_bindings_match(current[10], expected[10])
+            or not _provider_identity_sequence_matches(current[12], expected[12])):
+        return False
+    return True
+
+
+def _register_builtin_provider_health_terminal(
+        client_type, *, kind, identity_fields=(), delegate_field=None,
+        delegate_kinds=(), mode="sync", requires_circuit=False):
+    if (not isinstance(client_type, type)
+            or client_type.__module__ != "jev_factorio.jev_client"
+            or not isinstance(kind, str) or not kind
+            or mode not in {"sync", "async"}
+            or type(requires_circuit) is not bool
+            or client_type in _SUPPORTED_PROVIDER_HEALTH_TERMINALS):
+        raise TypeError("Invalid or duplicate built-in provider health terminal")
+    namespace = type.__getattribute__(client_type, "__dict__")
+    evaluator = namespace.get("evaluate")
+    if not callable(evaluator):
+        raise TypeError("Provider health terminal needs its own evaluate implementation")
+    evaluator_binding = _provider_evaluator_implementation_binding(evaluator)
+    if evaluator_binding is None:
+        raise TypeError("Provider health terminal evaluator has unsupported callable state")
+    _SUPPORTED_PROVIDER_HEALTH_TERMINALS[client_type] = {
+        "kind": kind,
+        "evaluate": evaluator,
+        "evaluate_binding": evaluator_binding,
+        "identity_fields": tuple(identity_fields),
+        "delegate_field": delegate_field,
+        "delegate_kinds": frozenset(delegate_kinds),
+        "mode": mode,
+        "requires_circuit": requires_circuit,
+    }
+
+
+def supported_provider_health_terminal_contract(client, *, max_depth=4):
+    """Return the current immutable binding for a supported provider terminal.
+
+    Only exact Jev client implementations registered by ``jev_client`` qualify.
+    The returned tuple binds the object, concrete evaluator, current endpoint,
+    model, execution mode, and whether a durable circuit must be present. An
+    instance-level evaluator override, subclass, hidden adapter, or changed
+    nested async client returns ``None``. ``None`` itself is the explicit
+    no-provider case used by deterministic control.
+    """
+    if client is None:
+        return ("no-provider-v1",)
+    if type(max_depth) is not int or max_depth < 1:
+        return None
+
+    seen = set()
+
+    def bind(current, depth):
+        if depth > max_depth or id(current) in seen:
+            return None
+        seen.add(id(current))
+        current_type = type(current)
+        # Compare type identity without invoking a third-party metaclass's
+        # ``__hash__`` or ``__eq__`` during fail-closed classification.
+        spec = next((registered for registered_type, registered
+                     in _SUPPORTED_PROVIDER_HEALTH_TERMINALS.items()
+                     if current_type is registered_type), None)
+        if spec is None:
+            return None
+        try:
+            if (type.__getattribute__(current_type, "__getattribute__")
+                    is not object.__getattribute__):
+                return None
+            namespace = object.__getattribute__(current, "__dict__")
+            class_namespace = type.__getattribute__(current_type, "__dict__")
+        except (AttributeError, TypeError):
+            return None
+        if (type(namespace) is not dict
+                or "evaluate" in namespace
+                or class_namespace.get("evaluate") is not spec["evaluate"]
+                or not _provider_evaluator_binding_is_current(
+                    class_namespace.get("evaluate"), spec["evaluate_binding"])):
+            return None
+
+        delegate_field = spec["delegate_field"]
+        if delegate_field is not None:
+            nested = namespace.get(delegate_field)
+            nested_binding = bind(nested, depth + 1)
+            if (nested_binding is None
+                    or nested_binding[0] not in spec["delegate_kinds"]):
+                return None
+            return (spec["kind"], id(current), id(spec["evaluate"]), nested_binding,
+                    spec["mode"], spec["requires_circuit"])
+
+        identity = []
+        if spec["requires_circuit"]:
+            http_marker = namespace.get(
+                "uses_http_provider", class_namespace.get("uses_http_provider"))
+            if http_marker is not True:
+                return None
+            identity.append(("uses_http_provider", True))
+        for name in spec["identity_fields"]:
+            value = namespace.get(name, class_namespace.get(name))
+            if type(value) is not str or not value:
+                return None
+            identity.append((name, value))
+        return (spec["kind"], id(current), id(spec["evaluate"]), tuple(identity),
+                spec["mode"], spec["requires_circuit"])
+
+    return bind(client, 1)
+
+
+def provider_health_terminal_contract_is_compatible(
+        contract, *, async_decisions, has_circuit):
+    """Check circuit and execution-mode requirements for migration authority."""
+    if contract == ("no-provider-v1",):
+        return (async_decisions is False and has_circuit is False)
+    if (type(contract) is not tuple or len(contract) != 6
+            or type(async_decisions) is not bool or type(has_circuit) is not bool):
+        return False
+    mode, requires_circuit = contract[4], contract[5]
+    return (mode == ("async" if async_decisions else "sync")
+            and type(requires_circuit) is bool
+            and (has_circuit or not requires_circuit))
 
 
 class ProviderPayloadError(ValueError):

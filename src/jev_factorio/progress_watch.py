@@ -293,8 +293,8 @@ def classify(sample, previous, now, session_id, *, heartbeat_seconds=30,
     # A repeated historical tick cannot be made fresh by a rewritten timestamp.
     if prior_tick == tick and number(prior.get('last_progress_at')):
         stamp = prior['last_progress_at']
-    elif type(prior_tick) is int and tick > prior_tick:
-        stamp = max(stamp or 0, now)
+    # Newly learned receipts may be historical. Their supplied completion
+    # time remains authoritative even when the progress watermark increases.
     result.update(progress_tick=tick, last_progress_at=stamp,
                   progress_age_seconds=max(0, now - stamp) if stamp is not None else None,
                   pending=sample.get('pending') is True)
@@ -434,6 +434,12 @@ def atomic_json(path, data):
         json.dump(data, stream, sort_keys=True, allow_nan=False)
         stream.write('\n'); stream.flush(); os.fsync(stream.fileno())
     os.replace(temp, path)
+    # Windows supports the flushed file plus same-directory atomic replacement,
+    # but Python does not expose a portable parent-directory fsync there.
+    # Keep the directory durability barrier mandatory on POSIX and let any real
+    # open/fsync/close error propagate to the caller.
+    if os.name == 'nt':
+        return
     directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
     try: os.fsync(directory)
     finally: os.close(directory)
