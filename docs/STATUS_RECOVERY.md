@@ -169,6 +169,10 @@ controller checkpoint before starting gameplay. Check the server's configured
 write-data directory, autosave settings, retained save timestamps and receipts.
 If only the initial world remains, preserve the stopped campaign and seek a
 compatible backup; do not attach the latest checkpoint to a reset world.
+Valid autosaves can preserve the factory while the executable native runtime,
+receipts and ownership state are lost. For the separate pre-shutdown strict
+choice hold, missing runtime and absent OBS receiver found after the October 7
+reboot, use the [postboot recovery checks](REBOOT_RECOVERY_20261008.md).
 
 ## OBS Studio Mode: Preview is not Program
 
