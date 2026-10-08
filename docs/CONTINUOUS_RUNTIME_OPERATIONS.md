@@ -106,6 +106,9 @@ The controller owner holds on missing runtime, session mismatch or world
 rollback. Automatic reconstruction across those boundaries has not been
 qualified by this deployment. Never overwrite a newer checkpoint with an older
 one simply to remove that hold.
+The [October 7 reboot investigation](REBOOT_RECOVERY_20261008.md) confirms this
+hold with surviving factory saves and retained paid ownership. It also records
+the independent OBS domain autostart and keyring recovery checks.
 
 ## Dashboard and broadcast
 
